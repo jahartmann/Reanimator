@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ProxHost Backup Manager",
+  title: "Reanimator Backup Manager",
   description: "Centralized Proxmox Backup Management",
 };
 

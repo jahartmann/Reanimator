@@ -57,7 +57,7 @@ do_install() {
     get_binaries
     
     echo ""
-    echo "🚀 ProxHost Backup Manager Installation"
+    echo "🚀 Reanimator Backup Manager Installation"
     echo "========================================"
     echo ""
     
@@ -102,7 +102,7 @@ do_update() {
     get_binaries
     
     echo ""
-    echo "🔄 ProxHost Backup Manager Update"
+    echo "🔄 Reanimator Backup Manager Update"
     echo "=================================="
     echo ""
     

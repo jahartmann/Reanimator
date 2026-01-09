@@ -3,25 +3,17 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
     ArrowLeft, File, Folder, FolderOpen, Download, RotateCcw,
-    Loader2, Clock, HardDrive, ChevronRight, Copy, CheckCircle2
+    Loader2, ChevronRight, Copy, CheckCircle2, BookOpen, Info, HardDrive
 } from "lucide-react";
 
 interface FileEntry {
     path: string;
     size: number;
-}
-
-interface BackupInfo {
-    id: number;
-    server_id: number;
-    backup_path: string;
-    backup_date: string;
-    file_count: number;
-    total_size: number;
 }
 
 function formatBytes(bytes: number): string {
@@ -32,46 +24,26 @@ function formatBytes(bytes: number): string {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-function formatDate(dateStr: string): string {
-    return new Intl.DateTimeFormat('de-DE', {
-        dateStyle: 'full',
-        timeStyle: 'medium'
-    }).format(new Date(dateStr));
-}
-
-// Build tree structure from flat file list
+// Build tree structure
 function buildTree(files: FileEntry[]): Record<string, any> {
     const root: Record<string, any> = {};
-
     for (const file of files) {
         const parts = file.path.split('/').filter(Boolean);
         let current = root;
-
         for (let i = 0; i < parts.length; i++) {
             const part = parts[i];
             if (i === parts.length - 1) {
-                // It's a file
                 current[part] = { _file: true, _size: file.size, _path: file.path };
             } else {
-                // It's a directory
-                if (!current[part]) {
-                    current[part] = {};
-                }
+                if (!current[part]) current[part] = {};
                 current = current[part];
             }
         }
     }
-
     return root;
 }
 
-function TreeNode({ name, node, path, onFileClick, level = 0 }: {
-    name: string;
-    node: any;
-    path: string;
-    onFileClick: (path: string) => void;
-    level?: number;
-}) {
+function TreeNode({ name, node, path, onFileClick, level = 0 }: any) {
     const [expanded, setExpanded] = useState(level < 2);
     const isFile = node._file;
 
@@ -90,7 +62,6 @@ function TreeNode({ name, node, path, onFileClick, level = 0 }: {
     }
 
     const childKeys = Object.keys(node).filter(k => !k.startsWith('_'));
-
     return (
         <div>
             <div
@@ -132,51 +103,52 @@ export default function ConfigBackupDetailPage() {
     const [files, setFiles] = useState<FileEntry[]>([]);
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
     const [fileContent, setFileContent] = useState<string | null>(null);
-    const [loadingFile, setLoadingFile] = useState(false);
-    const [copied, setCopied] = useState(false);
+    const [guideContent, setGuideContent] = useState<string | null>(null);
+    const [systemInfo, setSystemInfo] = useState<string | null>(null);
+    const [activeTab, setActiveTab] = useState('guide');
 
     useEffect(() => {
-        loadFiles();
+        loadData();
     }, [backupId]);
 
-    async function loadFiles() {
+    // Added special handling for guide and system info
+    async function loadData() {
         setLoading(true);
         try {
             const res = await fetch(`/api/config-backups/${backupId}`);
             const data = await res.json();
             setFiles(data);
+
+            // Fetch Guide automatically
+            const guideRes = await fetch(`/api/config-backups/${backupId}?file=WIEDERHERSTELLUNG.md`);
+            const guideData = await guideRes.json();
+            setGuideContent(guideData.content);
+
+            // Fetch System Info automatically
+            const sysRes = await fetch(`/api/config-backups/${backupId}?file=SYSTEM_INFO.txt`);
+            const sysData = await sysRes.json();
+            setSystemInfo(sysData.content);
         } catch (err) {
-            console.error('Failed to load files:', err);
+            console.error('Failed to load data:', err);
         }
         setLoading(false);
     }
 
     async function loadFileContent(filePath: string) {
-        setLoadingFile(true);
         setSelectedFile(filePath);
         try {
             const res = await fetch(`/api/config-backups/${backupId}?file=${encodeURIComponent(filePath)}`);
             const data = await res.json();
             setFileContent(data.content);
         } catch (err) {
-            console.error('Failed to load file:', err);
-            setFileContent(null);
-        }
-        setLoadingFile(false);
-    }
-
-    function copyToClipboard() {
-        if (fileContent) {
-            navigator.clipboard.writeText(fileContent);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
+            setFileContent('Fehler beim Laden der Datei.');
         }
     }
 
     const tree = buildTree(files);
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 max-w-[1600px] mx-auto">
             <div className="flex items-center gap-4">
                 <Link href="/configs">
                     <Button variant="ghost" size="icon">
@@ -184,105 +156,119 @@ export default function ConfigBackupDetailPage() {
                     </Button>
                 </Link>
                 <div>
-                    <h2 className="text-2xl font-bold tracking-tight">Backup Details</h2>
+                    <h2 className="text-2xl font-bold tracking-tight">Reanimator Backup</h2>
                     <p className="text-muted-foreground">
-                        {files.length} Dateien gesichert
+                        {files.length} Dateien · Gesichert am {new Date().toLocaleDateString('de-DE')}
                     </p>
                 </div>
             </div>
 
-            <div className="grid lg:grid-cols-2 gap-6">
-                {/* File Tree */}
-                <Card className="h-[600px] overflow-hidden flex flex-col">
-                    <CardHeader className="shrink-0">
-                        <CardTitle className="flex items-center gap-2">
-                            <Folder className="h-5 w-5" />
-                            Dateien
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="flex-1 overflow-auto p-2">
-                        {loading ? (
-                            <div className="flex items-center justify-center h-full">
-                                <Loader2 className="h-6 w-6 animate-spin" />
-                            </div>
-                        ) : (
-                            <div className="font-mono text-sm">
-                                {Object.keys(tree).sort().map(key => (
-                                    <TreeNode
-                                        key={key}
-                                        name={key}
-                                        node={tree[key]}
-                                        path={key}
-                                        onFileClick={loadFileContent}
-                                    />
-                                ))}
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+                <TabsList className="grid w-full grid-cols-3 lg:w-[400px]">
+                    <TabsTrigger value="guide">Anleitung</TabsTrigger>
+                    <TabsTrigger value="files">Dateien</TabsTrigger>
+                    <TabsTrigger value="info">System-Info</TabsTrigger>
+                </TabsList>
 
-                {/* File Content */}
-                <Card className="h-[600px] overflow-hidden flex flex-col">
-                    <CardHeader className="shrink-0">
-                        <div className="flex items-center justify-between">
-                            <CardTitle className="flex items-center gap-2 truncate">
-                                <File className="h-5 w-5 shrink-0" />
-                                <span className="truncate">{selectedFile || 'Datei auswählen'}</span>
+                {/* GUIDE TAB */}
+                <TabsContent value="guide" className="space-y-4">
+                    <Card className="border-indigo-500/20 bg-indigo-500/5">
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <BookOpen className="h-5 w-5 text-indigo-500" />
+                                Wiederherstellungs-Anleitung
                             </CardTitle>
-                            {fileContent && (
-                                <div className="flex gap-2">
-                                    <Button variant="ghost" size="sm" onClick={copyToClipboard}>
-                                        {copied ? (
-                                            <CheckCircle2 className="h-4 w-4 text-green-500" />
-                                        ) : (
-                                            <Copy className="h-4 w-4" />
-                                        )}
-                                    </Button>
-                                    <Button variant="ghost" size="sm">
-                                        <RotateCcw className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                            )}
-                        </div>
-                    </CardHeader>
-                    <CardContent className="flex-1 overflow-auto p-0">
-                        {loadingFile ? (
-                            <div className="flex items-center justify-center h-full">
-                                <Loader2 className="h-6 w-6 animate-spin" />
+                        </CardHeader>
+                        <CardContent>
+                            <div className="prose dark:prose-invert max-w-none">
+                                {guideContent ? (
+                                    <pre className="whitespace-pre-wrap font-sans text-sm">{guideContent}</pre>
+                                ) : (
+                                    <p className="text-muted-foreground">Keine Anleitung gefunden.</p>
+                                )}
                             </div>
-                        ) : fileContent ? (
-                            <pre className="p-4 text-sm font-mono whitespace-pre-wrap break-all bg-muted/30 h-full overflow-auto">
-                                {fileContent}
-                            </pre>
-                        ) : (
-                            <div className="flex items-center justify-center h-full text-muted-foreground">
-                                Klicken Sie auf eine Datei, um den Inhalt anzuzeigen
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-            </div>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
 
-            {/* Actions */}
-            <Card>
-                <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                        <div className="text-sm text-muted-foreground">
-                            Wählen Sie Dateien aus, um sie wiederherzustellen oder herunterzuladen.
-                        </div>
-                        <div className="flex gap-2">
-                            <Button variant="outline" disabled>
-                                <Download className="mr-2 h-4 w-4" />
-                                Herunterladen
-                            </Button>
-                            <Button disabled>
-                                <RotateCcw className="mr-2 h-4 w-4" />
-                                Wiederherstellen
-                            </Button>
-                        </div>
+                {/* FILES TAB */}
+                <TabsContent value="files" className="space-y-4">
+                    <div className="grid lg:grid-cols-3 gap-6">
+                        <Card className="h-[700px] overflow-hidden flex flex-col lg:col-span-1">
+                            <CardHeader className="shrink-0 p-4 border-b">
+                                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                                    <Folder className="h-4 w-4" /> Dateisystem
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="flex-1 overflow-auto p-2">
+                                {loading ? (
+                                    <div className="flex justify-center p-4"><Loader2 className="animate-spin" /></div>
+                                ) : (
+                                    <div className="font-mono text-sm">
+                                        {Object.keys(tree).sort().map(key => (
+                                            <TreeNode
+                                                key={key}
+                                                name={key}
+                                                node={tree[key]}
+                                                path={key}
+                                                onFileClick={loadFileContent}
+                                            />
+                                        ))}
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+
+                        <Card className="h-[700px] overflow-hidden flex flex-col lg:col-span-2">
+                            <CardHeader className="shrink-0 p-4 border-b bg-muted/30">
+                                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                                    <File className="h-4 w-4" />
+                                    {selectedFile || 'Datei auswählen'}
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="flex-1 overflow-auto p-0 bg-[#1e1e1e] text-zinc-300">
+                                {fileContent ? (
+                                    <pre className="p-4 text-xs font-mono whitespace-pre">{fileContent}</pre>
+                                ) : (
+                                    <div className="flex items-center justify-center h-full text-muted-foreground">
+                                        Wählen Sie eine Datei aus der Liste.
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
                     </div>
-                </CardContent>
-            </Card>
+                </TabsContent>
+
+                {/* INFO TAB */}
+                <TabsContent value="info" className="space-y-4">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <Info className="h-5 w-5 text-blue-500" />
+                                System Informationen
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="grid lg:grid-cols-2 gap-4">
+                                <div className="p-4 rounded bg-muted/50">
+                                    <h3 className="font-medium mb-2 flex items-center gap-2">
+                                        <HardDrive className="h-4 w-4" /> Disk UUIDs
+                                    </h3>
+                                    <pre className="text-xs font-mono whitespace-pre-wrap bg-background p-2 rounded border">
+                                        Coming soon (in new backup)
+                                    </pre>
+                                </div>
+                                <div className="p-4 rounded bg-muted/50">
+                                    <h3 className="font-medium mb-2">System Status</h3>
+                                    <pre className="text-xs font-mono whitespace-pre-wrap bg-background p-2 rounded border">
+                                        {systemInfo || 'Keine Info verfügbar'}
+                                    </pre>
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+            </Tabs>
         </div>
     );
 }
