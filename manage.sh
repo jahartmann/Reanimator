@@ -6,14 +6,14 @@ SERVICE_NAME="proxhost-backup"
 NODE_BIN=$(which node)
 NPM_BIN=$(which npm)
 
-function check_root() {
+check_root() {
     if [ "$EUID" -ne 0 ]; then
         echo "Please run as root (sudo)"
         exit 1
     fi
 }
 
-function install() {
+install() {
     echo "[*] Installing Dependencies..."
     $NPM_BIN install
     
@@ -45,7 +45,7 @@ EOF
     echo "[+] Installation Complete! Service started."
 }
 
-function update() {
+update() {
     echo "[*] Pulling latest changes..."
     git pull
     
@@ -62,7 +62,7 @@ function update() {
     echo "[+] Update Complete!"
 }
 
-function restart() {
+restart() {
     check_root
     echo "[*] Restarting service..."
     systemctl restart $SERVICE_NAME
