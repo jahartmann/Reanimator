@@ -1,14 +1,12 @@
-'use client';
-
-import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import db from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Save, Loader2 } from "lucide-react";
+import { ArrowLeft, Save } from "lucide-react";
 import { addJob } from '@/app/actions';
+
+export const dynamic = 'force-dynamic';
 
 interface Server {
     id: number;
@@ -17,15 +15,10 @@ interface Server {
     type: 'pve' | 'pbs';
 }
 
-// This needs to be a client component for interactivity
 export default function NewJobPage() {
-    const router = useRouter();
-    const [loading, setLoading] = useState(false);
-    const [jobType, setJobType] = useState<'backup' | 'snapshot' | 'replication'>('backup');
-
-    // We need to fetch servers client-side or use a server component wrapper
-    // For now, using inline data loading via server action would be better
-    // This is a simplified version
+    const servers = db.prepare('SELECT * FROM servers').all() as Server[];
+    const pveServers = servers.filter(s => s.type === 'pve');
+    const pbsServers = servers.filter(s => s.type === 'pbs');
 
     return (
         <div className="max-w-2xl mx-auto space-y-8">
@@ -41,57 +34,6 @@ export default function NewJobPage() {
                 </div>
             </div>
 
-            {/* Job Type Selection */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>Job-Typ</CardTitle>
-                    <CardDescription>Wählen Sie den Typ der Backup-Aufgabe.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-3 gap-4">
-                        <button
-                            type="button"
-                            onClick={() => setJobType('backup')}
-                            className={`p-4 rounded-lg border-2 text-left transition-all ${jobType === 'backup'
-                                    ? 'border-primary bg-primary/10'
-                                    : 'border-border hover:border-primary/50'
-                                }`}
-                        >
-                            <h4 className="font-semibold">Backup zu PBS</h4>
-                            <p className="text-xs text-muted-foreground mt-1">
-                                VMs von PVE auf PBS sichern
-                            </p>
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setJobType('snapshot')}
-                            className={`p-4 rounded-lg border-2 text-left transition-all ${jobType === 'snapshot'
-                                    ? 'border-primary bg-primary/10'
-                                    : 'border-border hover:border-primary/50'
-                                }`}
-                        >
-                            <h4 className="font-semibold">Lokaler Snapshot</h4>
-                            <p className="text-xs text-muted-foreground mt-1">
-                                Snapshot auf lokalem Storage
-                            </p>
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setJobType('replication')}
-                            className={`p-4 rounded-lg border-2 text-left transition-all ${jobType === 'replication'
-                                    ? 'border-primary bg-primary/10'
-                                    : 'border-border hover:border-primary/50'
-                                }`}
-                        >
-                            <h4 className="font-semibold">Replikation</h4>
-                            <p className="text-xs text-muted-foreground mt-1">
-                                PVE zu PVE Sync
-                            </p>
-                        </button>
-                    </div>
-                </CardContent>
-            </Card>
-
             <Card>
                 <CardHeader>
                     <CardTitle>Job Details</CardTitle>
@@ -99,18 +41,14 @@ export default function NewJobPage() {
                 </CardHeader>
                 <CardContent>
                     <form action={addJob} className="space-y-4">
-                        <input type="hidden" name="jobType" value={jobType} />
-
                         <div className="grid gap-2">
                             <label htmlFor="name" className="text-sm font-medium">Job Name</label>
-                            <Input id="name" name="name" placeholder="z.B. Tägliches VM Backup" required />
+                            <Input id="name" name="name" placeholder="z.B. Tägliches Config Backup" required />
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
                             <div className="grid gap-2">
-                                <label htmlFor="sourceId" className="text-sm font-medium">
-                                    Quelle (PVE)
-                                </label>
+                                <label htmlFor="sourceId" className="text-sm font-medium">Quelle (PVE)</label>
                                 <select
                                     id="sourceId"
                                     name="sourceId"
@@ -118,42 +56,25 @@ export default function NewJobPage() {
                                     required
                                 >
                                     <option value="">Quelle wählen...</option>
-                                    {/* Servers would be loaded here */}
+                                    {pveServers.map(s => (
+                                        <option key={s.id} value={s.id}>{s.name} ({s.url})</option>
+                                    ))}
                                 </select>
                             </div>
 
-                            {jobType === 'backup' && (
-                                <div className="grid gap-2">
-                                    <label htmlFor="targetId" className="text-sm font-medium">
-                                        Ziel (PBS) <span className="text-muted-foreground">(optional)</span>
-                                    </label>
-                                    <select
-                                        id="targetId"
-                                        name="targetId"
-                                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                    >
-                                        <option value="">Kein Ziel (lokal)</option>
-                                        {/* PBS servers would be loaded here */}
-                                    </select>
-                                </div>
-                            )}
-
-                            {jobType === 'replication' && (
-                                <div className="grid gap-2">
-                                    <label htmlFor="targetId" className="text-sm font-medium">
-                                        Ziel (PVE)
-                                    </label>
-                                    <select
-                                        id="targetId"
-                                        name="targetId"
-                                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                        required
-                                    >
-                                        <option value="">Ziel wählen...</option>
-                                        {/* PVE servers would be loaded here */}
-                                    </select>
-                                </div>
-                            )}
+                            <div className="grid gap-2">
+                                <label htmlFor="targetId" className="text-sm font-medium">Ziel (PBS)</label>
+                                <select
+                                    id="targetId"
+                                    name="targetId"
+                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                >
+                                    <option value="">Lokal (Konfigurationen)</option>
+                                    {pbsServers.map(s => (
+                                        <option key={s.id} value={s.id}>{s.name} ({s.url})</option>
+                                    ))}
+                                </select>
+                            </div>
                         </div>
 
                         <div className="grid gap-2">
@@ -168,12 +89,8 @@ export default function NewJobPage() {
                             <Link href="/jobs">
                                 <Button variant="ghost" type="button">Abbrechen</Button>
                             </Link>
-                            <Button type="submit" disabled={loading}>
-                                {loading ? (
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                    <Save className="mr-2 h-4 w-4" />
-                                )}
+                            <Button type="submit">
+                                <Save className="mr-2 h-4 w-4" />
                                 Job erstellen
                             </Button>
                         </div>

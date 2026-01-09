@@ -1,7 +1,7 @@
 "use client"
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Server, RefreshCw, History, Settings, Archive, FolderCog } from 'lucide-react';
+import { LayoutDashboard, Server, FolderCog, RefreshCw, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';
 
@@ -13,9 +13,7 @@ export function Sidebar() {
         { name: t('nav.dashboard'), href: '/', icon: LayoutDashboard },
         { name: t('nav.servers'), href: '/servers', icon: Server },
         { name: 'Konfigurationen', href: '/configs', icon: FolderCog },
-        { name: 'Backups', href: '/backups', icon: Archive },
-        { name: t('nav.jobs'), href: '/jobs', icon: RefreshCw },
-        { name: t('nav.history'), href: '/history', icon: History },
+        { name: 'Jobs', href: '/jobs', icon: RefreshCw },
         { name: t('nav.settings'), href: '/settings', icon: Settings },
     ];
 
@@ -25,11 +23,11 @@ export function Sidebar() {
                 <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-500 to-purple-500 bg-clip-text text-transparent">
                     ProxHost
                 </h1>
-                <p className="text-xs text-muted-foreground mt-1">Backup Manager</p>
+                <p className="text-xs text-muted-foreground mt-1">Config Backup Manager</p>
             </div>
             <nav className="flex-1 px-4 space-y-2">
                 {navItems.map((item) => {
-                    const isActive = pathname === item.href;
+                    const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
                     return (
                         <Link
                             key={item.href}

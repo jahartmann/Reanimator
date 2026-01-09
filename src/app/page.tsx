@@ -1,146 +1,209 @@
 import db from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Server, Activity, AlertCircle, CheckCircle2, Clock } from "lucide-react";
+import { Server, FolderCog, HardDrive, Clock, AlertTriangle } from "lucide-react";
+import Link from 'next/link';
+import { Button } from '@/components/ui/button';
+import { getStorageStats } from '@/app/actions/storage';
 
 export const dynamic = 'force-dynamic';
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
 
 function getStats() {
   const serverCount = db.prepare('SELECT COUNT(*) as count FROM servers').get() as { count: number };
   const pveCount = db.prepare("SELECT COUNT(*) as count FROM servers WHERE type = 'pve'").get() as { count: number };
   const pbsCount = db.prepare("SELECT COUNT(*) as count FROM servers WHERE type = 'pbs'").get() as { count: number };
-  const jobCount = db.prepare('SELECT COUNT(*) as count FROM jobs').get() as { count: number };
+  const configBackupCount = db.prepare('SELECT COUNT(*) as count FROM config_backups').get() as { count: number };
 
-  // Get recent history
-  const recentHistory = db.prepare(`
-    SELECT h.*, j.name as job_name 
-    FROM history h 
-    JOIN jobs j ON h.job_id = j.id 
-    ORDER BY start_time DESC 
-    LIMIT 5
-  `).all() as any[];
+  // Get latest config backups per server
+  const recentBackups = db.prepare(`
+        SELECT cb.*, s.name as server_name, s.type as server_type
+        FROM config_backups cb
+        JOIN servers s ON cb.server_id = s.id
+        ORDER BY cb.backup_date DESC
+        LIMIT 5
+    `).all() as any[];
 
   return {
     servers: { total: serverCount.count, pve: pveCount.count, pbs: pbsCount.count },
-    jobs: jobCount.count,
-    history: recentHistory
+    configBackups: configBackupCount.count,
+    recentBackups
   };
 }
 
-export default function Dashboard() {
+export default async function Dashboard() {
   const stats = getStats();
+  const storage = await getStorageStats();
 
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">Dashboard</h2>
-          <p className="text-muted-foreground mt-1">Overview of your infrastructure and backup status.</p>
+          <h2 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
+            Dashboard
+          </h2>
+          <p className="text-muted-foreground mt-1">
+            Übersicht Ihrer Server-Konfigurationen und Backups.
+          </p>
         </div>
-        <div className="px-4 py-2 bg-indigo-500/10 text-indigo-400 rounded-full text-sm font-medium border border-indigo-500/20">
-          System Healthy
-        </div>
+        <Link href="/configs">
+          <Button>
+            <FolderCog className="mr-2 h-4 w-4" />
+            Konfigurationen sichern
+          </Button>
+        </Link>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card className="bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-colors border-l-4 border-l-indigo-500">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Servers</CardTitle>
+            <CardTitle className="text-sm font-medium">Server</CardTitle>
             <Server className="h-4 w-4 text-indigo-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.servers.total}</div>
             <p className="text-xs text-muted-foreground">
-              {stats.servers.pve} PVE Nodes, {stats.servers.pbs} PBS Nodes
+              {stats.servers.pve} PVE, {stats.servers.pbs} PBS
             </p>
           </CardContent>
         </Card>
 
         <Card className="bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-colors border-l-4 border-l-emerald-500">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Jobs</CardTitle>
-            <Activity className="h-4 w-4 text-emerald-500" />
+            <CardTitle className="text-sm font-medium">Config Backups</CardTitle>
+            <FolderCog className="h-4 w-4 text-emerald-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.jobs}</div>
+            <div className="text-2xl font-bold">{stats.configBackups}</div>
             <p className="text-xs text-muted-foreground">
-              Scheduled backup tasks
+              Gesicherte Konfigurationen
             </p>
           </CardContent>
         </Card>
 
         <Card className="bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-colors border-l-4 border-l-blue-500">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
-            <CheckCircle2 className="h-4 w-4 text-blue-500" />
+            <CardTitle className="text-sm font-medium">Speicher belegt</CardTitle>
+            <HardDrive className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">100%</div>
+            <div className="text-2xl font-bold">{formatBytes(storage.used)}</div>
             <p className="text-xs text-muted-foreground">
-              Last 24 hours
+              {storage.backupCount} Backup-Ordner
             </p>
           </CardContent>
         </Card>
 
         <Card className="bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-colors border-l-4 border-l-orange-500">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Next Run</CardTitle>
+            <CardTitle className="text-sm font-medium">Letztes Backup</CardTitle>
             <Clock className="h-4 w-4 text-orange-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">--</div>
+            <div className="text-2xl font-bold">
+              {storage.lastBackup
+                ? new Date(storage.lastBackup).toLocaleDateString('de-DE')
+                : '--'
+              }
+            </div>
             <p className="text-xs text-muted-foreground">
-              No pending jobs
+              {storage.lastBackup
+                ? new Date(storage.lastBackup).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+                : 'Noch kein Backup'
+              }
             </p>
           </CardContent>
         </Card>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-        <Card className="col-span-4 bg-card/50 border-border/50">
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* Storage Usage */}
+        <Card className="bg-card/50 border-border/50">
           <CardHeader>
-            <CardTitle>Recent Activity</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <HardDrive className="h-5 w-5" />
+              Speichernutzung
+            </CardTitle>
             <CardDescription>
-              Latest backup and sync operations.
+              Lokaler Speicher für Konfigurations-Backups
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {stats.history.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
-                  <AlertCircle className="h-8 w-8 mb-2 opacity-20" />
-                  <p>No activity recorded yet.</p>
+              <div className="w-full h-4 bg-secondary rounded-full overflow-hidden">
+                <div
+                  className={`h-full transition-all ${storage.usagePercent > 90 ? 'bg-red-500' :
+                      storage.usagePercent > 70 ? 'bg-amber-500' : 'bg-indigo-500'
+                    }`}
+                  style={{ width: `${Math.min(storage.usagePercent, 100)}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">
+                  {formatBytes(storage.used)} belegt
+                </span>
+                <span className="font-medium">
+                  {storage.usagePercent}%
+                </span>
+              </div>
+              {storage.usagePercent > 80 && (
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 text-amber-500 text-sm">
+                  <AlertTriangle className="h-4 w-4" />
+                  <span>Speicher wird knapp! Alte Backups löschen empfohlen.</span>
                 </div>
-              ) : (
-                stats.history.map((item) => (
-                  <div key={item.id} className="flex items-center">
-                    {/* Activity Item Mockup */}
-                    <div className="ml-4 space-y-1">
-                      <p className="text-sm font-medium leading-none">{item.job_name}</p>
-                      <p className="text-sm text-muted-foreground">{item.status}</p>
-                    </div>
-                    <div className="ml-auto font-medium">
-                      {new Date(item.start_time).toLocaleTimeString()}
-                    </div>
-                  </div>
-                ))
               )}
             </div>
           </CardContent>
         </Card>
 
-        <Card className="col-span-3 bg-card/50 border-border/50">
+        {/* Recent Backups */}
+        <Card className="bg-card/50 border-border/50">
           <CardHeader>
-            <CardTitle>Storage Overview</CardTitle>
+            <CardTitle>Letzte Backups</CardTitle>
             <CardDescription>
-              Capacity of connected PBS nodes.
+              Kürzlich gesicherte Konfigurationen
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
-              <div className="w-full h-2 bg-secondary rounded-full overflow-hidden mb-2">
-                <div className="h-full bg-indigo-500 w-[0%]"></div>
-              </div>
-              <p className="text-xs">0 GB / 0 GB Used</p>
+            <div className="space-y-3">
+              {stats.recentBackups.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <FolderCog className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                  <p>Noch keine Backups vorhanden.</p>
+                  <Link href="/configs" className="text-primary text-sm hover:underline mt-2 block">
+                    Jetzt Konfigurationen sichern →
+                  </Link>
+                </div>
+              ) : (
+                stats.recentBackups.map((backup) => (
+                  <Link
+                    key={backup.id}
+                    href={`/configs/${backup.id}`}
+                    className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50 transition-colors"
+                  >
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${backup.server_type === 'pve' ? 'bg-blue-500/20' : 'bg-green-500/20'
+                      }`}>
+                      <FolderCog className={`h-4 w-4 ${backup.server_type === 'pve' ? 'text-blue-500' : 'text-green-500'
+                        }`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{backup.server_name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {backup.file_count} Dateien · {formatBytes(backup.total_size)}
+                      </p>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {new Date(backup.backup_date).toLocaleDateString('de-DE')}
+                    </div>
+                  </Link>
+                ))
+              )}
             </div>
           </CardContent>
         </Card>
