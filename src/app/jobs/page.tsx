@@ -2,7 +2,7 @@ import Link from 'next/link';
 import db from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Clock, Server, Play, Trash2, Zap } from "lucide-react";
+import { Plus, Clock, Server, Play, Trash2, Activity } from "lucide-react";
 
 export const dynamic = 'force-dynamic';
 
@@ -80,7 +80,7 @@ export default function JobsPage() {
                                             <span>{job.server_name}</span>
                                         </div>
                                         <div className="flex items-center gap-1.5">
-                                            <Zap className="h-4 w-4" />
+                                            <Activity className="h-4 w-4" />
                                             <code className="bg-muted px-1.5 rounded">{job.schedule}</code>
                                             <span className="text-muted-foreground/60">• {getFrequency(job.schedule)}</span>
                                         </div>

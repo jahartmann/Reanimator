@@ -1,7 +1,7 @@
 "use client"
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Server, FolderCog, Clock, Settings, Zap } from 'lucide-react';
+import { LayoutDashboard, Server, FolderCog, Clock, Settings, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';
 
@@ -22,7 +22,7 @@ export function Sidebar() {
             <div className="p-6">
                 <div className="flex items-center gap-2 mb-1">
                     <div className="bg-indigo-500 p-1.5 rounded-lg">
-                        <Zap className="h-4 w-4 text-white fill-current" />
+                        <Activity className="h-4 w-4 text-white fill-current" />
                     </div>
                     <h1 className="text-xl font-bold bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
                         Reanimator
