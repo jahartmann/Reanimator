@@ -224,11 +224,12 @@ export class SSHClient {
 }
 
 // Helper to create SSH client from server config
+// Note: ssh_key column stores password for password auth, or private key for key auth
 export function createSSHClient(server: {
     ssh_host?: string;
     ssh_port?: number;
     ssh_user?: string;
-    ssh_key?: string;
+    ssh_key?: string; // This can be password OR private key
     url?: string;
 }): SSHClient {
     // Extract host from URL if ssh_host not set
@@ -238,18 +239,25 @@ export function createSSHClient(server: {
             const url = new URL(server.url);
             host = url.hostname;
         } catch (e) {
-            throw new Error('No SSH host configured and could not extract from URL');
+            throw new Error('Kein SSH-Host konfiguriert und konnte nicht aus URL extrahiert werden');
         }
     }
 
     if (!host) {
-        throw new Error('No SSH host configured');
+        throw new Error('Kein SSH-Host konfiguriert');
     }
+
+    const sshKey = server.ssh_key;
+
+    // Detect if it's a private key (starts with -----BEGIN) or a password
+    const isPrivateKey = sshKey && sshKey.trim().startsWith('-----BEGIN');
 
     return new SSHClient({
         host,
         port: server.ssh_port || 22,
         username: server.ssh_user || 'root',
-        privateKey: server.ssh_key
+        privateKey: isPrivateKey ? sshKey : undefined,
+        password: !isPrivateKey ? sshKey : undefined
     });
 }
+

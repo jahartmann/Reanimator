@@ -2,30 +2,49 @@ import Link from 'next/link';
 import db from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, RefreshCw, Trash2, CalendarClock, ArrowRight } from "lucide-react";
+import { Plus, FolderCog, Trash2, CalendarClock, Server } from "lucide-react";
 import { deleteJob } from '@/app/actions';
 
 export const dynamic = 'force-dynamic';
 
+interface Job {
+    id: number;
+    name: string;
+    job_type: string;
+    source_server_id: number;
+    target_server_id: number | null;
+    schedule: string;
+    enabled: number;
+    source_name: string;
+    target_name: string | null;
+}
+
 export default function JobsPage() {
+    // Use LEFT JOIN to handle jobs without target
     const jobs = db.prepare(`
-    SELECT j.*, s1.name as source_name, s2.name as target_name 
-    FROM jobs j
-    JOIN servers s1 ON j.source_server_id = s1.id
-    JOIN servers s2 ON j.target_server_id = s2.id
-    ORDER BY j.id DESC
-  `).all() as any[];
+        SELECT j.*, 
+               s1.name as source_name, 
+               s2.name as target_name 
+        FROM jobs j
+        JOIN servers s1 ON j.source_server_id = s1.id
+        LEFT JOIN servers s2 ON j.target_server_id = s2.id
+        ORDER BY j.id DESC
+    `).all() as Job[];
 
     return (
         <div className="space-y-8">
             <div className="flex items-center justify-between">
                 <div>
-                    <h2 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">Sync Jobs</h2>
-                    <p className="text-muted-foreground mt-1">Manage automated backup and synchronization schedules.</p>
+                    <h2 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
+                        Backup Jobs
+                    </h2>
+                    <p className="text-muted-foreground mt-1">
+                        Automatisierte Konfigurations-Backups planen.
+                    </p>
                 </div>
                 <Link href="/jobs/new">
                     <Button>
-                        <Plus className="mr-2 h-4 w-4" /> Create Job
+                        <Plus className="mr-2 h-4 w-4" /> Job erstellen
                     </Button>
                 </Link>
             </div>
@@ -35,15 +54,23 @@ export default function JobsPage() {
                     <Card key={job.id} className="group hover:bg-muted/50 transition-colors">
                         <CardContent className="p-6 flex items-center gap-6">
                             <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                                <RefreshCw className="h-5 w-5 text-primary" />
+                                <FolderCog className="h-5 w-5 text-primary" />
                             </div>
 
                             <div className="flex-1 min-w-0">
                                 <h3 className="text-lg font-medium leading-none mb-2">{job.name}</h3>
                                 <div className="flex items-center text-sm text-muted-foreground gap-2">
+                                    <Server className="h-3 w-3" />
                                     <span>{job.source_name}</span>
-                                    <ArrowRight className="h-3 w-3" />
-                                    <span>{job.target_name}</span>
+                                    {job.target_name && (
+                                        <>
+                                            <span>→</span>
+                                            <span>{job.target_name}</span>
+                                        </>
+                                    )}
+                                    {!job.target_name && (
+                                        <span className="text-indigo-400">(Lokal)</span>
+                                    )}
                                 </div>
                             </div>
 
@@ -52,8 +79,8 @@ export default function JobsPage() {
                                     <CalendarClock className="h-4 w-4" />
                                     <span className="font-mono bg-secondary px-2 py-0.5 rounded text-xs">{job.schedule}</span>
                                 </div>
-                                <div className={job.enabled ? "text-emerald-500 font-medium" : "text-input"}>
-                                    {job.enabled ? "Enabled" : "Disabled"}
+                                <div className={job.enabled ? "text-emerald-500 font-medium" : "text-muted-foreground"}>
+                                    {job.enabled ? "Aktiv" : "Inaktiv"}
                                 </div>
                             </div>
 
@@ -68,11 +95,11 @@ export default function JobsPage() {
 
                 {jobs.length === 0 && (
                     <div className="py-16 text-center border-2 border-dashed border-border rounded-lg bg-card/10">
-                        <RefreshCw className="mx-auto h-12 w-12 text-muted-foreground/50 mb-4" />
-                        <p className="text-lg font-medium text-muted-foreground">No jobs scheduled</p>
-                        <p className="text-sm text-muted-foreground/80 mb-6">Create a sync job to automate backups.</p>
+                        <FolderCog className="mx-auto h-12 w-12 text-muted-foreground/50 mb-4" />
+                        <p className="text-lg font-medium text-muted-foreground">Keine Jobs geplant</p>
+                        <p className="text-sm text-muted-foreground/80 mb-6">Erstellen Sie einen Job für automatische Backups.</p>
                         <Link href="/jobs/new">
-                            <Button variant="outline">Create First Job</Button>
+                            <Button variant="outline">Ersten Job erstellen</Button>
                         </Link>
                     </div>
                 )}

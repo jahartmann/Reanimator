@@ -4,8 +4,8 @@ import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // Requires update to tabs component
-import { ArrowLeft, Save, AlertCircle, CheckCircle2, Wand2, Key } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ArrowLeft, Save, AlertCircle, CheckCircle2, Wand2, Key, Terminal } from "lucide-react";
 import { addServer } from '@/app/actions';
 import { testConnection } from '@/app/actions/management';
 import { generateApiToken } from '@/app/actions/auth';
@@ -23,13 +23,12 @@ export default function NewServerPage() {
         setTestResult(null);
 
         const url = formData.get('url') as string;
-        // Use generated token if in auto mode and available, otherwise manual input
         const manuallyEnteredToken = formData.get('token') as string;
         const token = generatedToken || manuallyEnteredToken;
         const type = formData.get('type') as 'pve' | 'pbs';
 
         if (!url || !token) {
-            setTestResult({ success: false, message: 'URL and Token are required for testing.' });
+            setTestResult({ success: false, message: 'URL und Token werden benötigt.' });
             setTesting(false);
             return;
         }
@@ -49,7 +48,7 @@ export default function NewServerPage() {
         const type = formData.get('type') as 'pve' | 'pbs';
 
         if (!url || !user || !pass) {
-            setTestResult({ success: false, message: 'URL, Username, and Password required.' });
+            setTestResult({ success: false, message: 'URL, Benutzername und Passwort werden benötigt.' });
             setGenLoading(false);
             return;
         }
@@ -57,9 +56,9 @@ export default function NewServerPage() {
         const res = await generateApiToken(url, user, pass, type);
         if (res.success && res.token) {
             setGeneratedToken(res.token);
-            setTestResult({ success: true, message: 'Token generated successfully! Ready to save.' });
+            setTestResult({ success: true, message: 'Token erfolgreich generiert!' });
         } else {
-            setTestResult({ success: false, message: 'Failed to generate token: ' + res.message });
+            setTestResult({ success: false, message: 'Token-Generierung fehlgeschlagen: ' + res.message });
         }
         setGenLoading(false);
     }
@@ -73,30 +72,30 @@ export default function NewServerPage() {
                     </Button>
                 </Link>
                 <div>
-                    <h2 className="text-2xl font-bold tracking-tight">Add New Server</h2>
-                    <p className="text-muted-foreground">Connect a Proxmox VE or Backup Server node.</p>
+                    <h2 className="text-2xl font-bold tracking-tight">Server hinzufügen</h2>
+                    <p className="text-muted-foreground">Proxmox VE oder Backup Server verbinden.</p>
                 </div>
             </div>
 
             <Card>
                 <CardHeader>
-                    <CardTitle>Server Configuration</CardTitle>
-                    <CardDescription>Choose how you want to authenticate.</CardDescription>
+                    <CardTitle>Server-Konfiguration</CardTitle>
+                    <CardDescription>Wählen Sie die Authentifizierungsmethode.</CardDescription>
                 </CardHeader>
                 <CardContent>
                     <form action={addServer} className="space-y-6">
                         <div className="space-y-4">
                             <div className="grid gap-2">
-                                <label htmlFor="name" className="text-sm font-medium">Display Name</label>
-                                <Input id="name" name="name" placeholder="e.g. Cluster Node 1" required />
+                                <label htmlFor="name" className="text-sm font-medium">Anzeigename</label>
+                                <Input id="name" name="name" placeholder="z.B. PVE Node 1" required />
                             </div>
 
                             <div className="grid gap-2">
-                                <label htmlFor="type" className="text-sm font-medium">Server Type</label>
+                                <label htmlFor="type" className="text-sm font-medium">Server-Typ</label>
                                 <select
                                     id="type"
                                     name="type"
-                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                 >
                                     <option value="pve">Proxmox VE (PVE)</option>
                                     <option value="pbs">Proxmox Backup Server (PBS)</option>
@@ -106,27 +105,62 @@ export default function NewServerPage() {
                             <div className="grid gap-2">
                                 <label htmlFor="url" className="text-sm font-medium">API URL</label>
                                 <Input id="url" name="url" placeholder="https://192.168.1.10:8006" required />
-                                <p className="text-xs text-muted-foreground">Include protocol and port.</p>
+                                <p className="text-xs text-muted-foreground">Mit Protokoll und Port.</p>
                             </div>
+                        </div>
+
+                        {/* SSH Configuration for Config Backups */}
+                        <div className="border rounded-lg p-4 bg-muted/20">
+                            <div className="flex items-center gap-2 text-sm font-medium mb-4">
+                                <Terminal className="h-4 w-4 text-indigo-500" />
+                                <span>SSH für Config-Backups</span>
+                                <span className="text-muted-foreground font-normal">(optional)</span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="grid gap-2">
+                                    <label htmlFor="ssh_host" className="text-sm font-medium">SSH Host</label>
+                                    <Input id="ssh_host" name="ssh_host" placeholder="IP oder Hostname (leer = aus URL)" />
+                                </div>
+                                <div className="grid gap-2">
+                                    <label htmlFor="ssh_port" className="text-sm font-medium">SSH Port</label>
+                                    <Input id="ssh_port" name="ssh_port" type="number" placeholder="22" defaultValue="22" />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4 mt-4">
+                                <div className="grid gap-2">
+                                    <label htmlFor="ssh_user" className="text-sm font-medium">SSH Benutzer</label>
+                                    <Input id="ssh_user" name="ssh_user" placeholder="root" defaultValue="root" />
+                                </div>
+                                <div className="grid gap-2">
+                                    <label htmlFor="ssh_password" className="text-sm font-medium">SSH Passwort</label>
+                                    <Input id="ssh_password" name="ssh_password" type="password" placeholder="Passwort für SSH" />
+                                </div>
+                            </div>
+
+                            <p className="text-xs text-muted-foreground mt-2">
+                                Wird benötigt um /etc/pve/ und /etc/proxmox-backup/ zu sichern.
+                            </p>
                         </div>
 
                         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
                             <TabsList className="grid w-full grid-cols-2">
-                                <TabsTrigger value="auto">Automatic (User/Pass)</TabsTrigger>
-                                <TabsTrigger value="manual">Manual (API Token)</TabsTrigger>
+                                <TabsTrigger value="auto">Automatisch (Benutzer/Passwort)</TabsTrigger>
+                                <TabsTrigger value="manual">Manuell (API Token)</TabsTrigger>
                             </TabsList>
 
                             <TabsContent value="auto" className="space-y-4 pt-4 border rounded-md p-4 bg-muted/20">
                                 <div className="flex items-center gap-2 text-sm text-indigo-400 mb-2">
                                     <Wand2 className="h-4 w-4" />
-                                    <span>Enter credentials to auto-generate a secure API token.</span>
+                                    <span>Zugangsdaten eingeben, um automatisch API Token zu generieren.</span>
                                 </div>
                                 <div className="grid gap-2">
-                                    <label htmlFor="username" className="text-sm font-medium">Username</label>
+                                    <label htmlFor="username" className="text-sm font-medium">Benutzername</label>
                                     <Input id="username" name="username" placeholder="root@pam" />
                                 </div>
                                 <div className="grid gap-2">
-                                    <label htmlFor="password" className="text-sm font-medium">Password</label>
+                                    <label htmlFor="password" className="text-sm font-medium">Passwort</label>
                                     <Input id="password" name="password" type="password" placeholder="••••••••" />
                                 </div>
                                 <Button
@@ -139,31 +173,29 @@ export default function NewServerPage() {
                                     className="w-full"
                                     variant="secondary"
                                 >
-                                    {genLoading ? 'Generating...' : generatedToken ? 'Token Generated!' : 'Generate Token & Connect'}
+                                    {genLoading ? 'Generiere...' : generatedToken ? 'Token generiert!' : 'Token generieren'}
                                 </Button>
                             </TabsContent>
 
                             <TabsContent value="manual" className="space-y-4 pt-4 border rounded-md p-4 bg-muted/20">
                                 <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
                                     <Key className="h-4 w-4" />
-                                    <span>Paste an existing API Token.</span>
+                                    <span>Vorhandenen API Token eingeben.</span>
                                 </div>
                                 <div className="grid gap-2">
                                     <label htmlFor="token" className="text-sm font-medium">API Token</label>
-                                    {/* If generated, we set input value, but allow override */}
                                     <Input
                                         id="token"
                                         name="token"
                                         type="password"
                                         placeholder="user@pam!token_id=secret"
                                         defaultValue={generatedToken}
-                                        key={generatedToken} // Force re-render on gen
+                                        key={generatedToken}
                                     />
                                 </div>
                             </TabsContent>
                         </Tabs>
 
-                        {/* Hidden input to ensure generated token is submitted if user is on auto tab */}
                         {activeTab === 'auto' && generatedToken && (
                             <input type="hidden" name="token" value={generatedToken} />
                         )}
@@ -176,7 +208,6 @@ export default function NewServerPage() {
                         )}
 
                         <div className="pt-4 flex justify-between gap-2">
-                            {/* Test only visible if manually entering or token generated */}
                             <Button
                                 type="button"
                                 variant="outline"
@@ -186,15 +217,15 @@ export default function NewServerPage() {
                                     if (form) handleTest(new FormData(form));
                                 }}
                             >
-                                {testing ? 'Testing...' : 'Test Connection'}
+                                {testing ? 'Teste...' : 'Verbindung testen'}
                             </Button>
 
                             <div className="flex gap-2">
                                 <Link href="/servers">
-                                    <Button variant="ghost" type="button">Cancel</Button>
+                                    <Button variant="ghost" type="button">Abbrechen</Button>
                                 </Link>
                                 <Button type="submit" disabled={!generatedToken && activeTab === 'auto'}>
-                                    <Save className="mr-2 h-4 w-4" /> Save Server
+                                    <Save className="mr-2 h-4 w-4" /> Server speichern
                                 </Button>
                             </div>
                         </div>
