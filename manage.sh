@@ -6,6 +6,16 @@ SERVICE_NAME="proxhost-backup"
 NODE_BIN=$(which node)
 NPM_BIN=$(which npm)
 
+if [ -z "$NODE_BIN" ]; then
+    echo "Error: 'node' not found in PATH."
+    exit 1
+fi
+
+if [ -z "$NPM_BIN" ]; then
+    echo "Error: 'npm' not found in PATH."
+    exit 1
+fi
+
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         echo "Please run as root (sudo)"
@@ -13,7 +23,7 @@ check_root() {
     fi
 }
 
-install() {
+do_install() {
     echo "[*] Installing Dependencies..."
     $NPM_BIN install
     
@@ -45,7 +55,7 @@ EOF
     echo "[+] Installation Complete! Service started."
 }
 
-update() {
+do_update() {
     echo "[*] Pulling latest changes..."
     git pull
     
@@ -62,7 +72,7 @@ update() {
     echo "[+] Update Complete!"
 }
 
-restart() {
+do_restart() {
     check_root
     echo "[*] Restarting service..."
     systemctl restart $SERVICE_NAME
@@ -72,13 +82,13 @@ restart() {
 case "$1" in
     install)
         check_root
-        install
+        do_install
         ;;
     update)
-        update
+        do_update
         ;;
     restart)
-        restart
+        do_restart
         ;;
     *)
         echo "Usage: $0 {install|update|restart}"
