@@ -13,14 +13,17 @@ export async function GET(
 
     if (filePath) {
         // Return file content
+        console.log(`[API] Fetching file content: ${filePath} for backup ${backupId}`);
         const content = await readBackupFile(backupId, filePath);
         if (content === null) {
+            console.error(`[API] File not found or empty: ${filePath}`);
             return NextResponse.json({ error: 'File not found' }, { status: 404 });
         }
         return NextResponse.json({ content });
     }
 
     // Return file list
+    console.log(`[API] Fetching file list for backup ${backupId}`);
     const files = await getBackupFiles(backupId);
     return NextResponse.json(files);
 }

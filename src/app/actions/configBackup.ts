@@ -283,9 +283,18 @@ function formatBytes(bytes: number): string {
 
 // Get files in a backup
 export async function getBackupFiles(backupId: number): Promise<{ path: string; size: number }[]> {
+    console.log(`[ConfigBackup] Getting files for backup ${backupId}`);
     const backup = db.prepare('SELECT * FROM config_backups WHERE id = ?').get(backupId) as ConfigBackup | undefined;
 
-    if (!backup) return [];
+    if (!backup) {
+        console.error(`[ConfigBackup] Backup ${backupId} not found in DB`);
+        return [];
+    }
+
+    if (!fs.existsSync(backup.backup_path)) {
+        console.error(`[ConfigBackup] Path not found: ${backup.backup_path}`);
+        return [];
+    }
 
     const files: { path: string; size: number }[] = [];
 
@@ -310,6 +319,7 @@ export async function getBackupFiles(backupId: number): Promise<{ path: string; 
     };
 
     walkDir(backup.backup_path, '');
+    console.log(`[ConfigBackup] Found ${files.length} files in ${backup.backup_path}`);
     return files;
 }
 
@@ -317,15 +327,23 @@ export async function getBackupFiles(backupId: number): Promise<{ path: string; 
 export async function readBackupFile(backupId: number, filePath: string): Promise<string | null> {
     const backup = db.prepare('SELECT * FROM config_backups WHERE id = ?').get(backupId) as ConfigBackup | undefined;
 
-    if (!backup) return null;
+    if (!backup) {
+        console.error(`[ConfigBackup] Backup ${backupId} not found`);
+        return null;
+    }
 
     const fullPath = path.join(backup.backup_path, filePath);
+    console.log(`[ConfigBackup] Reading file: ${fullPath}`);
 
-    if (!fs.existsSync(fullPath)) return null;
+    if (!fs.existsSync(fullPath)) {
+        console.error(`[ConfigBackup] File does not exist: ${fullPath}`);
+        return null;
+    }
 
     // Security check - prevent path traversal
     const realPath = fs.realpathSync(fullPath);
     if (!realPath.startsWith(backup.backup_path)) {
+        console.error(`[ConfigBackup] Path traversal attempt: ${realPath} vs ${backup.backup_path}`);
         return null;
     }
 
@@ -337,7 +355,8 @@ export async function readBackupFile(backupId: number, filePath: string): Promis
             return '[Binärdatei - kann nicht angezeigt werden]';
         }
         return content.toString('utf-8');
-    } catch {
+    } catch (e) {
+        console.error(`[ConfigBackup] Error reading file: ${e}`);
         return null;
     }
 }
