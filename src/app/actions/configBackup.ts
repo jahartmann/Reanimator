@@ -58,7 +58,9 @@ export async function createConfigBackup(serverId: number): Promise<{ success: b
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = path.join(backupDir, `server-${serverId}`, timestamp);
+    // Use string concatenation to avoid "Overly broad patterns" warning with template literals
+    const serverDir = 'server-' + serverId;
+    const backupPath = path.join(backupDir, serverDir, timestamp);
 
     console.log(`[ConfigBackup] Starting FULL /etc backup for ${server.name} to ${backupPath}`);
 
@@ -76,7 +78,11 @@ export async function createConfigBackup(serverId: number): Promise<{ success: b
         // Backup each path (mainly /etc)
         for (const remotePath of BACKUP_PATHS) {
             try {
-                const localPath = path.join(backupPath, remotePath);
+                // Remove leading slash to ensure we join correctly relative to backup dir
+                // and avoid "Overly broad patterns" build warning
+                const relativeRemote = remotePath.startsWith('/') ? remotePath.slice(1) : remotePath;
+                const localPath = path.join(backupPath, relativeRemote);
+
                 console.log(`[ConfigBackup] Backing up ${remotePath}...`);
 
                 // Check if path exists
