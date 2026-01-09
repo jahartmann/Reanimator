@@ -3,8 +3,9 @@ import db from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Server, FolderCog, Download, Trash2, Clock, FileText } from "lucide-react";
-import { createConfigBackup, deleteConfigBackup } from '@/app/actions/configBackup';
+import { deleteConfigBackup } from '@/app/actions/configBackup';
 import { revalidatePath } from 'next/cache';
+import { BackupButton } from './BackupButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,14 +25,7 @@ interface ConfigBackup {
     total_size: number;
 }
 
-async function handleBackup(formData: FormData) {
-    'use server';
-    const serverId = parseInt(formData.get('serverId') as string);
-    console.log('[Configs] Creating backup for server', serverId);
-    const result = await createConfigBackup(serverId);
-    console.log('[Configs] Backup result:', result);
-    revalidatePath('/configs');
-}
+
 
 async function handleDelete(formData: FormData) {
     'use server';
@@ -98,13 +92,7 @@ export default function ConfigsPage() {
                                             <CardDescription>{server.type.toUpperCase()}</CardDescription>
                                         </div>
                                     </div>
-                                    <form action={handleBackup}>
-                                        <input type="hidden" name="serverId" value={server.id} />
-                                        <Button type="submit">
-                                            <Download className="mr-2 h-4 w-4" />
-                                            Jetzt sichern
-                                        </Button>
-                                    </form>
+                                    <BackupButton serverId={server.id} />
                                 </div>
                             </CardHeader>
                             <CardContent className="p-0">
