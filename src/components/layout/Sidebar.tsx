@@ -1,7 +1,7 @@
 "use client"
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Server, RefreshCw, History, Settings } from 'lucide-react';
+import { LayoutDashboard, Server, RefreshCw, History, Settings, Archive } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';
 
@@ -12,6 +12,7 @@ export function Sidebar() {
     const navItems = [
         { name: t('nav.dashboard'), href: '/', icon: LayoutDashboard },
         { name: t('nav.servers'), href: '/servers', icon: Server },
+        { name: 'Backups', href: '/backups', icon: Archive },
         { name: t('nav.jobs'), href: '/jobs', icon: RefreshCw },
         { name: t('nav.history'), href: '/history', icon: History },
         { name: t('nav.settings'), href: '/settings', icon: Settings },

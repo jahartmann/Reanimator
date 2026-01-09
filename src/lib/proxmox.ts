@@ -177,4 +177,225 @@ export class ProxmoxClient {
             throw new Error(`Token generation failed: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
+
+    // Get storage information from PVE
+    async getStorages(node: string = ''): Promise<StorageInfo[]> {
+        const headers = await this.getHeaders();
+
+        if (this.config.type === 'pve') {
+            // For PVE, get nodes first if no node specified
+            if (!node) {
+                const nodesRes = await this.secureFetch(`${this.config.url}/api2/json/nodes`, { headers });
+                if (!nodesRes.ok) throw new Error('Failed to get nodes');
+                const nodesData = await nodesRes.json() as { data: { node: string }[] };
+                node = nodesData.data[0]?.node || 'pve';
+            }
+
+            const res = await this.secureFetch(`${this.config.url}/api2/json/nodes/${node}/storage`, { headers });
+            if (!res.ok) throw new Error('Failed to get storage');
+            const data = await res.json() as { data: PVEStorage[] };
+
+            return data.data.map(s => ({
+                id: s.storage,
+                name: s.storage,
+                type: s.type,
+                total: s.total || 0,
+                used: s.used || 0,
+                available: s.avail || 0,
+                usagePercent: s.total ? Math.round(((s.used ?? 0) / s.total) * 100) : 0,
+                content: s.content?.split(',') || [],
+                active: s.active === 1
+            }));
+        } else {
+            // PBS - get datastores
+            const res = await this.secureFetch(`${this.config.url}/api2/json/admin/datastore`, { headers });
+            if (!res.ok) throw new Error('Failed to get datastores');
+            const data = await res.json() as { data: PBSDatastore[] };
+
+            return data.data.map(d => ({
+                id: d.name,
+                name: d.name,
+                type: 'pbs-datastore',
+                total: 0,
+                used: 0,
+                available: 0,
+                usagePercent: 0,
+                content: ['backup'],
+                active: true
+            }));
+        }
+    }
+
+    // Get backups from PBS
+    async getBackups(datastore: string): Promise<BackupInfo[]> {
+        if (this.config.type !== 'pbs') {
+            throw new Error('getBackups is only available for PBS servers');
+        }
+
+        const headers = await this.getHeaders();
+        const res = await this.secureFetch(
+            `${this.config.url}/api2/json/admin/datastore/${datastore}/snapshots`,
+            { headers }
+        );
+
+        if (!res.ok) throw new Error('Failed to get backups');
+        const data = await res.json() as { data: PBSSnapshot[] };
+
+        return data.data.map(b => ({
+            id: `${b['backup-type']}/${b['backup-id']}/${b['backup-time']}`,
+            type: b['backup-type'],
+            vmid: b['backup-id'],
+            timestamp: new Date(b['backup-time'] * 1000),
+            size: b.size || 0,
+            verified: b.verification?.state === 'ok',
+            encrypted: b.crypt?.mode === 'encrypt',
+            files: b.files || []
+        }));
+    }
+
+    // Get nodes from PVE
+    async getNodes(): Promise<NodeInfo[]> {
+        if (this.config.type !== 'pve') {
+            throw new Error('getNodes is only available for PVE servers');
+        }
+
+        const headers = await this.getHeaders();
+        const res = await this.secureFetch(`${this.config.url}/api2/json/nodes`, { headers });
+
+        if (!res.ok) throw new Error('Failed to get nodes');
+        const data = await res.json() as { data: PVENode[] };
+
+        return data.data.map(n => ({
+            id: n.node,
+            name: n.node,
+            status: n.status,
+            cpu: n.cpu || 0,
+            memory: {
+                used: n.mem || 0,
+                total: n.maxmem || 0,
+                usagePercent: n.maxmem ? Math.round(((n.mem ?? 0) / n.maxmem) * 100) : 0
+            },
+            uptime: n.uptime || 0
+        }));
+    }
+
+    // Get VMs from PVE node
+    async getVMs(node: string): Promise<VMInfo[]> {
+        if (this.config.type !== 'pve') {
+            throw new Error('getVMs is only available for PVE servers');
+        }
+
+        const headers = await this.getHeaders();
+        const res = await this.secureFetch(`${this.config.url}/api2/json/nodes/${node}/qemu`, { headers });
+
+        if (!res.ok) throw new Error('Failed to get VMs');
+        const data = await res.json() as { data: PVEVM[] };
+
+        return data.data.map(vm => ({
+            vmid: vm.vmid,
+            name: vm.name || `VM ${vm.vmid}`,
+            status: vm.status,
+            cpu: vm.cpu || 0,
+            memory: {
+                used: vm.mem || 0,
+                total: vm.maxmem || 0
+            },
+            disk: vm.disk || 0,
+            uptime: vm.uptime || 0
+        }));
+    }
+}
+
+// Type definitions
+interface PVEStorage {
+    storage: string;
+    type: string;
+    total?: number;
+    used?: number;
+    avail?: number;
+    content?: string;
+    active?: number;
+}
+
+interface PBSDatastore {
+    name: string;
+}
+
+interface PBSSnapshot {
+    'backup-type': string;
+    'backup-id': string;
+    'backup-time': number;
+    size?: number;
+    verification?: { state: string };
+    crypt?: { mode: string };
+    files?: string[];
+}
+
+interface PVENode {
+    node: string;
+    status: string;
+    cpu?: number;
+    mem?: number;
+    maxmem?: number;
+    uptime?: number;
+}
+
+interface PVEVM {
+    vmid: number;
+    name?: string;
+    status: string;
+    cpu?: number;
+    mem?: number;
+    maxmem?: number;
+    disk?: number;
+    uptime?: number;
+}
+
+export interface StorageInfo {
+    id: string;
+    name: string;
+    type: string;
+    total: number;
+    used: number;
+    available: number;
+    usagePercent: number;
+    content: string[];
+    active: boolean;
+}
+
+export interface BackupInfo {
+    id: string;
+    type: string;
+    vmid: string;
+    timestamp: Date;
+    size: number;
+    verified: boolean;
+    encrypted: boolean;
+    files: string[];
+}
+
+export interface NodeInfo {
+    id: string;
+    name: string;
+    status: string;
+    cpu: number;
+    memory: {
+        used: number;
+        total: number;
+        usagePercent: number;
+    };
+    uptime: number;
+}
+
+export interface VMInfo {
+    vmid: number;
+    name: string;
+    status: string;
+    cpu: number;
+    memory: {
+        used: number;
+        total: number;
+    };
+    disk: number;
+    uptime: number;
 }
