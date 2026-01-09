@@ -61,12 +61,18 @@ function calculateSize(dir: string): number {
     if (fs.existsSync(dir)) {
         const files = fs.readdirSync(dir);
         for (const file of files) {
-            const filePath = path.join(dir, file);
-            const stat = fs.statSync(filePath);
-            if (stat.isDirectory()) {
-                size += calculateSize(filePath);
-            } else {
-                size += stat.size;
+            try {
+                const filePath = path.join(dir, file);
+                // Use lstatSync to avoid following broken symlinks (ENOENT)
+                const stat = fs.lstatSync(filePath);
+                if (stat.isDirectory()) {
+                    size += calculateSize(filePath);
+                } else {
+                    size += stat.size;
+                }
+            } catch (e) {
+                // Ignore errors for individual files during stats
+                console.warn(`[BackupLogic] Warning counting size for ${file}:`, e);
             }
         }
     }
@@ -79,12 +85,17 @@ function countFiles(dir: string): number {
     if (fs.existsSync(dir)) {
         const files = fs.readdirSync(dir);
         for (const file of files) {
-            const filePath = path.join(dir, file);
-            const stat = fs.statSync(filePath);
-            if (stat.isDirectory()) {
-                count += countFiles(filePath);
-            } else {
-                count++;
+            try {
+                const filePath = path.join(dir, file);
+                // Use lstatSync to avoid following broken symlinks (ENOENT)
+                const stat = fs.lstatSync(filePath);
+                if (stat.isDirectory()) {
+                    count += countFiles(filePath);
+                } else {
+                    count++;
+                }
+            } catch (e) {
+                console.warn(`[BackupLogic] Warning counting file ${file}:`, e);
             }
         }
     }
