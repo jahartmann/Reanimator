@@ -46,7 +46,61 @@ export async function addJob(formData: FormData) {
     redirect('/jobs');
 }
 
+
 export async function deleteJob(id: number) {
     db.prepare('DELETE FROM jobs WHERE id = ?').run(id);
     revalidatePath('/jobs');
+}
+
+export async function testSSHConnection(formData: FormData) {
+    const host = formData.get('ssh_host') as string;
+    const port = parseInt(formData.get('ssh_port') as string);
+    const username = formData.get('ssh_user') as string;
+    const password = formData.get('ssh_password') as string;
+
+    if (!host) return { success: false, message: 'Host required' };
+
+    try {
+        const { Client } = await import('ssh2');
+        const conn = new Client();
+
+        await new Promise<void>((resolve, reject) => {
+            conn.on('ready', () => {
+                conn.end();
+                resolve();
+            }).on('error', (err) => {
+                reject(err);
+            }).connect({
+                host,
+                port,
+                username,
+                password,
+                readyTimeout: 5000
+            });
+        });
+
+        return { success: true, message: 'SSH Verbindung erfolgreich' };
+    } catch (err) {
+        return { success: false, message: `SSH Fehler: ${err instanceof Error ? err.message : String(err)}` };
+    }
+}
+
+export async function generateApiToken(formData: FormData) {
+    const url = formData.get('url') as string;
+    const username = formData.get('user') as string;
+    const password = formData.get('password') as string;
+    const type = formData.get('type') as 'pve' | 'pbs';
+
+    if (!url || !username || !password) {
+        return { success: false, message: 'URL, Benutzer und Passwort benötigt' };
+    }
+
+    try {
+        const { ProxmoxClient } = await import('@/lib/proxmox');
+        const client = new ProxmoxClient({ url, type, username, password });
+        const token = await client.generateToken();
+        return { success: true, token };
+    } catch (err) {
+        return { success: false, message: `Token Fehler: ${err instanceof Error ? err.message : String(err)}` };
+    }
 }

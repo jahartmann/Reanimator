@@ -1,11 +1,57 @@
+'use client';
+
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Save } from "lucide-react";
-import { addServer } from '@/app/actions';
+import { ArrowLeft, Save, Key, Network, Loader2, CheckCircle2, XCircle } from "lucide-react";
+import { addServer, testSSHConnection, generateApiToken } from '@/app/actions';
+import { useState } from 'react';
 
 export default function NewServerPage() {
+    const [loading, setLoading] = useState(false);
+    const [sshStatus, setSSHStatus] = useState<'none' | 'success' | 'error'>('none');
+    const [sshMessage, setSSHMessage] = useState('');
+    const [tokenStatus, setTokenStatus] = useState<'none' | 'success' | 'error'>('none');
+    const [tokenMessage, setTokenMessage] = useState('');
+
+    // Proxmox Auth State for Token Gen
+    const [pmUser, setPmUser] = useState('root@pam');
+    const [pmPass, setPmPass] = useState('');
+
+    async function handleTestSSH(formData: FormData) {
+        setSSHStatus('none');
+        setSSHMessage('Teste Verbindung...');
+
+        // Append form values manually since we're preventing default submission
+        const res = await testSSHConnection(formData);
+
+        setSSHStatus(res.success ? 'success' : 'error');
+        setSSHMessage(res.message);
+    }
+
+    async function handleGenToken() {
+        setTokenStatus('none');
+        setTokenMessage('Generiere Token...');
+
+        const form = document.querySelector('form') as HTMLFormElement;
+        const formData = new FormData(form);
+        formData.append('user', pmUser);
+        formData.append('password', pmPass);
+
+        const res = await generateApiToken(formData);
+
+        if (res.success && res.token) {
+            setTokenStatus('success');
+            setTokenMessage('Token generiert!');
+            const tokenInput = document.getElementById('token') as HTMLInputElement;
+            if (tokenInput) tokenInput.value = res.token;
+        } else {
+            setTokenStatus('error');
+            setTokenMessage(res.message || 'Fehler');
+        }
+    }
+
     return (
         <div className="max-w-2xl mx-auto space-y-6">
             <div className="flex items-center gap-4">
@@ -50,18 +96,75 @@ export default function NewServerPage() {
                             <Input id="url" name="url" placeholder="https://192.168.1.100:8006" required />
                         </div>
 
+                        <div className="p-4 bg-muted/50 rounded-lg space-y-4 border">
+                            <h4 className="font-medium text-sm flex items-center gap-2">
+                                <Key className="h-4 w-4" />
+                                API Token Generator (Optional)
+                            </h4>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="grid gap-2">
+                                    <label className="text-xs">Benutzer (für Token-Gen)</label>
+                                    <Input
+                                        value={pmUser}
+                                        onChange={e => setPmUser(e.target.value)}
+                                        placeholder="root@pam"
+                                    />
+                                </div>
+                                <div className="grid gap-2">
+                                    <label className="text-xs">Passwort (für Token-Gen)</label>
+                                    <Input
+                                        type="password"
+                                        value={pmPass}
+                                        onChange={e => setPmPass(e.target.value)}
+                                        placeholder="***"
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Button type="button" size="sm" variant="outline" onClick={handleGenToken}>
+                                    Token generieren
+                                </Button>
+                                {tokenMessage && (
+                                    <span className={`text-xs ${tokenStatus === 'success' ? 'text-green-500' : 'text-red-500'}`}>
+                                        {tokenMessage}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+
                         <div className="grid gap-2">
                             <label htmlFor="token" className="text-sm font-medium">API Token</label>
                             <Input id="token" name="token" placeholder="user@pam!tokenid=secret" required />
                             <p className="text-xs text-muted-foreground">
-                                Format: user@realm!tokenname=token-secret
+                                Wird oben automatisch ausgefüllt oder manuell eingeben.
                             </p>
                         </div>
 
                         <hr className="my-4" />
 
                         <div className="space-y-4">
-                            <h4 className="font-medium">SSH für Config-Backups</h4>
+                            <div className="flex items-center justify-between">
+                                <h4 className="font-medium">SSH Konfiguration</h4>
+                                <div className="flex items-center gap-2">
+                                    {sshMessage && (
+                                        <span className={`text-xs ${sshStatus === 'success' ? 'text-green-500' : 'text-red-500'}`}>
+                                            {sshMessage}
+                                        </span>
+                                    )}
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={(e) => {
+                                            const form = e.currentTarget.closest('form');
+                                            if (form) handleTestSSH(new FormData(form));
+                                        }}
+                                    >
+                                        <Network className="mr-2 h-3 w-3" />
+                                        Verbindung testen
+                                    </Button>
+                                </div>
+                            </div>
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="grid gap-2">
