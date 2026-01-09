@@ -2,8 +2,8 @@ import Link from 'next/link';
 import db from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Server, FolderCog, Download, Trash2, Clock, FileText } from "lucide-react";
-import { deleteConfigBackup } from '@/app/actions/configBackup';
+import { Server, FolderCog } from "lucide-react";
+import ConfigList from './ConfigList';
 import { revalidatePath } from 'next/cache';
 import { BackupButton } from './BackupButton';
 
@@ -27,12 +27,7 @@ interface ConfigBackup {
 
 
 
-async function handleDelete(formData: FormData) {
-    'use server';
-    const backupId = parseInt(formData.get('backupId') as string);
-    await deleteConfigBackup(backupId);
-    revalidatePath('/configs');
-}
+
 
 function formatBytes(bytes: number): string {
     if (bytes === 0) return '0 B';
@@ -76,65 +71,7 @@ export default function ConfigsPage() {
                     </CardContent>
                 </Card>
             ) : (
-                <div className="space-y-6">
-                    {servers.map((server) => (
-                        <Card key={server.id}>
-                            <CardHeader className="bg-muted/30">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-3">
-                                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${server.type === 'pve' ? 'bg-blue-500/20' : 'bg-green-500/20'
-                                            }`}>
-                                            <FolderCog className={`h-5 w-5 ${server.type === 'pve' ? 'text-blue-500' : 'text-green-500'
-                                                }`} />
-                                        </div>
-                                        <div>
-                                            <CardTitle>{server.name}</CardTitle>
-                                            <CardDescription>{server.type.toUpperCase()}</CardDescription>
-                                        </div>
-                                    </div>
-                                    <BackupButton serverId={server.id} />
-                                </div>
-                            </CardHeader>
-                            <CardContent className="p-0">
-                                {!backupsByServer[server.id] || backupsByServer[server.id].length === 0 ? (
-                                    <div className="p-6 text-center text-muted-foreground">
-                                        Noch keine Backups
-                                    </div>
-                                ) : (
-                                    <div className="divide-y divide-border">
-                                        {backupsByServer[server.id].slice(0, 5).map((backup) => (
-                                            <div key={backup.id} className="p-4 flex items-center gap-4">
-                                                <Clock className="h-5 w-5 text-muted-foreground" />
-                                                <div className="flex-1">
-                                                    <p className="font-medium">
-                                                        {new Date(backup.backup_date).toLocaleString('de-DE')}
-                                                    </p>
-                                                    <p className="text-sm text-muted-foreground">
-                                                        {backup.file_count} Dateien · {formatBytes(backup.total_size)}
-                                                    </p>
-                                                </div>
-                                                <div className="flex gap-2">
-                                                    <Link href={`/configs/${backup.id}`}>
-                                                        <Button variant="ghost" size="sm">
-                                                            <FileText className="mr-2 h-4 w-4" />
-                                                            Anzeigen
-                                                        </Button>
-                                                    </Link>
-                                                    <form action={handleDelete}>
-                                                        <input type="hidden" name="backupId" value={backup.id} />
-                                                        <Button variant="ghost" size="sm" className="text-red-500">
-                                                            <Trash2 className="h-4 w-4" />
-                                                        </Button>
-                                                    </form>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </CardContent>
-                        </Card>
-                    ))}
-                </div>
+                <ConfigList servers={servers} backupsByServer={backupsByServer} />
             )}
         </div>
     );
