@@ -171,7 +171,9 @@ export async function performFullBackup(serverId: number, server: Server) {
                 filter: (path, entry) => {
                     // Skip symbolic links and hard links to prevent build tools from crashing
                     // on invalid paths or paths outside project root
-                    return entry.type !== 'SymbolicLink' && entry.type !== 'Link';
+                    // Cast entry to any to avoid type issues with @types/tar
+                    const type = (entry as any).type;
+                    return type !== 'SymbolicLink' && type !== 'Link';
                 }
             });
 

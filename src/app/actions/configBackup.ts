@@ -76,12 +76,27 @@ export async function getBackupFiles(backupId: number) {
     // Recursive scanner
     const walk = (d: string, base: string) => {
         if (!fs.existsSync(d)) return;
-        for (const i of fs.readdirSync(d)) {
-            const full = path.join(d, i);
-            const relative = path.join(base, i);
-            const stat = fs.statSync(full);
-            if (stat.isDirectory()) walk(full, relative);
-            else files.push({ path: relative, size: stat.size });
+        try {
+            const items = fs.readdirSync(d);
+            for (const i of items) {
+                try {
+                    const full = path.join(d, i);
+                    const relative = path.join(base, i);
+                    // Use lstatSync to handle symlinks safely
+                    const stat = fs.lstatSync(full);
+
+                    if (stat.isDirectory()) {
+                        walk(full, relative);
+                    } else if (stat.isFile()) {
+                        files.push({ path: relative, size: stat.size });
+                    }
+                    // Ignore symlinks/others in the file browser list to be safe
+                } catch (e) {
+                    console.warn(`[ConfigBackup] Error reading file ${i}:`, e);
+                }
+            }
+        } catch (e) {
+            console.warn(`[ConfigBackup] Error reading dir ${d}:`, e);
         }
     };
 
