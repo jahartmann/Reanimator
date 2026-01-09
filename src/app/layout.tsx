@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { Providers } from "@/components/providers";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -15,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Reanimator Backup Manager",
-  description: "Centralized Proxmox Backup Management",
+  title: "Reanimator",
+  description: "Proxmox Backup & Recovery Tool",
 };
 
 export default function RootLayout({
@@ -29,14 +28,12 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground min-h-screen`}
       >
-        <Providers>
-          <Sidebar />
-          <main className="pl-64 min-h-screen">
-            <div className="container mx-auto p-8">
-              {children}
-            </div>
-          </main>
-        </Providers>
+        <Sidebar />
+        <main className="pl-64 min-h-screen">
+          <div className="container mx-auto p-8">
+            {children}
+          </div>
+        </main>
       </body>
     </html>
   );
