@@ -3,17 +3,19 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, Server, RefreshCw, History, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-const navItems = [
-    { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-    { name: 'Servers', href: '/servers', icon: Server },
-    { name: 'Sync Jobs', href: '/jobs', icon: RefreshCw },
-    { name: 'History', href: '/history', icon: History },
-    { name: 'Settings', href: '/settings', icon: Settings },
-];
+import { useTranslation } from '@/lib/i18n';
 
 export function Sidebar() {
     const pathname = usePathname();
+    const { t } = useTranslation();
+
+    const navItems = [
+        { name: t('nav.dashboard'), href: '/', icon: LayoutDashboard },
+        { name: t('nav.servers'), href: '/servers', icon: Server },
+        { name: t('nav.jobs'), href: '/jobs', icon: RefreshCw },
+        { name: t('nav.history'), href: '/history', icon: History },
+        { name: t('nav.settings'), href: '/settings', icon: Settings },
+    ];
 
     return (
         <div className="flex flex-col w-64 border-r border-border bg-card h-screen fixed left-0 top-0 z-30">
@@ -50,7 +52,7 @@ export function Sidebar() {
                     </div>
                     <div>
                         <p className="text-sm font-medium">Admin User</p>
-                        <p className="text-xs text-muted-foreground">Connected</p>
+                        <p className="text-xs text-muted-foreground">{t('servers.online')}</p>
                     </div>
                 </div>
             </div>

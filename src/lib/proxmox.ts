@@ -1,14 +1,17 @@
 /**
  * Proxmox API Client
  * Handles communication with Proxmox VE and Backup Server
+ * Uses undici for proper SSL bypass with self-signed certificates
  */
 
-import https from 'https';
+import { Agent, fetch as undiciFetch } from 'undici';
 
-// Create an HTTPS agent that ignores self-signed certificates
-// Proxmox uses self-signed certs by default
-const insecureAgent = new https.Agent({
-    rejectUnauthorized: false
+// Create an agent that ignores SSL certificate errors
+// Required for Proxmox servers with self-signed certificates
+const insecureAgent = new Agent({
+    connect: {
+        rejectUnauthorized: false
+    }
 });
 
 interface ProxmoxConfig {
@@ -17,18 +20,6 @@ interface ProxmoxConfig {
     username?: string;
     password?: string;
     type: 'pve' | 'pbs';
-}
-
-// Custom fetch wrapper that uses insecure agent for HTTPS
-async function proxmoxFetch(url: string, options: RequestInit = {}): Promise<Response> {
-    // Node.js fetch with custom agent
-    const fetchOptions: any = {
-        ...options,
-        // @ts-ignore - Node.js specific option
-        agent: url.startsWith('https') ? insecureAgent : undefined
-    };
-
-    return fetch(url, fetchOptions);
 }
 
 export class ProxmoxClient {
@@ -40,9 +31,24 @@ export class ProxmoxClient {
         this.config = config;
     }
 
+    // Custom fetch that uses undici with SSL bypass
+    private async secureFetch(url: string, options: RequestInit = {}): Promise<Response> {
+        console.log(`[Proxmox] Fetching: ${url}`);
+        try {
+            const response = await undiciFetch(url, {
+                ...options,
+                dispatcher: insecureAgent
+            } as any);
+            return response as unknown as Response;
+        } catch (error) {
+            console.error('[Proxmox] Fetch error:', error);
+            throw error;
+        }
+    }
+
     // Returns valid headers for requests
-    private async getHeaders(): Promise<HeadersInit> {
-        const headers: HeadersInit = {
+    private async getHeaders(): Promise<Record<string, string>> {
+        const headers: Record<string, string> = {
             'Content-Type': 'application/json',
         };
 
@@ -62,46 +68,54 @@ export class ProxmoxClient {
         return headers;
     }
 
-    private async authenticate() {
+    // Authenticate with username/password to get a session ticket
+    async authenticate(): Promise<void> {
         if (!this.config.username || !this.config.password) {
             throw new Error('Username and password required for authentication');
         }
 
-        console.log('Authenticating with password...');
+        console.log('[Proxmox] Authenticating with password...');
+        const authUrl = `${this.config.url}/api2/json/access/ticket`;
+
         try {
-            const res = await proxmoxFetch(`${this.config.url}/api2/json/access/ticket`, {
+            const body = new URLSearchParams({
+                username: this.config.username,
+                password: this.config.password
+            }).toString();
+
+            const res = await this.secureFetch(authUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({
-                    username: this.config.username,
-                    password: this.config.password
-                }).toString(),
-                signal: AbortSignal.timeout(10000)
+                body: body
             });
 
             if (!res.ok) {
                 const errText = await res.text();
-                throw new Error(`Authentication failed: ${res.status} ${errText}`);
+                console.error('[Proxmox] Auth failed:', res.status, errText);
+                throw new Error(`Authentication failed: ${res.status} - ${errText}`);
             }
-            const data = await res.json();
+
+            const data = await res.json() as { data: { ticket: string; CSRFPreventionToken: string } };
             this.ticket = data.data.ticket;
             this.csrfToken = data.data.CSRFPreventionToken;
+            console.log('[Proxmox] Authentication successful!');
         } catch (e) {
-            console.error('Auth Error:', e);
-            throw e;
+            console.error('[Proxmox] Auth Error:', e);
+            throw new Error(`Failed to authenticate: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
 
+    // Check if the server is reachable
     async checkStatus(): Promise<boolean> {
         try {
             const headers = await this.getHeaders();
-            const res = await proxmoxFetch(`${this.config.url}/api2/json/version`, {
-                headers,
-                signal: AbortSignal.timeout(5000)
+            const res = await this.secureFetch(`${this.config.url}/api2/json/version`, {
+                method: 'GET',
+                headers
             });
             return res.ok;
         } catch (e) {
-            console.error('Proxmox connection failed:', e);
+            console.error('[Proxmox] Connection failed:', e);
             return false;
         }
     }
@@ -109,51 +123,58 @@ export class ProxmoxClient {
     // Generate a new API token for the current user
     async generateToken(tokenId: string = 'proxhost-backup'): Promise<string> {
         // Ensure we are authenticated first (Ticket mode)
-        if (!this.ticket) await this.authenticate();
+        if (!this.ticket) {
+            await this.authenticate();
+        }
 
         // Determine user ID
         const userId = this.config.username;
         if (!userId) throw new Error("No username provided");
 
         const headers = await this.getHeaders();
+        console.log('[Proxmox] Generating API token for user:', userId);
 
         try {
-            // Delete existing token (if any) - ignore errors
+            // Try to delete existing token first (ignore errors)
             try {
-                await proxmoxFetch(`${this.config.url}/api2/json/access/users/${encodeURIComponent(userId)}/token/${tokenId}`, {
+                const deleteUrl = `${this.config.url}/api2/json/access/users/${encodeURIComponent(userId)}/token/${tokenId}`;
+                await this.secureFetch(deleteUrl, {
                     method: 'DELETE',
                     headers
                 });
+                console.log('[Proxmox] Deleted existing token');
             } catch (e) {
-                // Ignore deletion errors
+                // Ignore - token might not exist
             }
 
             // Create new token
-            const res = await proxmoxFetch(`${this.config.url}/api2/json/access/users/${encodeURIComponent(userId)}/token/${tokenId}`, {
+            const createUrl = `${this.config.url}/api2/json/access/users/${encodeURIComponent(userId)}/token/${tokenId}`;
+            const res = await this.secureFetch(createUrl, {
                 method: 'POST',
                 headers: {
                     ...headers,
                     'Content-Type': 'application/x-www-form-urlencoded'
                 },
                 body: new URLSearchParams({
-                    privsep: '0' // No privilege separation
+                    privsep: '0' // No privilege separation - token inherits user permissions
                 }).toString()
             });
 
             if (!res.ok) {
                 const err = await res.text();
-                throw new Error(`Failed to create token: ${res.status} ${err}`);
+                console.error('[Proxmox] Token creation failed:', res.status, err);
+                throw new Error(`Failed to create token: ${res.status} - ${err}`);
             }
 
-            const data = await res.json();
-            // data.data.value contains the SECRET
+            const data = await res.json() as { data: { value: string } };
             // Full token format: user@pam!tokenid=secret
             const fullToken = `${userId}!${tokenId}=${data.data.value}`;
+            console.log('[Proxmox] Token generated successfully!');
             return fullToken;
 
         } catch (e) {
-            console.error("Token Generation Failed:", e);
-            throw e;
+            console.error('[Proxmox] Token Generation Failed:', e);
+            throw new Error(`Token generation failed: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
 }

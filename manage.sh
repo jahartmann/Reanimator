@@ -97,8 +97,8 @@ do_update() {
     echo "[*] Pulling latest changes..."
     git pull
     
-    echo "[*] Re-installing dependencies..."
-    $NPM_BIN install
+    echo "[*] Re-installing dependencies (inc. dev)..."
+    $NPM_BIN install --include=dev
     
     echo "[*] Re-building application..."
     $NPM_BIN run build
