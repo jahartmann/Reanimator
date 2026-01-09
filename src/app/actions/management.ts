@@ -30,29 +30,26 @@ export async function testConnection(url: string, token: string, type: 'pve' | '
 export async function systemRestart() {
     console.log('Triggering system restart...');
     try {
-        // Safe restart logic: calls the management script or exits to let systemd restart
-        // In dev mode, we just exit. In prod with systemd, this triggers Restart=always
-        setTimeout(() => {
-            process.exit(0);
-        }, 1000);
-        return { success: true, message: 'Restarting...' };
+        const { stdout, stderr } = await execAsync('./manage.sh restart');
+        console.log('Restart script output:', stdout);
+        if (stderr) console.error('Restart script error output:', stderr);
+        return { success: true, message: `Restart initiated.\n${stdout}` };
     } catch (e) {
-        return { success: false, message: 'Failed to restart.' };
+        console.error(e);
+        return { success: false, message: 'Failed to restart: ' + String(e) };
     }
 }
 
 export async function systemUpdate() {
     // This is risky to run from the web app itself as it kills the process running the app
-    // Ideally this writes a trigger file or similar. 
-    // For now, we'll try to execute the git pull command, but it might fail permissions if not handled carefully.
-    // We will just run the command and hope the user set permissions right or its running as a user who can git pull.
-
+    // Ideally this writes a trigger file or similar.
+    // For now, we'll invoke the management script which provides detailed logging.
     try {
-        // Force install of dev dependencies (typescript etc) needed for building
-        await execAsync('git pull && npm install --include=dev && npm run build');
-        // After build, we need to restart
-        setTimeout(() => process.exit(0), 1000);
-        return { success: true, message: 'Update started. Service will restart shortly.' };
+        const { stdout, stderr } = await execAsync('./manage.sh update');
+        console.log('Update script output:', stdout);
+        if (stderr) console.error('Update script error output:', stderr);
+        // The script will handle restart; we just return the output.
+        return { success: true, message: `Update process started.\n${stdout}` };
     } catch (e) {
         console.error(e);
         return { success: false, message: 'Update failed: ' + String(e) };
