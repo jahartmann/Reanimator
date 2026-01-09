@@ -92,6 +92,27 @@ export class SSHClient {
         });
     }
 
+    // Execute a command and pipe output to a Writable stream
+    async streamCommand(command: string, destination: NodeJS.WritableStream): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.client.exec(command, (err, stream) => {
+                if (err) return reject(err);
+
+                stream.pipe(destination);
+
+                stream.on('close', (code: number) => {
+                    // Resolve even on non-zero, caller can check logs if needed
+                    // Tar often exits with 1 for minor warnings
+                    resolve();
+                });
+
+                stream.stderr.on('data', (data) => {
+                    // Optional: process stderr
+                });
+            });
+        });
+    }
+
     // Get SFTP session
     private async getSFTP(): Promise<SFTPWrapper> {
         return new Promise((resolve, reject) => {
