@@ -48,7 +48,8 @@ export async function systemUpdate() {
     // We will just run the command and hope the user set permissions right or its running as a user who can git pull.
 
     try {
-        await execAsync('git pull && npm install && npm run build');
+        // Force install of dev dependencies (typescript etc) needed for building
+        await execAsync('git pull && npm install --include=dev && npm run build');
         // After build, we need to restart
         setTimeout(() => process.exit(0), 1000);
         return { success: true, message: 'Update started. Service will restart shortly.' };

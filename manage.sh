@@ -54,8 +54,9 @@ do_install() {
     NODE_BIN=$(which node)
     NPM_BIN=$(which npm)
     
-    echo "[*] Installing Dependencies..."
-    $NPM_BIN install
+    echo "[*] Installing Dependencies (inc. dev)..."
+    # Ensure we install dev dependencies so we can build
+    $NPM_BIN install --include=dev
     
     echo "[*] Building Application..."
     $NPM_BIN run build

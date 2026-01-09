@@ -3,12 +3,32 @@
  * Handles communication with Proxmox VE and Backup Server
  */
 
+import https from 'https';
+
+// Create an HTTPS agent that ignores self-signed certificates
+// Proxmox uses self-signed certs by default
+const insecureAgent = new https.Agent({
+    rejectUnauthorized: false
+});
+
 interface ProxmoxConfig {
     url: string;
     token?: string; // user@pam!token_id=secret
     username?: string;
     password?: string;
     type: 'pve' | 'pbs';
+}
+
+// Custom fetch wrapper that uses insecure agent for HTTPS
+async function proxmoxFetch(url: string, options: RequestInit = {}): Promise<Response> {
+    // Node.js fetch with custom agent
+    const fetchOptions: any = {
+        ...options,
+        // @ts-ignore - Node.js specific option
+        agent: url.startsWith('https') ? insecureAgent : undefined
+    };
+
+    return fetch(url, fetchOptions);
 }
 
 export class ProxmoxClient {
@@ -49,17 +69,20 @@ export class ProxmoxClient {
 
         console.log('Authenticating with password...');
         try {
-            const res = await fetch(`${this.config.url}/api2/json/access/ticket`, {
+            const res = await proxmoxFetch(`${this.config.url}/api2/json/access/ticket`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
                     username: this.config.username,
                     password: this.config.password
-                }),
+                }).toString(),
                 signal: AbortSignal.timeout(10000)
             });
 
-            if (!res.ok) throw new Error('Authentication failed');
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(`Authentication failed: ${res.status} ${errText}`);
+            }
             const data = await res.json();
             this.ticket = data.data.ticket;
             this.csrfToken = data.data.CSRFPreventionToken;
@@ -72,7 +95,7 @@ export class ProxmoxClient {
     async checkStatus(): Promise<boolean> {
         try {
             const headers = await this.getHeaders();
-            const res = await fetch(`${this.config.url}/api2/json/version`, {
+            const res = await proxmoxFetch(`${this.config.url}/api2/json/version`, {
                 headers,
                 signal: AbortSignal.timeout(5000)
             });
@@ -88,31 +111,33 @@ export class ProxmoxClient {
         // Ensure we are authenticated first (Ticket mode)
         if (!this.ticket) await this.authenticate();
 
-        // Determine user ID (simple extraction usually works, or fetch from /access/ticket response)
-        // PROXMOX expects: /access/users/{userid}/token/{tokenid}
+        // Determine user ID
         const userId = this.config.username;
         if (!userId) throw new Error("No username provided");
 
         const headers = await this.getHeaders();
 
         try {
-            // Check if token already exists? No, just try to create. 
-            // Note: If it exists, this might fail unless we delete it first or add random suffix. 
-            // For robustness, we'll try to delete it first (ignore error) then create.
+            // Delete existing token (if any) - ignore errors
+            try {
+                await proxmoxFetch(`${this.config.url}/api2/json/access/users/${encodeURIComponent(userId)}/token/${tokenId}`, {
+                    method: 'DELETE',
+                    headers
+                });
+            } catch (e) {
+                // Ignore deletion errors
+            }
 
-            // Delete (Cleanup old)
-            await fetch(`${this.config.url}/api2/json/access/users/${userId}/token/${tokenId}`, {
-                method: 'DELETE',
-                headers
-            });
-
-            // Create
-            const res = await fetch(`${this.config.url}/api2/json/access/users/${userId}/token/${tokenId}`, {
+            // Create new token
+            const res = await proxmoxFetch(`${this.config.url}/api2/json/access/users/${encodeURIComponent(userId)}/token/${tokenId}`, {
                 method: 'POST',
-                headers,
-                body: JSON.stringify({
-                    privsep: 0 // No privilege separation for simplicity in automation
-                })
+                headers: {
+                    ...headers,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({
+                    privsep: '0' // No privilege separation
+                }).toString()
             });
 
             if (!res.ok) {
