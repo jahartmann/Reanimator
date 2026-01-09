@@ -1,11 +1,10 @@
 import Link from 'next/link';
-import { LayoutDashboard, Server, FolderCog, Clock, Settings } from 'lucide-react';
+import { LayoutDashboard, Server, FolderCog, Settings } from 'lucide-react';
 
 const navItems = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard },
     { name: 'Server', href: '/servers', icon: Server },
     { name: 'Konfigurationen', href: '/configs', icon: FolderCog },
-    { name: 'Automatisierung', href: '/jobs', icon: Clock },
     { name: 'Einstellungen', href: '/settings', icon: Settings },
 ];
 

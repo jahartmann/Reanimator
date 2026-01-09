@@ -2,7 +2,7 @@ import Link from 'next/link';
 import db from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Server, Trash2 } from "lucide-react";
+import { Plus, Server, Trash2, ExternalLink } from "lucide-react";
 import { revalidatePath } from 'next/cache';
 
 export const dynamic = 'force-dynamic';
@@ -13,6 +13,7 @@ interface ServerItem {
     type: 'pve' | 'pbs';
     url: string;
     status: string;
+    ssh_host?: string;
 }
 
 async function deleteServer(formData: FormData) {
@@ -56,27 +57,35 @@ export default function ServersPage() {
             ) : (
                 <div className="grid gap-4">
                     {servers.map((server) => (
-                        <Card key={server.id}>
+                        <Card key={server.id} className="hover:border-primary/50 transition-colors">
                             <CardContent className="flex items-center justify-between p-6">
-                                <div className="flex items-center gap-4">
-                                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${server.type === 'pve' ? 'bg-blue-500/20' : 'bg-green-500/20'
+                                <Link href={`/servers/${server.id}`} className="flex items-center gap-4 flex-1">
+                                    <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${server.type === 'pve' ? 'bg-orange-500/20' : 'bg-blue-500/20'
                                         }`}>
-                                        <Server className={`h-5 w-5 ${server.type === 'pve' ? 'text-blue-500' : 'text-green-500'
+                                        <Server className={`h-6 w-6 ${server.type === 'pve' ? 'text-orange-500' : 'text-blue-500'
                                             }`} />
                                     </div>
                                     <div>
-                                        <h3 className="font-semibold">{server.name}</h3>
+                                        <h3 className="font-semibold text-lg">{server.name}</h3>
                                         <p className="text-sm text-muted-foreground">
-                                            {server.type.toUpperCase()} · {server.url}
+                                            {server.type.toUpperCase()} · {server.ssh_host || new URL(server.url).hostname}
                                         </p>
                                     </div>
+                                </Link>
+                                <div className="flex items-center gap-2">
+                                    <Link href={`/servers/${server.id}`}>
+                                        <Button variant="outline" size="sm">
+                                            <ExternalLink className="mr-2 h-4 w-4" />
+                                            Details
+                                        </Button>
+                                    </Link>
+                                    <form action={deleteServer}>
+                                        <input type="hidden" name="id" value={server.id} />
+                                        <Button variant="ghost" size="icon" className="text-red-500">
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                    </form>
                                 </div>
-                                <form action={deleteServer}>
-                                    <input type="hidden" name="id" value={server.id} />
-                                    <Button variant="ghost" size="icon" className="text-red-500">
-                                        <Trash2 className="h-4 w-4" />
-                                    </Button>
-                                </form>
                             </CardContent>
                         </Card>
                     ))}
