@@ -26,23 +26,12 @@ interface ConfigBackup {
     status: string;
 }
 
-// Paths to backup based on server type
-const PVE_PATHS = [
-    '/etc/pve',
-    '/etc/network/interfaces',
-    '/etc/hostname',
-    '/etc/hosts',
-    '/etc/resolv.conf',
-    '/etc/ssh/sshd_config',
-];
-
-const PBS_PATHS = [
-    '/etc/proxmox-backup',
-    '/etc/network/interfaces',
-    '/etc/hostname',
-    '/etc/hosts',
-    '/etc/resolv.conf',
-    '/etc/ssh/sshd_config',
+// COMPLETE /etc backup - all configuration files
+// Plus additional important system directories
+const BACKUP_PATHS = [
+    '/etc',           // Complete /etc directory with ALL configs
+    '/root/.ssh',     // SSH keys for root
+    '/var/spool/cron' // Cron jobs
 ];
 
 // Get all config backups for a server
@@ -55,7 +44,7 @@ export async function getConfigBackups(serverId: number): Promise<ConfigBackup[]
     return backups;
 }
 
-// Create a new config backup
+// Create a new config backup - backs up ENTIRE /etc directory
 export async function createConfigBackup(serverId: number): Promise<{ success: boolean; message: string; backupId?: number }> {
     const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId) as Server | undefined;
 
@@ -64,14 +53,14 @@ export async function createConfigBackup(serverId: number): Promise<{ success: b
     }
 
     // Check if SSH is configured
-    if (!server.ssh_host && !server.url) {
-        return { success: false, message: 'Kein SSH-Host konfiguriert' };
+    if (!server.ssh_key) {
+        return { success: false, message: 'SSH-Passwort nicht konfiguriert. Bitte Server bearbeiten und SSH-Zugangsdaten eingeben.' };
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupPath = path.join(backupDir, `server-${serverId}`, timestamp);
 
-    console.log(`[ConfigBackup] Starting backup for ${server.name} to ${backupPath}`);
+    console.log(`[ConfigBackup] Starting FULL /etc backup for ${server.name} to ${backupPath}`);
 
     try {
         // Create backup directory
@@ -81,29 +70,24 @@ export async function createConfigBackup(serverId: number): Promise<{ success: b
         const ssh = createSSHClient(server);
         await ssh.connect();
 
-        const pathsToBackup = server.type === 'pve' ? PVE_PATHS : PBS_PATHS;
         let totalFiles = 0;
-        let totalSize = 0;
         const errors: string[] = [];
 
-        // Backup each path
-        for (const remotePath of pathsToBackup) {
+        // Backup each path (mainly /etc)
+        for (const remotePath of BACKUP_PATHS) {
             try {
                 const localPath = path.join(backupPath, remotePath);
                 console.log(`[ConfigBackup] Backing up ${remotePath}...`);
 
-                // Check if path is a file or directory
-                const checkResult = await ssh.exec(`test -d "${remotePath}" && echo "dir" || test -f "${remotePath}" && echo "file" || echo "none"`);
-                const pathType = checkResult.trim();
+                // Check if path exists
+                const checkResult = await ssh.exec(`test -e "${remotePath}" && echo "exists" || echo "none"`);
 
-                if (pathType === 'dir') {
+                if (checkResult.trim() === 'exists') {
                     const files = await ssh.downloadDir(remotePath, localPath, (file) => {
                         console.log(`[ConfigBackup] Downloaded: ${file}`);
                     });
                     totalFiles += files;
-                } else if (pathType === 'file') {
-                    await ssh.downloadFile(remotePath, localPath);
-                    totalFiles += 1;
+                    console.log(`[ConfigBackup] ${remotePath}: ${files} files`);
                 } else {
                     console.log(`[ConfigBackup] Path does not exist: ${remotePath}`);
                 }
@@ -112,6 +96,24 @@ export async function createConfigBackup(serverId: number): Promise<{ success: b
                 errors.push(`${remotePath}: ${err instanceof Error ? err.message : String(err)}`);
             }
         }
+
+        // Also save system info for disaster recovery
+        try {
+            const systemInfo = await ssh.exec('cat /etc/os-release; echo "---"; hostname -f; echo "---"; ip a; echo "---"; lsblk -f; echo "---"; cat /etc/fstab');
+            const infoPath = path.join(backupPath, 'SYSTEM_INFO.txt');
+            fs.writeFileSync(infoPath, systemInfo);
+
+            // Save disk UUIDs separately for easy reference
+            const uuids = await ssh.exec('blkid');
+            const uuidPath = path.join(backupPath, 'DISK_UUIDS.txt');
+            fs.writeFileSync(uuidPath, uuids);
+        } catch (err) {
+            console.error('[ConfigBackup] Error saving system info:', err);
+        }
+
+        // Create disaster recovery guide
+        const recoveryGuide = createRecoveryGuide(server);
+        fs.writeFileSync(path.join(backupPath, 'WIEDERHERSTELLUNG.md'), recoveryGuide);
 
         ssh.disconnect();
 
@@ -133,7 +135,7 @@ export async function createConfigBackup(serverId: number): Promise<{ success: b
             return size;
         };
 
-        totalSize = calculateSize(backupPath);
+        const totalSize = calculateSize(backupPath);
 
         // Save to database
         const result = db.prepare(`
@@ -145,7 +147,7 @@ export async function createConfigBackup(serverId: number): Promise<{ success: b
 
         return {
             success: true,
-            message: `Backup erfolgreich: ${totalFiles} Dateien gesichert${errors.length > 0 ? ` (${errors.length} Fehler)` : ''}`,
+            message: `Vollständiges Backup erfolgreich: ${totalFiles} Dateien (${formatBytes(totalSize)})${errors.length > 0 ? ` - ${errors.length} Warnung(en)` : ''}`,
             backupId: result.lastInsertRowid as number
         };
 
@@ -156,6 +158,127 @@ export async function createConfigBackup(serverId: number): Promise<{ success: b
             message: `Backup fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`
         };
     }
+}
+
+// Create disaster recovery guide
+function createRecoveryGuide(server: Server): string {
+    return `# Disaster Recovery Anleitung
+
+## Server: ${server.name}
+## Typ: ${server.type.toUpperCase()}
+## Erstellt: ${new Date().toLocaleString('de-DE')}
+
+---
+
+## ⚠️ WICHTIG: Festplattenwechsel / Änderung von UUIDs
+
+Wenn Sie eine Festplatte austauschen oder das System neu installieren, ändern sich die UUIDs der Partitionen. Das führt zu Bootproblemen!
+
+### Schritt 1: Neue UUIDs ermitteln
+\`\`\`bash
+blkid
+\`\`\`
+
+### Schritt 2: fstab anpassen
+Vergleichen Sie die Datei \`DISK_UUIDS.txt\` (alte UUIDs) mit den neuen und passen Sie an:
+\`\`\`bash
+nano /etc/fstab
+\`\`\`
+
+### Schritt 3: Bootloader aktualisieren
+\`\`\`bash
+update-grub
+update-initramfs -u
+\`\`\`
+
+---
+
+## Proxmox VE Wiederherstellung
+
+### 1. Proxmox VE neu installieren
+- ISO von https://www.proxmox.com/downloads herunterladen
+- Installation durchführen mit gleicher IP-Konfiguration
+
+### 2. Konfiguration wiederherstellen
+\`\`\`bash
+# /etc/pve Inhalte kopieren (Cluster, VMs, Container)
+cp -r /pfad/zum/backup/etc/pve/* /etc/pve/
+
+# Netzwerk-Konfiguration
+cp /pfad/zum/backup/etc/network/interfaces /etc/network/interfaces
+
+# Storage-Konfiguration prüfen und anpassen (UUIDs!)
+nano /etc/pve/storage.cfg
+
+# Dienste neustarten
+systemctl restart pvedaemon pveproxy pvestatd
+\`\`\`
+
+### 3. ZFS Pools importieren (falls vorhanden)
+\`\`\`bash
+zpool import -f <poolname>
+\`\`\`
+
+---
+
+## Proxmox Backup Server Wiederherstellung
+
+### 1. PBS neu installieren
+- ISO herunterladen und installieren
+
+### 2. Konfiguration wiederherstellen
+\`\`\`bash
+# PBS Konfiguration
+cp -r /pfad/zum/backup/etc/proxmox-backup/* /etc/proxmox-backup/
+
+# Netzwerk
+cp /pfad/zum/backup/etc/network/interfaces /etc/network/interfaces
+
+# Dienste neustarten
+systemctl restart proxmox-backup-proxy proxmox-backup
+\`\`\`
+
+### 3. Datastores wiederherstellen
+Falls Datastores auf separaten Laufwerken liegen:
+\`\`\`bash
+# UUID prüfen und in datastore.cfg anpassen
+nano /etc/proxmox-backup/datastore.cfg
+\`\`\`
+
+---
+
+## Wichtige Dateien in diesem Backup
+
+| Pfad | Beschreibung |
+|------|--------------|
+| \`/etc/pve/\` | VM/CT Konfigurationen, Cluster-Config |
+| \`/etc/proxmox-backup/\` | PBS Datastore Configs |
+| \`/etc/network/interfaces\` | Netzwerk-Konfiguration |
+| \`/etc/fstab\` | Mount-Punkte (⚠️ UUIDs prüfen!) |
+| \`/etc/ssh/\` | SSH Server Konfiguration |
+| \`/root/.ssh/\` | SSH Keys |
+| \`DISK_UUIDS.txt\` | Alte Disk UUIDs zum Vergleich |
+| \`SYSTEM_INFO.txt\` | System-Informationen |
+
+---
+
+## Checkliste nach Wiederherstellung
+
+- [ ] Netzwerk funktioniert (\`ip a\`, \`ping\`)
+- [ ] Web-Interface erreichbar
+- [ ] Storage gemountet (\`df -h\`)
+- [ ] VMs/Container sichtbar
+- [ ] Cluster-Verbindung (falls vorhanden)
+- [ ] Backup-Jobs konfiguriert
+`;
+}
+
+function formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
 // Get files in a backup
@@ -206,7 +329,17 @@ export async function readBackupFile(backupId: number, filePath: string): Promis
         return null;
     }
 
-    return fs.readFileSync(fullPath, 'utf-8');
+    // Check if binary file
+    try {
+        const content = fs.readFileSync(fullPath);
+        // Simple binary check
+        if (content.includes(0)) {
+            return '[Binärdatei - kann nicht angezeigt werden]';
+        }
+        return content.toString('utf-8');
+    } catch {
+        return null;
+    }
 }
 
 // Delete a backup
