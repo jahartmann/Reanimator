@@ -3,19 +3,8 @@
 # Configuration
 APP_DIR=$(pwd)
 SERVICE_NAME="proxhost-backup"
-NODE_BIN=$(which node)
-NPM_BIN=$(which npm)
 
-if [ -z "$NODE_BIN" ]; then
-    echo "Error: 'node' not found in PATH."
-    exit 1
-fi
-
-if [ -z "$NPM_BIN" ]; then
-    echo "Error: 'npm' not found in PATH."
-    exit 1
-fi
-
+# Helper to check root
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         echo "Please run as root (sudo)"
@@ -23,7 +12,48 @@ check_root() {
     fi
 }
 
+# Auto-install dependencies if missing
+ensure_dependencies() {
+    check_root
+    
+    # Check for curl
+    if ! command -v curl &> /dev/null; then
+        echo "[*] Installing curl..."
+        apt-get update && apt-get install -y curl
+    fi
+
+    # Check for Git
+    if ! command -v git &> /dev/null; then
+        echo "[*] Installing Git..."
+        apt-get install -y git
+    fi
+
+    # Check for Node.js
+    if ! command -v node &> /dev/null; then
+        echo "[!] Node.js not found. Installing Node.js 20.x (LTS)..."
+        curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+        apt-get install -y nodejs
+        echo "[+] Node.js installed."
+    fi
+
+    # Check for npm explicitly (usually comes with nodejs, but good to verify)
+    if ! command -v npm &> /dev/null; then
+        echo "[!] npm not found. Installing..."
+        apt-get install -y npm
+    fi
+}
+
+# Resolve binaries after potential install
+NODE_BIN=$(which node 2>/dev/null)
+NPM_BIN=$(which npm 2>/dev/null)
+
 do_install() {
+    ensure_dependencies
+    
+    # refresh binaries
+    NODE_BIN=$(which node)
+    NPM_BIN=$(which npm)
+    
     echo "[*] Installing Dependencies..."
     $NPM_BIN install
     
@@ -38,11 +68,13 @@ After=network.target
 
 [Service]
 Type=simple
-User=$(logname 2>/dev/null || echo $SUDO_USER)
+User=$(logname 2>/dev/null || echo $SUDO_USER || echo root)
 WorkingDirectory=$APP_DIR
 ExecStart=$NPM_BIN start
 Restart=always
 Environment=NODE_ENV=production
+# Increase file descriptor limit just in case
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
@@ -53,9 +85,14 @@ EOF
     systemctl start $SERVICE_NAME
     
     echo "[+] Installation Complete! Service started."
+    echo "[+] Access the app at http://$(hostname -I | cut -d' ' -f1):3000"
 }
 
 do_update() {
+    ensure_dependencies
+     # refresh binaries
+    NPM_BIN=$(which npm)
+    
     echo "[*] Pulling latest changes..."
     git pull
     
@@ -81,7 +118,8 @@ do_restart() {
 
 case "$1" in
     install)
-        check_root
+        # Verify dependecies first
+        ensure_dependencies
         do_install
         ;;
     update)
