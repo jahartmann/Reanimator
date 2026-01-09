@@ -161,11 +161,18 @@ export async function performFullBackup(serverId: number, server: Server) {
 
             // 5. Extract locally for file browser access
             // We do this locally so we can browse files in the UI
-            console.log('[BackupLogic] Extracting archive locally for File Browser...');
+            // CRITICAL: Filter out Symlinks/Links to prevent Turbopack build crashes
+            // when it encounters links pointing outside project root (e.g. /etc/ssl/certs)
+            console.log('[BackupLogic] Extracting archive locally for File Browser (excluding symlinks)...');
             await tar.x({
                 file: tarFile,
                 cwd: destPath,
-                preservePaths: true
+                preservePaths: true,
+                filter: (path, entry) => {
+                    // Skip symbolic links and hard links to prevent build tools from crashing
+                    // on invalid paths or paths outside project root
+                    return entry.type !== 'SymbolicLink' && entry.type !== 'Link';
+                }
             });
 
             // Optional: Remove tar file to save space? Or keep it?
