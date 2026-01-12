@@ -1,36 +1,89 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-## Getting Started
+# Reanimator - Backup & Recovery System
 
-First, run the development server:
+**Reanimator** is a modern, high-performance Backup & Recovery solution specialized for Proxmox environments. It provides a sleek, real-time dashboard for monitoring server health, managing storage pools, and orchestrating centralized configuration backups.
 
+## 🚀 Features
+
+### 🖥️ Dashboard & Monitoring
+- **Real-time Overview**: Monitor CPU, RAM, and Disk usage across your entire infrastructure.
+- **Cluster Awareness**: Automatically detects and groups Proxmox clusters.
+- **Storage Dashboard**: Dedicated view for shared (Ceph/NFS) vs. local (ZFS/LVM) storage utilization.
+- **Server Health**: Instant status indicators for online/offline states.
+
+### 🔍 Detailed Server Insights
+- **Hardware Analysis**: Deep dive into physical vs. virtual disks (NVMe, SSD, HDD recognition).
+- **Network Topology**: Visualization of network interfaces, bridges (vmbr), and bonds.
+- **Storage Pools**: Detailed breakdown of ZFS, LVM-Thin, and Ceph pools using native Proxmox tools (`pvesm`).
+- **Debugging**: Integrated debug console for troubleshooting connection issues directly in the UI.
+
+### 💾 Backup & Disaster Recovery
+- **Configuration Backups**: Automated backups of critical `/etc` configurations (network, corosync, storage).
+- **One-Click Restore**: Seamlessly restore configurations to get servers back online fast.
+- **Recovery Guides**: Automatically generated, step-by-step Markdown guides for manual disaster recovery.
+- **History & Versioning**: Track changes and roll back to previous states.
+
+## 🛠️ Technology Stack
+
+- **Frontend**: [Next.js 15](https://nextjs.org/) (App Directory), [Tailwind CSS](https://tailwindcss.com/)
+- **UI Components**: [Luzid UI / Shadcn](https://ui.shadcn.com/), [Lucide React](https://lucide.dev/)
+- **Backend**: Next.js Server Actions, Node.js
+- **Database**: [SQLite](https://www.sqlite.org/) (`better-sqlite3`)
+- **Connectivity**: SSH (`ssh2`) for secure, agentless server communication.
+
+## 📦 Installation & Setup
+
+### Prerequisites
+- Node.js 18+
+- Git
+
+### Quick Start
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/jahartmann/Reanimator.git
+   cd Reanimator
+   ```
+
+2. **Install Dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Initialize Database**
+   The application uses a local SQLite database (`data/proxhost.db`). Migrations are run automatically on build.
+   ```bash
+   npm run migrate
+   ```
+
+4. **Build & Run**
+   ```bash
+   npm run build
+   npm start
+   ```
+
+   The application will be available at `http://localhost:3000`.
+
+### Development Mode
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## ⚙️ Configuration
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Adding Servers
+Navigate to the **Server** tab and click **New Server**. You will need:
+- **Hostname/IP**: The address of your Proxmox node.
+- **SSH Key**: A private SSH key authorized on the target node (usually root).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Updating
+You can update the application directly from the **Settings** page or manually:
+```bash
+git pull
+npm install
+npm run build
+sudo systemctl restart proxhost-backup
+```
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 📄 License
+Private / Proprietary. Created by [Janik Hartmann](https://github.com/jahartmann).
