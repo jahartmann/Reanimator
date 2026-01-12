@@ -95,30 +95,53 @@ export class SSHClient {
     }
 
     // Execute a command
-    async exec(command: string): Promise<string> {
+    async exec(command: string, timeoutMs: number = 20000): Promise<string> {
         return new Promise((resolve, reject) => {
-            this.client.exec(command, (err, stream) => {
-                if (err) return reject(err);
+            let timeoutId: NodeJS.Timeout;
 
-                let output = '';
-                let errorOutput = '';
+            // Timeout promise
+            const timeoutPromise = new Promise<never>((_, rejectTimeout) => {
+                timeoutId = setTimeout(() => {
+                    rejectTimeout(new Error(`Command timed out after ${timeoutMs}ms: ${command.substring(0, 50)}...`));
+                }, timeoutMs);
+            });
 
-                stream.on('data', (data: Buffer) => {
-                    output += data.toString();
-                });
+            // Execution promise
+            const execPromise = new Promise<string>((resolveExec, rejectExec) => {
+                this.client.exec(command, (err, stream) => {
+                    if (err) return rejectExec(err);
 
-                stream.stderr.on('data', (data: Buffer) => {
-                    errorOutput += data.toString();
-                });
+                    let output = '';
+                    let errorOutput = '';
 
-                stream.on('close', (code: number) => {
-                    if (code !== 0 && errorOutput) {
-                        reject(new Error(errorOutput));
-                    } else {
-                        resolve(output);
-                    }
+                    stream.on('data', (data: Buffer) => {
+                        output += data.toString();
+                    });
+
+                    stream.stderr.on('data', (data: Buffer) => {
+                        errorOutput += data.toString();
+                    });
+
+                    stream.on('close', (code: number) => {
+                        if (code !== 0 && errorOutput) {
+                            rejectExec(new Error(errorOutput));
+                        } else {
+                            resolveExec(output);
+                        }
+                    });
                 });
             });
+
+            // Race them
+            Promise.race([execPromise, timeoutPromise])
+                .then((result) => {
+                    clearTimeout(timeoutId);
+                    resolve(result);
+                })
+                .catch((err) => {
+                    clearTimeout(timeoutId);
+                    reject(err);
+                });
         });
     }
 
