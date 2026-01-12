@@ -2,7 +2,7 @@ import Link from 'next/link';
 import db from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Server, Network, HardDrive, Cpu, Wifi, WifiOff, Clock, Gauge, Activity, Database } from "lucide-react";
+import { ArrowLeft, Server, Network, HardDrive, Cpu, Wifi, WifiOff, Clock, Gauge, Activity, Database, Box } from "lucide-react";
 import { createSSHClient } from '@/lib/ssh';
 import { ServerVisualization } from '@/components/ui/ServerVisualization';
 
@@ -700,42 +700,98 @@ export default async function ServerDetailPage({
                                         <p>Keine Festplattendaten verfügbar</p>
                                     </div>
                                 ) : (
-                                    <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                                        {info.disks.filter(d => d.type === 'disk').map((disk, i) => (
-                                            <div
-                                                key={i}
-                                                className={`flex flex-col gap-2 p-3 rounded-lg border transition-colors hover:border-primary/30 ${disk.transport === 'nvme' ? 'bg-purple-500/5 border-purple-500/20' :
-                                                    disk.rotational === false ? 'bg-blue-500/5 border-blue-500/20' :
-                                                        'bg-muted/30 border-transparent'
-                                                    }`}
-                                            >
-                                                <div className="flex items-center gap-2">
-                                                    <HardDrive className={`h-5 w-5 shrink-0 ${disk.transport === 'nvme' ? 'text-purple-500' :
-                                                        disk.rotational === false ? 'text-blue-500' :
-                                                            'text-muted-foreground'
-                                                        }`} />
-                                                    <div className="min-w-0">
-                                                        <p className="font-medium font-mono text-sm">{disk.name}</p>
-                                                        <p className="text-xs text-muted-foreground truncate">
-                                                            {disk.model || disk.transport || 'Unknown'}
-                                                        </p>
+                                    <div className="space-y-8">
+                                        {/* Physical Disks */}
+                                        {info.disks.filter(d => d.type === 'disk' && (
+                                            (d.transport && ['nvme', 'sata', 'sas', 'scsi', 'usb', 'ata', 'ide'].includes(d.transport.toLowerCase())) ||
+                                            (!d.name.startsWith('rbd') && !d.name.startsWith('dm-') && !d.name.startsWith('zd') && d.size.includes('T') || d.size.includes('G'))
+                                        )).length > 0 && (
+                                                <div>
+                                                    <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
+                                                        <HardDrive className="h-4 w-4" />
+                                                        Physische Datenträger ({info.disks.filter(d => d.type === 'disk' && (
+                                                            (d.transport && ['nvme', 'sata', 'sas', 'scsi', 'usb', 'ata', 'ide'].includes(d.transport.toLowerCase())) ||
+                                                            (!d.name.startsWith('rbd') && !d.name.startsWith('dm-') && !d.name.startsWith('zd') && (d.size.includes('T') || d.size.includes('G')))
+                                                        )).length})
+                                                    </h3>
+                                                    <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                                                        {info.disks.filter(d => d.type === 'disk' && (
+                                                            (d.transport && ['nvme', 'sata', 'sas', 'scsi', 'usb', 'ata', 'ide'].includes(d.transport.toLowerCase())) ||
+                                                            (!d.name.startsWith('rbd') && !d.name.startsWith('dm-') && !d.name.startsWith('zd') && (d.size.includes('T') || d.size.includes('G')))
+                                                        )).map((disk, i) => (
+                                                            <div
+                                                                key={i}
+                                                                className={`flex flex-col gap-2 p-3 rounded-lg border transition-colors hover:border-emerald-500/30 ${disk.transport === 'nvme' ? 'bg-purple-500/5 border-purple-500/20' :
+                                                                    disk.rotational === false ? 'bg-blue-500/5 border-blue-500/20' :
+                                                                        'bg-emerald-500/5 border-emerald-500/20'
+                                                                    }`}
+                                                            >
+                                                                <div className="flex items-center gap-2">
+                                                                    <HardDrive className={`h-5 w-5 shrink-0 ${disk.transport === 'nvme' ? 'text-purple-500' :
+                                                                        disk.rotational === false ? 'text-blue-500' :
+                                                                            'text-emerald-500'
+                                                                        }`} />
+                                                                    <div className="min-w-0">
+                                                                        <p className="font-medium font-mono text-sm">{disk.name}</p>
+                                                                        <p className="text-xs text-muted-foreground truncate">
+                                                                            {disk.model || 'Generic Disk'}
+                                                                        </p>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="flex items-center justify-between text-xs mt-1">
+                                                                    <span className="font-medium text-base">{disk.size}</span>
+                                                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${disk.transport === 'nvme' ? 'bg-purple-500/20 text-purple-500' :
+                                                                        disk.rotational === false ? 'bg-blue-500/20 text-blue-500' :
+                                                                            'bg-emerald-500/20 text-emerald-500'
+                                                                        }`}>
+                                                                        {disk.transport === 'nvme' ? 'NVMe' :
+                                                                            disk.rotational === false ? 'SSD' : 'HDD'}
+                                                                    </span>
+                                                                </div>
+                                                                {disk.serial && (
+                                                                    <div className="text-[10px] text-muted-foreground/50 font-mono truncate">
+                                                                        SN: {disk.serial}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ))}
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center gap-2 text-xs">
-                                                    <span className="font-medium">{disk.size}</span>
-                                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${disk.transport === 'nvme' ? 'bg-purple-500/20 text-purple-500' :
-                                                        disk.rotational === false ? 'bg-blue-500/20 text-blue-500' :
-                                                            'bg-muted text-muted-foreground'
-                                                        }`}>
-                                                        {disk.transport === 'nvme' ? 'NVMe' :
-                                                            disk.rotational === false ? 'SSD' : 'HDD'}
-                                                    </span>
-                                                    {disk.filesystem && (
-                                                        <span className="text-muted-foreground">{disk.filesystem}</span>
-                                                    )}
+                                            )}
+
+                                        {/* Virtual/Mapped Disks */}
+                                        {info.disks.filter(d => d.type === 'disk' && !(
+                                            (d.transport && ['nvme', 'sata', 'sas', 'scsi', 'usb', 'ata', 'ide'].includes(d.transport.toLowerCase())) ||
+                                            (!d.name.startsWith('rbd') && !d.name.startsWith('dm-') && !d.name.startsWith('zd') && (d.size.includes('T') || d.size.includes('G')))
+                                        )).length > 0 && (
+                                                <div>
+                                                    <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
+                                                        <Box className="h-4 w-4" />
+                                                        Virtuelle / Gemappte Datenträger
+                                                    </h3>
+                                                    <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                                                        {info.disks.filter(d => d.type === 'disk' && !(
+                                                            (d.transport && ['nvme', 'sata', 'sas', 'scsi', 'usb', 'ata', 'ide'].includes(d.transport.toLowerCase())) ||
+                                                            (!d.name.startsWith('rbd') && !d.name.startsWith('dm-') && !d.name.startsWith('zd') && (d.size.includes('T') || d.size.includes('G')))
+                                                        )).map((disk, i) => (
+                                                            <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-border/50 bg-muted/20">
+                                                                <div className="h-8 w-8 rounded bg-muted flex items-center justify-center shrink-0">
+                                                                    <span className="text-xs font-bold text-muted-foreground">V</span>
+                                                                </div>
+                                                                <div className="min-w-0">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <p className="font-medium font-mono text-sm">{disk.name}</p>
+                                                                        <span className="text-xs text-muted-foreground bg-muted px-1 rounded">{disk.size}</span>
+                                                                    </div>
+                                                                    <p className="text-xs text-muted-foreground/60 truncate">
+                                                                        {disk.model || 'Virtual Device'}
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            )}
                                     </div>
                                 )}
 

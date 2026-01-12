@@ -135,19 +135,29 @@ export default function SettingsClient() {
                                 )}
                             </div>
                         </div>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={checkForUpdates}
-                            disabled={checking}
-                        >
-                            {checking ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                                <RefreshCw className="h-4 w-4" />
-                            )}
-                            <span className="ml-2">Prüfen</span>
-                        </Button>
+                        <div className="flex gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => window.open('https://github.com/jahartmann/Reanimator', '_blank')}
+                            >
+                                <GitBranch className="h-4 w-4 mr-2" />
+                                GitHub
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={checkForUpdates}
+                                disabled={checking}
+                            >
+                                {checking ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                    <RefreshCw className="h-4 w-4" />
+                                )}
+                                <span className="ml-2">Prüfen</span>
+                            </Button>
+                        </div>
                     </div>
 
                     {/* Update Available */}
