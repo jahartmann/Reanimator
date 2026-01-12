@@ -115,119 +115,129 @@ export async function getServerStorages(): Promise<ServerStorage[]> {
         WHERE ssh_key IS NOT NULL
     `).all() as any[];
 
-    const results: ServerStorage[] = [];
+    const localResults: ServerStorage[] = [];
+    const sharedStorages = new Map<string, any>(); // Key: "name:total" to match identical shared pools
 
     for (const server of servers) {
         try {
             const ssh = createSSHClient(server);
             await ssh.connect();
 
-            const storages: ServerStorage['storages'] = [];
+            const nodeStorages: ServerStorage['storages'] = [];
 
-            // ZFS pools
+            // Use pvesm status - standard Proxmox storage manager status
+            // Output format (approx): Name Type Status Total Used Available %
             try {
-                const zfsOutput = await ssh.exec(`zpool list -Hp -o name,size,alloc,free,health 2>/dev/null || echo ""`, 10000);
-                for (const line of zfsOutput.trim().split('\n').filter(Boolean)) {
-                    const parts = line.split('\t');
-                    if (parts.length >= 5) {
-                        const total = parseInt(parts[1]) || 0;
-                        const used = parseInt(parts[2]) || 0;
-                        storages.push({
-                            name: parts[0],
-                            type: 'zfs',
-                            total,
-                            used,
-                            available: parseInt(parts[3]) || 0,
-                            usagePercent: total > 0 ? (used / total) * 100 : 0,
-                            active: parts[4] === 'ONLINE'
-                        });
-                    }
-                }
-            } catch { /* ZFS not available */ }
+                const pvesmOutput = await ssh.exec(`pvesm status -content images,rootdir,vztmpl,backup,iso 2>/dev/null || echo ""`, 10000);
+                const lines = pvesmOutput.trim().split('\n');
 
-            // LVM volume groups
-            try {
-                const lvmOutput = await ssh.exec(`vgs --noheadings --units b -o vg_name,vg_size,vg_free 2>/dev/null || echo ""`, 10000);
-                for (const line of lvmOutput.trim().split('\n').filter(Boolean)) {
-                    const parts = line.trim().split(/\s+/);
-                    if (parts.length >= 3) {
-                        const total = parseSize(parts[1].replace('B', ''));
-                        const available = parseSize(parts[2].replace('B', ''));
-                        const used = total - available;
-                        storages.push({
-                            name: parts[0],
-                            type: 'lvm',
+                // Skip header line if present
+                const startIdx = lines[0]?.toLowerCase().startsWith('name') ? 1 : 0;
+
+                for (let i = startIdx; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
+
+                    // Parse columns (whitespace separated)
+                    const parts = line.split(/\s+/);
+                    if (parts.length >= 6) {
+                        const name = parts[0];
+                        const type = parts[1];
+                        const status = parts[2];
+                        const total = parseInt(parts[3]) * 1024; // pvesm output is usually in KB
+                        const used = parseInt(parts[4]) * 1024;
+                        const available = parseInt(parts[5]) * 1024;
+                        const active = status === 'active';
+                        const usagePercent = parseFloat(parts[6].replace('%', '')) || 0;
+
+                        const storageEntry = {
+                            name,
+                            type,
                             total,
                             used,
                             available,
-                            usagePercent: total > 0 ? (used / total) * 100 : 0,
-                            active: true
-                        });
+                            usagePercent,
+                            active,
+                            isShared: ['rbd', 'cephfs', 'nfs', 'cifs', 'pbs'].includes(type)
+                        };
+
+                        if (storageEntry.isShared) {
+                            // Deduplicate shared storage based on Name + Capacity
+                            // If stats are identical (or very close), it's the same shared pool
+                            const key = `${name}:${Math.round(total / (1024 * 1024 * 1024))}`; // GB granularity for key
+                            if (!sharedStorages.has(key)) {
+                                sharedStorages.set(key, storageEntry);
+                            }
+                        } else {
+                            nodeStorages.push(storageEntry);
+                        }
                     }
                 }
-            } catch { /* LVM not available */ }
+            } catch (e) {
+                console.error(`pvesm failed on ${server.name}:`, e);
+            }
 
-            // Ceph pools (detect via rados or ceph df)
+            // Also try to fetch Ceph Cluster status directly if installed
+            // This gives the "real" Ceph status even if not mounted as RBD
             try {
-                const cephOutput = await ssh.exec(`ceph df -f json 2>/dev/null || echo ""`, 10000);
-                if (cephOutput.trim() && cephOutput.trim().startsWith('{')) {
+                const cephOutput = await ssh.exec(`ceph df -f json 2>/dev/null`, 5000);
+                if (cephOutput.trim().startsWith('{')) {
                     const cephData = JSON.parse(cephOutput);
                     if (cephData.stats) {
-                        const total = cephData.stats.total_bytes || 0;
-                        const used = cephData.stats.total_used_bytes || 0;
-                        const available = cephData.stats.total_avail_bytes || 0;
-                        storages.push({
-                            name: 'ceph-cluster',
+                        const total = cephData.stats.total_bytes;
+                        const used = cephData.stats.total_used_bytes;
+                        const available = cephData.stats.total_avail_bytes;
+                        const usagePercent = total > 0 ? (used / total) * 100 : 0;
+
+                        const cephEntry = {
+                            name: 'Ceph Cluster',
                             type: 'ceph',
                             total,
                             used,
                             available,
-                            usagePercent: total > 0 ? (used / total) * 100 : 0,
+                            usagePercent,
                             active: true,
-                            isShared: true // Mark as cluster-wide shared storage
-                        });
+                            isShared: true
+                        };
+
+                        // Always overwrite/add global Ceph entry (key ensures singular)
+                        sharedStorages.set('ceph-global-cluster', cephEntry);
                     }
                 }
-            } catch { /* Ceph not available */ }
-
-            // Skip local filesystem mounts - they are redundant with pool-level storage
-            // and cause confusion in cluster environments
+            } catch { /* Ceph not installed/configured */ }
 
             ssh.disconnect();
 
-            if (storages.length > 0) {
-                results.push({
+            if (nodeStorages.length > 0) {
+                localResults.push({
                     serverId: server.id,
                     serverName: server.name,
                     serverType: server.type,
-                    storages
+                    storages: nodeStorages
                 });
             }
+
         } catch (e) {
             console.error(`Failed to fetch storage for ${server.name}:`, e);
         }
     }
 
-    // Deduplicate shared storage (Ceph) across cluster nodes
-    // If multiple servers report the same ceph-cluster, only show it once globally
-    const seenCephClusters = new Set<string>();
-    const cephClusterEntry: { serverId: number; storage: any } | null = null;
+    // Construct final result
+    const finalResults: ServerStorage[] = [];
 
-    for (const server of results) {
-        server.storages = server.storages.filter(storage => {
-            if (storage.isShared || storage.type === 'ceph') {
-                // Create a unique key based on total capacity (Ceph clusters have same total)
-                const key = `${storage.type}:${storage.total}`;
-                if (seenCephClusters.has(key)) {
-                    return false; // Skip duplicate Ceph
-                }
-                seenCephClusters.add(key);
-            }
-            return true;
+    // 1. Add Cluster/Shared entries as a pseudo-server
+    if (sharedStorages.size > 0) {
+        finalResults.push({
+            serverId: -1, // Special ID for cluster
+            serverName: 'Cluster / Shared Storage',
+            serverType: 'pve',
+            storages: Array.from(sharedStorages.values())
         });
     }
 
-    // Remove empty servers after deduplication
-    return results.filter(s => s.storages.length > 0);
+    // 2. Add per-node local storage
+    finalResults.push(...localResults);
+
+    return finalResults;
 }
 

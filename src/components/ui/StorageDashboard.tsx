@@ -168,31 +168,39 @@ export function StorageDashboard() {
                     ) : (
                         <div className="space-y-6">
                             {data.map((server) => (
-                                <div key={server.serverId} className="space-y-3">
+                                <div key={server.serverId} className={`space-y-3 ${server.serverId === -1 ? 'bg-primary/5 p-4 rounded-xl border border-primary/10' : ''}`}>
                                     <div className="flex items-center gap-2">
-                                        <div className={`w-6 h-6 rounded flex items-center justify-center ${server.serverType === 'pve' ? 'bg-orange-500/10' : 'bg-blue-500/10'}`}>
-                                            <Server className={`h-3 w-3 ${server.serverType === 'pve' ? 'text-orange-500' : 'text-blue-500'}`} />
+                                        <div className={`w-6 h-6 rounded flex items-center justify-center ${server.serverId === -1 ? 'bg-purple-500/10' :
+                                                server.serverType === 'pve' ? 'bg-orange-500/10' : 'bg-blue-500/10'
+                                            }`}>
+                                            {server.serverId === -1 ? (
+                                                <Database className="h-3 w-3 text-purple-500" />
+                                            ) : (
+                                                <Server className={`h-3 w-3 ${server.serverType === 'pve' ? 'text-orange-500' : 'text-blue-500'}`} />
+                                            )}
                                         </div>
-                                        <span className="font-medium">{server.serverName}</span>
-                                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${server.serverType === 'pve' ? 'bg-orange-500/10 text-orange-500' : 'bg-blue-500/10 text-blue-500'}`}>
-                                            {server.serverType.toUpperCase()}
-                                        </span>
+                                        <span className={`font-medium ${server.serverId === -1 ? 'text-lg text-purple-200' : ''}`}>{server.serverName}</span>
+                                        {server.serverId !== -1 && (
+                                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${server.serverType === 'pve' ? 'bg-orange-500/10 text-orange-500' : 'bg-blue-500/10 text-blue-500'}`}>
+                                                {server.serverType.toUpperCase()}
+                                            </span>
+                                        )}
                                     </div>
                                     <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
                                         {server.storages.map((storage, i) => (
                                             <div
                                                 key={i}
                                                 className={`p-3 rounded-lg border transition-colors ${storage.usagePercent > 90 ? 'border-red-500/30 bg-red-500/5' :
-                                                        storage.usagePercent > 75 ? 'border-amber-500/20 bg-amber-500/5' :
-                                                            'border-muted bg-muted/5'
+                                                    storage.usagePercent > 75 ? 'border-amber-500/20 bg-amber-500/5' :
+                                                        'border-muted bg-muted/5'
                                                     }`}
                                             >
                                                 <div className="flex items-center justify-between mb-2">
                                                     <span className="font-mono text-sm font-medium">{storage.name}</span>
                                                     <span className={`text-xs px-1.5 py-0.5 rounded ${storage.type === 'zfs' ? 'bg-cyan-500/10 text-cyan-500' :
-                                                            storage.type === 'ceph' ? 'bg-red-500/10 text-red-500' :
-                                                                storage.type === 'lvm' ? 'bg-amber-500/10 text-amber-500' :
-                                                                    'bg-muted text-muted-foreground'
+                                                        storage.type === 'ceph' ? 'bg-red-500/10 text-red-500' :
+                                                            storage.type === 'lvm' ? 'bg-amber-500/10 text-amber-500' :
+                                                                'bg-muted text-muted-foreground'
                                                         }`}>
                                                         {storage.type}
                                                     </span>
@@ -201,8 +209,8 @@ export function StorageDashboard() {
                                                 <div className="flex justify-between text-xs text-muted-foreground mt-2">
                                                     <span>{formatBytes(storage.used)} / {formatBytes(storage.total)}</span>
                                                     <span className={`font-medium ${storage.usagePercent > 90 ? 'text-red-500' :
-                                                            storage.usagePercent > 75 ? 'text-amber-500' :
-                                                                'text-emerald-500'
+                                                        storage.usagePercent > 75 ? 'text-amber-500' :
+                                                            'text-emerald-500'
                                                         }`}>
                                                         {storage.usagePercent.toFixed(1)}%
                                                     </span>
