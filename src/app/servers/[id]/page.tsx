@@ -400,10 +400,13 @@ async function getServerInfo(server: ServerItem): Promise<{
         await ssh.connect();
         debug.push('SSH Connected');
 
-        // Parallel fetching of all major sections
-        // Note: each function handles its own errors and returns fallback data (empty array or default obj)
-        const [system, networks, disks, pools] = await Promise.all([
-            getSystemStats(ssh),
+        // Serialize fetching to avoid hitting MaxSessions (usually 10) on SSH server
+        // getSystemStats uses ~10 channels. The others use ~3.
+        // Running them all in parallel exceeds the default limit.
+        const system = await getSystemStats(ssh);
+        debug.push('System Stats Fetched');
+
+        const [networks, disks, pools] = await Promise.all([
             getNetworkStats(ssh, debug),
             getDiskStats(ssh, debug),
             getPoolStats(ssh, debug)
