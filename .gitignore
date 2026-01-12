@@ -43,5 +43,7 @@ next-env.d.ts
 # Local Data
 data/*.db
 data/*.db-journal
+data/*.db-wal
+data/*.db-shm
 data/config-backups/
 !data/.keep
