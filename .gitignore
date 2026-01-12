@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local Data
+data/*.db
+data/*.db-journal
+data/config-backups/
+!data/.keep

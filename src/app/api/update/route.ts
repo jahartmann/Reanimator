@@ -3,8 +3,11 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 
 const execAsync = promisify(exec);
+
+export const dynamic = 'force-dynamic';
 
 // Get version info
 export async function GET() {
@@ -13,8 +16,11 @@ export async function GET() {
 
         // Read current version from package.json
         const packagePath = path.join(projectRoot, 'package.json');
-        const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
-        const currentVersion = packageJson.version;
+        let currentVersion = 'unknown';
+        try {
+            const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
+            currentVersion = packageJson.version;
+        } catch (e) { console.error('Failed to read package.json', e) }
 
         // Get current git commit
         let currentCommit = 'unknown';
@@ -75,47 +81,97 @@ export async function POST(request: NextRequest) {
 
             try {
                 const projectRoot = process.cwd();
+                const dbPath = path.join(projectRoot, 'data/proxhost.db');
+                const dbBackupPath = path.join(os.tmpdir(), `proxhost-backup-${Date.now()}.db`);
 
-                send('🔄 Starting update...');
-                send('📥 Pulling latest changes...');
+                send('🔄 Starting update process...');
 
-                // Git pull
+                // 1. Backup Database
+                if (fs.existsSync(dbPath)) {
+                    send('💾 Backing up database...');
+                    fs.copyFileSync(dbPath, dbBackupPath);
+                    send(`✅ Database backed up to ${dbBackupPath}`);
+                } else {
+                    send('⚠️ No database found to backup.');
+                }
+
+                // 2. Git Stash (handle local changes)
+                send('📥 Stashing local changes...');
+                try {
+                    await execAsync('git stash', { cwd: projectRoot });
+                    send('✅ Local changes stashed');
+                } catch (e) {
+                    send('ℹ️ No local changes to stash or stash failed (ignoring)');
+                }
+
+                // 3. Git Pull
+                send('⬇️ Pulling latest changes from git...');
                 const { stdout: pullOut, stderr: pullErr } = await execAsync(
                     'git pull origin main',
                     { cwd: projectRoot }
                 );
                 send(pullOut || pullErr || 'Git pull complete');
 
-                send('📦 Installing dependencies...');
+                // 4. Restore Database (Vital Step!)
+                // If git pull overwrote the DB with a "dummy" one, we overwrite it back with our backup
+                if (fs.existsSync(dbBackupPath)) {
+                    send('♻️ Restoring database from backup...');
+                    try {
+                        // Check if file exists and remove it to ensure clean copy
+                        if (fs.existsSync(dbPath)) {
+                            fs.unlinkSync(dbPath);
+                        }
+                        fs.copyFileSync(dbBackupPath, dbPath);
 
-                // npm install
-                const { stdout: npmOut, stderr: npmErr } = await execAsync(
-                    'npm install --include=dev',
-                    { cwd: projectRoot, maxBuffer: 1024 * 1024 * 10 }
-                );
-                send('Dependencies installed');
+                        // Also restore config backups folder if needed? 
+                        // Usually config backups are untracked so they are safe, 
+                        // but if we want to be paranoid we could have backed them up too.
+                        // For now, focusing on the main DB.
 
-                send('🔨 Building application...');
-
-                // npm build
-                const { stdout: buildOut, stderr: buildErr } = await execAsync(
-                    'npm run build',
-                    { cwd: projectRoot, maxBuffer: 1024 * 1024 * 50 }
-                );
-                send('Build complete');
-
-                send('🔄 Restarting service...');
-
-                // Restart service (this might fail if not running as systemd service)
-                try {
-                    await execAsync('sudo systemctl restart proxhost-backup', { cwd: projectRoot });
-                    send('✅ Service restarted');
-                } catch (e) {
-                    send('⚠️ Could not restart service automatically. Please restart manually.');
+                        send('✅ Database restored successfully');
+                    } catch (e) {
+                        send(`❌ Failed to restore database: ${e}`);
+                        // Critical error, but we continue to try and build
+                    }
                 }
 
-                send('✅ Update complete!');
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`));
+                // 5. Build
+                send('📦 Installing dependencies...');
+                await execAsync('npm install', { cwd: projectRoot }); // Removed --include=dev for speed if unnecessary, put back if needed
+                send('✅ Dependencies installed');
+
+                send('🔨 Building application...');
+                await execAsync('npm run build', { cwd: projectRoot });
+                send('✅ Build complete');
+
+                // 6. Restart
+                send('🔄 Restarting service...');
+
+                // Try systemd restart 
+                try {
+                    // Start in background to allow response to finish? 
+                    // No, usually we want to see the command succeed.
+                    // But if we restart THIS process, the connection closes.
+                    // We'll schedule the restart in a slightly detached way if possible,
+                    // or just run it and expect the connection to drop.
+
+                    send('Scheduling restart in 2 seconds...');
+                    setTimeout(() => {
+                        exec('sudo systemctl restart proxhost-backup', { cwd: projectRoot }, (error) => {
+                            if (error) {
+                                console.error('Restart failed:', error);
+                            }
+                        });
+                    }, 2000);
+
+                    send('✅ Restart command issued. Refresh page in ~15 seconds.');
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`));
+                } catch (e) {
+                    send('⚠️ Could not restart service automatically.');
+                    send('Please run: sudo systemctl restart proxhost-backup');
+                    console.error('Restart error:', e);
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: 'Restart failed' })}\n\n`));
+                }
 
             } catch (error) {
                 const errorMsg = error instanceof Error ? error.message : String(error);
@@ -123,7 +179,8 @@ export async function POST(request: NextRequest) {
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: errorMsg })}\n\n`));
             }
 
-            controller.close();
+            // Don't close immediately if we are restarting, but effectively we are done
+            // controller.close(); // Let the frontend close or timeout
         }
     });
 
@@ -135,3 +192,5 @@ export async function POST(request: NextRequest) {
         },
     });
 }
+
+
