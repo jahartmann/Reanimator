@@ -195,35 +195,37 @@ export async function migrateVM(
             let storageParam = '';
             let bridgeParam = '';
 
+
+            // 3. Fetch Target Resources for Validation/Fallback
+            let targetBridges: string[] = [];
+            let targetStorages: string[] = [];
+            try {
+                // Determine target bridges
+                const brOut = await targetSsh.exec(`ls /sys/class/net/ | grep "^vmbr" || echo "vmbr0"`);
+                targetBridges = brOut.split('\n').map(s => s.trim()).filter(Boolean);
+
+                // Determine target storages
+                const stOut = await targetSsh.exec(`pvesh get /storage --output-format json 2>/dev/null || echo "[]"`);
+                const stJson = JSON.parse(stOut);
+                targetStorages = stJson.map((s: any) => s.storage);
+            } catch (e) {
+                console.warn('[Migration] Failed to fetch target resources, assuming defaults', e);
+                targetBridges = ['vmbr0'];
+            }
+
+
             if (options.targetStorage) {
-                // Explicit target (single storage for all disks)
                 storageParam = `--target-storage ${options.targetStorage}`;
             } else {
-                // Detect used storages and map them 1:1
-                // We need to inspect the VM config to find used storages
                 try {
-                    const confCmd = type === 'qemu'
-                        ? `qm config ${vmid}`
-                        : `pct config ${vmid}`;
+                    const confCmd = type === 'qemu' ? `qm config ${vmid}` : `pct config ${vmid}`;
                     const confOutput = await sourceSsh.exec(confCmd);
-
-                    // Regex to find storage: ie. "scsi0: local-lvm:vm-100-disk-0,size=32G"
-                    // We look for "STORAGE-ID:..." patterns.
-                    // This is heuristic. A better way would be parsing fully.
-                    // Simple approach: any word followed by colon before "vm-ID-disk" or similar
-                    // Actually, let's just use the `qm remote-migrate` feature:
-                    // If we pass `--target-storage source=target`, it maps.
-                    // If we want 1:1 mapping, we need to know the source storage names.
-
-                    // Let's assume common storages like local, local-lvm, ceph
-                    // We can parse the config lines
-                    const usedStorages = new Set<string>();
                     const lines = confOutput.split('\n');
+
+                    const usedStorages = new Set<string>();
                     for (const line of lines) {
-                        // match standard disk keys: scsi, ide, sata, virtio, rootfs, mp
                         if (/^(scsi|ide|sata|virtio|rootfs|mp)\d*:/.test(line)) {
                             const val = line.split(':')[1].trim();
-                            // val is like "local-lvm:vm-100-disk-0,size=..."
                             if (val.includes(':')) {
                                 const store = val.split(':')[0];
                                 usedStorages.add(store);
@@ -232,44 +234,52 @@ export async function migrateVM(
                     }
 
                     if (usedStorages.size > 0) {
-                        const mappings = Array.from(usedStorages).map(s => `${s}=${s}`).join(',');
-                        storageParam = `--target-storage ${mappings}`;
-                        console.log(`[Migration] Auto-mapped storages: ${mappings}`);
-                    }
+                        // Filter mappings: Only map if target has storage with same name
+                        const validMappings = Array.from(usedStorages)
+                            .filter(s => targetStorages.includes(s))
+                            .map(s => `${s}=${s}`);
 
+                        if (validMappings.length > 0) {
+                            storageParam = `--target-storage ${validMappings.join(',')}`;
+                            console.log(`[Migration] Auto-mapped storages: ${validMappings.join(',')}`);
+                        } else {
+                            console.warn(`[Migration] Warning: No matching storages found on target for ${Array.from(usedStorages).join(',')}`);
+                        }
+                    }
                 } catch (mapErr) {
-                    console.warn('[Migration] Failed to detect storages for mapping, relying on default behavior', mapErr);
+                    console.warn('[Migration] Failed to detect storages', mapErr);
                 }
             }
 
             if (options.targetBridge) {
                 bridgeParam = `--target-bridge ${options.targetBridge}`;
             } else {
-                // Similar 1:1 mapping for bridges if possible?
-                // qm remote-migrate takes --target-bridge <bridge> which sets the DEFAULT bridge.
-                // It does NOT seem to support mapping like storage (bridge=bridge).
-                // It replaces all bridges with the target bridge.
-                // However, we can try omitting it? If omitted, it might error or fail validation.
-                // Re-reading docs: --target-bridge is required if VM uses bridge.
-                // User requirement: "vmbr0 already exists".
-                // We should probably default to 'vmbr0' if not specified, OR fetch from config.
-                // Let's default to parsing the PRIMARY bridge (net0) from config and using that.
                 try {
                     const confCmd = type === 'qemu' ? `qm config ${vmid}` : `pct config ${vmid}`;
                     const confOutput = await sourceSsh.exec(confCmd);
                     const net0 = confOutput.split('\n').find(l => l.startsWith('net0:'));
+
+                    let desiredBridge = 'vmbr0';
                     if (net0) {
                         const match = net0.match(/bridge=([a-zA-Z0-9]+)/);
                         if (match && match[1]) {
-                            bridgeParam = `--target-bridge ${match[1]}`;
-                            console.log(`[Migration] Auto-detected bridge: ${match[1]}`);
+                            desiredBridge = match[1];
                         }
                     }
-                    if (!bridgeParam) bridgeParam = '--target-bridge vmbr0'; // Fallback
+
+                    // Smart Fallback: Check if desired bridge exists on target
+                    if (targetBridges.includes(desiredBridge)) {
+                        bridgeParam = `--target-bridge ${desiredBridge}`;
+                        console.log(`[Migration] Using matched bridge: ${desiredBridge}`);
+                    } else {
+                        bridgeParam = `--target-bridge vmbr0`; // Required Fallback
+                        console.log(`[Migration] Bridge ${desiredBridge} missing on target. Falling back to vmbr0.`);
+                    }
                 } catch (e) {
                     bridgeParam = '--target-bridge vmbr0';
                 }
             }
+
 
             // apiEndpoint already defined above at line 190
 

@@ -5,12 +5,13 @@ import db from '@/lib/db';
 export interface Server {
     id: number;
     name: string;
-    host: string; // or url? DB uses url/ssh_host. Let's return a safe shape.
+    host: string;
     type: 'pve' | 'pbs';
     url: string;
     ssh_host: string;
     ssh_port: number;
     ssh_user: string;
+    ssh_key?: string; // Correctly typed as optional/string
     group_name?: string;
 }
 
@@ -25,6 +26,7 @@ export async function getServers(): Promise<Server[]> {
         ssh_host: row.ssh_host,
         ssh_port: row.ssh_port,
         ssh_user: row.ssh_user,
+        ssh_key: row.ssh_key,
         group_name: row.group_name
     }));
 }
@@ -41,6 +43,8 @@ export async function getServer(id: number): Promise<Server | null> {
         ssh_host: row.ssh_host,
         ssh_port: row.ssh_port,
         ssh_user: row.ssh_user,
+        ssh_key: row.ssh_key,
         group_name: row.group_name
     };
 }
+

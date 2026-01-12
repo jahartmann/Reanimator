@@ -49,7 +49,10 @@ async function handleDelete(itemId: number) {
 export default function ConfigList({ servers, backupsByServer, groups }: ConfigListProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(['ungrouped', ...groups]));
-    const [expandedServers, setExpandedServers] = useState<Set<number>>(new Set(servers.map(s => s.id)));
+
+    // Safety check for servers prop
+    const safeServers = Array.isArray(servers) ? servers : [];
+    const [expandedServers, setExpandedServers] = useState<Set<number>>(new Set(safeServers.map(s => s.id)));
 
     // Filter servers based on search
     const filteredServers = useMemo(() => {

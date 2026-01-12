@@ -24,7 +24,12 @@ export default function NewMigrationPage() {
     const [vms, setVms] = useState<VirtualMachine[]>([]);
     const [loadingVms, setLoadingVms] = useState(false);
 
-    // Step 2: Validation (replaces resource selection)
+    // Step 2: Preparation (Clone Config)
+    const [cloning, setCloning] = useState(false);
+    const [cloneResult, setCloneResult] = useState<{ success: boolean; message: string; details?: string[] } | null>(null);
+    const [cloneOptions, setCloneOptions] = useState({ network: true, tags: true });
+
+    // Step 3: Validation
     const [validating, setValidating] = useState(false);
 
     // Final
@@ -60,6 +65,20 @@ export default function NewMigrationPage() {
         loadVMs();
     }, [sourceId]);
 
+    const handleClone = async () => {
+        setCloning(true);
+        setCloneResult(null);
+        try {
+            const { cloneServerConfig } = await import('@/app/actions/config');
+            const res = await cloneServerConfig(parseInt(sourceId), parseInt(targetId), cloneOptions);
+            setCloneResult(res);
+        } catch (e: any) {
+            setCloneResult({ success: false, message: e.message || String(e), details: [] });
+        } finally {
+            setCloning(false);
+        }
+    };
+
     const handleStart = async () => {
         setStarting(true);
         try {
@@ -90,8 +109,9 @@ export default function NewMigrationPage() {
                 {/* Steps Indicator */}
                 <div className="md:col-span-1 space-y-4">
                     <StepIndicator current={step} number={1} title="Server wählen" desc="Quelle & Ziel definieren" />
-                    <StepIndicator current={step} number={2} title="Prüfung" desc="Voraussetzungen checken" />
-                    <StepIndicator current={step} number={3} title="Bestätigung" desc="Migration starten" />
+                    <StepIndicator current={step} number={2} title="Vorbereitung" desc="Konfiguration klonen" />
+                    <StepIndicator current={step} number={3} title="Prüfung" desc="Voraussetzungen checken" />
+                    <StepIndicator current={step} number={4} title="Bestätigung" desc="Migration starten" />
                 </div>
 
                 {/* Content Area */}
@@ -102,7 +122,6 @@ export default function NewMigrationPage() {
                             {step === 1 && (
                                 <div className="space-y-6">
                                     <h2 className="text-xl font-semibold">Quelle & Ziel</h2>
-
                                     <div className="grid gap-4">
                                         <div className="space-y-2">
                                             <Label>Quell-Server</Label>
@@ -119,7 +138,6 @@ export default function NewMigrationPage() {
                                                 </SelectContent>
                                             </Select>
                                         </div>
-
                                         <div className="space-y-2">
                                             <Label>Ziel-Server</Label>
                                             <Select value={targetId} onValueChange={setTargetId}>
@@ -155,7 +173,6 @@ export default function NewMigrationPage() {
                                                 )}
                                             </div>
                                         )}
-
                                         <div className="flex justify-end pt-4">
                                             <Button
                                                 onClick={() => setStep(2)}
@@ -168,8 +185,72 @@ export default function NewMigrationPage() {
                                 </div>
                             )}
 
-                            {/* Step 2: Validation */}
+                            {/* Step 2: Preparation */}
                             {step === 2 && (
+                                <div className="space-y-6">
+                                    <div>
+                                        <h2 className="text-xl font-semibold">Vorbereitung (Konfiguration Klonen)</h2>
+                                        <p className="text-sm text-muted-foreground mt-1">
+                                            Es wird empfohlen, die Netzwerkkonfiguration zu klonen, damit Ziel-Bridges (z.B. <code>vmbr2</code>) existieren.
+                                        </p>
+                                    </div>
+
+                                    <div className="space-y-4 border p-4 rounded-md">
+                                        <div className="flex items-center space-x-2">
+                                            <Checkbox
+                                                id="clone-net"
+                                                checked={cloneOptions.network}
+                                                onCheckedChange={(c) => setCloneOptions(prev => ({ ...prev, network: !!c }))}
+                                            />
+                                            <Label htmlFor="clone-net">Netzwerk-Konfiguration (/etc/network/interfaces)</Label>
+                                        </div>
+                                        <div className="flex items-center space-x-2">
+                                            <Checkbox
+                                                id="clone-tags"
+                                                checked={cloneOptions.tags}
+                                                onCheckedChange={(c) => setCloneOptions(prev => ({ ...prev, tags: !!c }))}
+                                            />
+                                            <Label htmlFor="clone-tags">Tags & Farben (datacenter.cfg)</Label>
+                                        </div>
+                                    </div>
+
+                                    <Button onClick={handleClone} disabled={cloning} variant="secondary" className="w-full">
+                                        {cloning ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Server className="h-4 w-4 mr-2" />}
+                                        Konfiguration jetzt klonen
+                                    </Button>
+
+                                    {cloneResult && (
+                                        <Alert className={cloneResult.success ? "border-green-500/50 bg-green-500/10 text-green-700 dark:text-green-300" : "border-red-500/50 bg-red-500/10"}>
+                                            <div className="flex items-start gap-2">
+                                                {cloneResult.success ? <CheckCircle2 className="h-5 w-5 mt-0.5" /> : <AlertTriangle className="h-5 w-5 mt-0.5" />}
+                                                <div className="flex-1">
+                                                    <AlertTitle>{cloneResult.success ? "Erfolgreich" : "Fehler"}</AlertTitle>
+                                                    <AlertDescription className="text-xs mt-1 space-y-1">
+                                                        <p>{cloneResult.message}</p>
+                                                        {cloneResult.details && (
+                                                            <pre className="mt-2 p-2 bg-black/10 rounded overflow-x-auto whitespace-pre-wrap max-h-32 text-[10px] font-mono">
+                                                                {cloneResult.details.join('\n')}
+                                                            </pre>
+                                                        )}
+                                                    </AlertDescription>
+                                                </div>
+                                            </div>
+                                        </Alert>
+                                    )}
+
+                                    <div className="flex justify-between pt-4">
+                                        <Button variant="outline" onClick={() => setStep(1)}>
+                                            <ArrowLeft className="mr-2 h-4 w-4" /> Zurück
+                                        </Button>
+                                        <Button onClick={() => setStep(3)}>
+                                            Weiter zur Prüfung <ArrowRight className="ml-2 h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Step 3: Validation (was 2) */}
+                            {step === 3 && (
                                 <div className="space-y-6">
                                     <div className="flex items-center gap-2">
                                         <h2 className="text-xl font-semibold">Voraussetzungen prüfen</h2>
@@ -179,32 +260,26 @@ export default function NewMigrationPage() {
                                         <AlertTriangle className="h-4 w-4" />
                                         <AlertTitle>Konzept: Identische Umgebung</AlertTitle>
                                         <AlertDescription>
-                                            Diese Migration basiert darauf, dass die Zielumgebung identisch zur Quellumgebung konfiguriert ist.
-                                            <br /><br />
-                                            <strong>Es wird versucht:</strong>
                                             <ul className="list-disc ml-5 mt-1 space-y-1">
-                                                <li>VMs auf <strong>dieselben Storage-IDs</strong> zu migrieren (z.B. <code>local-lvm</code> → <code>local-lvm</code>).</li>
-                                                <li>VMs an <strong>dieselbe Bridge</strong> zu binden (z.B. <code>vmbr0</code>).</li>
+                                                <li>VMs werden auf <strong>dieselben Storage-IDs</strong> migriert (z.B. <code>local-lvm</code> → <code>local-lvm</code>). UUIDs werden ignoriert.</li>
+                                                <li>Falls eine Bridge fehlt, wird automatisch auf <code>vmbr0</code> gewechselt.</li>
                                             </ul>
-                                            <div className="mt-3 font-medium">
-                                                Bitte stellen Sie sicher, dass alle benötigten Storages und Netzwerke auf dem Zielserver "{servers.find(s => s.id.toString() === targetId)?.name}" existieren!
-                                            </div>
                                         </AlertDescription>
                                     </Alert>
 
                                     <div className="flex justify-between pt-4">
-                                        <Button variant="outline" onClick={() => setStep(1)}>
+                                        <Button variant="outline" onClick={() => setStep(2)}>
                                             <ArrowLeft className="mr-2 h-4 w-4" /> Zurück
                                         </Button>
-                                        <Button onClick={() => setStep(3)}>
+                                        <Button onClick={() => setStep(4)}>
                                             Verstanden & Weiter <ArrowRight className="ml-2 h-4 w-4" />
                                         </Button>
                                     </div>
                                 </div>
                             )}
 
-                            {/* Step 3: Confirm */}
-                            {step === 3 && (
+                            {/* Step 4: Confirm (was 3) */}
+                            {step === 4 && (
                                 <div className="space-y-6">
                                     <div className="text-center py-6">
                                         <div className="inline-flex items-center justify-center p-4 bg-green-100 dark:bg-green-900/20 rounded-full mb-4">
@@ -230,14 +305,10 @@ export default function NewMigrationPage() {
                                             <span className="text-muted-foreground">Modus:</span>
                                             <span className="font-medium">Live Migration (Online)</span>
                                         </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-muted-foreground">Mapping:</span>
-                                            <span className="font-medium">Auto-Detect (1:1)</span>
-                                        </div>
                                     </div>
 
                                     <div className="flex justify-between pt-4">
-                                        <Button variant="outline" onClick={() => setStep(2)} disabled={starting}>
+                                        <Button variant="outline" onClick={() => setStep(3)} disabled={starting}>
                                             <ArrowLeft className="mr-2 h-4 w-4" /> Zurück
                                         </Button>
                                         <Button onClick={handleStart} disabled={starting} className="bg-green-600 hover:bg-green-700">
@@ -283,3 +354,4 @@ function StepIndicator({ current, number, title, desc }: { current: number, numb
         </div>
     );
 }
+
