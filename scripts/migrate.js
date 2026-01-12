@@ -140,5 +140,15 @@ db.exec(`
   );
 `);
 
+// Tags table for Centralized Tag Management
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    color TEXT NOT NULL, -- Hex color without #
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
 console.log('Database migrations completed.');
 db.close();

@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import db from './db';
-// import { ProxmoxClient } from './proxmox';
+import { performFullBackup } from './backup-logic';
 
 export function initScheduler() {
     console.log('[Scheduler] Initializing...');
@@ -22,7 +22,7 @@ export function initScheduler() {
 }
 
 async function runJob(job: any) {
-    console.log(`[Scheduler] Executing job: ${job.name}`);
+    console.log(`[Scheduler] Executing job: ${job.name} (type: ${job.job_type})`);
     const startTime = new Date().toISOString();
 
     // Insert history record
@@ -30,14 +30,33 @@ async function runJob(job: any) {
     const historyId = result.id;
 
     try {
-        // Mock execution delay
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        if (job.job_type === 'config') {
+            // Config backup job
+            const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(job.source_server_id) as any;
+            if (!server) {
+                throw new Error(`Server ${job.source_server_id} not found`);
+            }
 
-        // Success
-        db.prepare('UPDATE history SET status = ?, end_time = ? WHERE id = ?').run('success', new Date().toISOString(), historyId);
-        console.log(`[Scheduler] Job ${job.name} completed successfully.`);
+            const backupResult = await performFullBackup(job.source_server_id, server);
+
+            if (!backupResult.success) {
+                throw new Error(backupResult.message);
+            }
+
+            db.prepare('UPDATE history SET status = ?, end_time = ?, log = ? WHERE id = ?')
+                .run('success', new Date().toISOString(), `Backup created: ${backupResult.backupId}`, historyId);
+            console.log(`[Scheduler] Config backup job ${job.name} completed: backup ID ${backupResult.backupId}`);
+
+        } else {
+            // Default mock for other job types
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            db.prepare('UPDATE history SET status = ?, end_time = ? WHERE id = ?')
+                .run('success', new Date().toISOString(), historyId);
+            console.log(`[Scheduler] Job ${job.name} completed successfully.`);
+        }
     } catch (error) {
         console.error(`[Scheduler] Job ${job.name} failed:`, error);
-        db.prepare('UPDATE history SET status = ?, end_time = ?, log = ? WHERE id = ?').run('failed', new Date().toISOString(), String(error), historyId);
+        db.prepare('UPDATE history SET status = ?, end_time = ?, log = ? WHERE id = ?')
+            .run('failed', new Date().toISOString(), String(error), historyId);
     }
 }

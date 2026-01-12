@@ -1,9 +1,12 @@
 import Link from 'next/link';
-import { LayoutDashboard, Server, FolderCog, Settings } from 'lucide-react';
+import { LayoutDashboard, Server, FolderCog, Settings, ArrowRightLeft, Tag as TagIcon, HardDrive } from 'lucide-react';
 
 const navItems = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard },
     { name: 'Server', href: '/servers', icon: Server },
+    { name: 'Migrationen', href: '/migrations', icon: ArrowRightLeft },
+    { name: 'Tags', href: '/tags', icon: TagIcon },
+    { name: 'Speicher', href: '/storage', icon: HardDrive },
     { name: 'Konfigurationen', href: '/configs', icon: FolderCog },
     { name: 'Einstellungen', href: '/settings', icon: Settings },
 ];

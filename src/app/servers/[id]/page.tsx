@@ -2,7 +2,7 @@ import Link from 'next/link';
 import db from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Server, Network, HardDrive, Cpu, Wifi, WifiOff, Clock, Gauge, Activity, Database, Box } from "lucide-react";
+import { ArrowLeft, Server, Network, HardDrive, Cpu, Wifi, WifiOff, Clock, Gauge, Activity, Database, Box, Settings } from "lucide-react";
 import { createSSHClient } from '@/lib/ssh';
 import { ServerVisualization } from '@/components/ui/ServerVisualization';
 import { getVMs } from '@/app/actions/vm';
@@ -561,6 +561,18 @@ export default async function ServerDetailPage({
                                         <p className="text-xs text-muted-foreground">{info.system.cpu}</p>
                                     </div>
                                     <div className="p-4 hover:bg-muted/5 transition-colors">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h2 className="text-xl font-semibold flex items-center gap-2">
+                                                <Network className="h-5 w-5" />
+                                                Netzwerkschnittstellen
+                                            </h2>
+                                            <Link href={`/servers/${id}/network`}>
+                                                <Button variant="outline" size="sm">
+                                                    <Settings className="h-4 w-4 mr-2" />
+                                                    Konfigurieren
+                                                </Button>
+                                            </Link>
+                                        </div>
                                         <div className="flex justify-between mb-2">
                                             <span className="text-sm text-muted-foreground flex items-center gap-2">
                                                 <Gauge className="h-4 w-4" />

@@ -33,44 +33,35 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
     const [logs, setLogs] = useState<string[]>([]);
     const [error, setError] = useState<string | null>(null);
 
-    // Fetch resources when target server changes
+    // Fetch resources
     useEffect(() => {
         if (!targetServerId) return;
-
         async function fetchResources() {
             setLoadingResources(true);
             setStorages([]);
             setBridges([]);
             setTargetStorage('');
             setTargetBridge('');
-
             try {
                 const res = await getTargetResources(parseInt(targetServerId));
                 setStorages(res.storages);
                 setBridges(res.bridges);
-
-                // Set defaults
                 if (res.storages.length > 0) {
-                    // Prefer local-zfs or local-lvm
-                    const pref = res.storages.find(s => s.includes('zfs')) || res.storages.find(s => s.includes('lvm')) || res.storages[0];
+                    const pref = res.storages.find(s => s.includes('zfs') || s.includes('lvm')) || res.storages[0];
                     setTargetStorage(pref);
                 }
-                if (res.bridges.length > 0) {
-                    setTargetBridge(res.bridges[0]);
-                }
+                if (res.bridges.length > 0) setTargetBridge(res.bridges[0]);
             } catch (e) {
                 console.error(e);
             } finally {
                 setLoadingResources(false);
             }
         }
-
         fetchResources();
     }, [targetServerId]);
 
     async function handleMigrate() {
         if (!targetServerId || !targetStorage || !targetBridge) return;
-
         setMigrating(true);
         setError(null);
         setLogs(prev => [...prev, `Starting migration of ${vm.name} (${vm.vmid})...`]);
@@ -82,13 +73,12 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
                 targetBridge,
                 online
             });
-
             if (res.success) {
-                setLogs(prev => [...prev, 'Migration command finished successfully.', 'Log output:', res.message || '']);
+                setLogs(prev => [...prev, 'Migration finished successfully.', 'Log:', res.message || '']);
                 setTimeout(() => {
                     onOpenChange(false);
                     router.refresh();
-                }, 2000);
+                }, 1500);
             } else {
                 setError(res.message);
                 setLogs(prev => [...prev, `Error: ${res.message}`]);
@@ -101,46 +91,58 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
         }
     }
 
+    const targetServerName = otherServers.find(s => s.id.toString() === targetServerId)?.name || 'Unknown';
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[500px]">
+            <DialogContent className="sm:max-w-[600px]">
                 <DialogHeader>
-                    <DialogTitle>VM Migration: {vm.name}</DialogTitle>
+                    <DialogTitle className="flex items-center gap-2">
+                        <ArrowRightLeft className="h-5 w-5" />
+                        Live Migration: {vm.name}
+                    </DialogTitle>
                     <DialogDescription>
-                        Move this VM to another server.
-                        {online && " Standard/Live migration is enabled."}
+                        Move virtual machine/container to another node active.
                     </DialogDescription>
                 </DialogHeader>
 
-                {!migrating && !error && logs.length === 0 ? (
-                    <div className="grid gap-4 py-4">
-                        <div className="grid grid-cols-4 items-center gap-4">
-                            <Label htmlFor="target" className="text-right">Platform</Label>
-                            <Select value={targetServerId} onValueChange={setTargetServerId}>
-                                <SelectTrigger className="col-span-3">
-                                    <SelectValue placeholder="Select Target Server" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {otherServers.map(s => (
-                                        <SelectItem key={s.id} value={s.id.toString()}>
-                                            {s.name}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
+                {!migrating && logs.length === 0 ? (
+                    <div className="grid gap-6 py-4">
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <Label className="mb-2 block">Target Node</Label>
+                                    <Select value={targetServerId} onValueChange={setTargetServerId}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Select Server" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {otherServers.map(s => (
+                                                <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="flex flex-col justify-end pb-2">
+                                    <div className="flex items-center justify-between border p-3 rounded-md bg-muted/40">
+                                        <Label htmlFor="online" className="cursor-pointer">Online Mode</Label>
+                                        <Switch id="online" checked={online} onCheckedChange={setOnline} />
+                                    </div>
+                                </div>
+                            </div>
 
-                        {targetServerId && (
-                            <>
-                                <div className="grid grid-cols-4 items-center gap-4">
-                                    <Label htmlFor="storage" className="text-right">Storage</Label>
-                                    <div className="col-span-3">
+                            {targetServerId && (
+                                <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2">
+                                    <div>
+                                        <Label className="mb-2 block">Target Storage</Label>
                                         {loadingResources ? (
-                                            <div className="flex items-center text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin mr-2" /> Loading...</div>
+                                            <div className="h-10 flex items-center px-3 border rounded-md bg-muted text-muted-foreground text-sm">
+                                                <Loader2 className="h-3 w-3 animate-spin mr-2" /> Loading...
+                                            </div>
                                         ) : (
                                             <Select value={targetStorage} onValueChange={setTargetStorage}>
                                                 <SelectTrigger>
-                                                    <SelectValue placeholder="Select Storage" />
+                                                    <SelectValue />
                                                 </SelectTrigger>
                                                 <SelectContent>
                                                     {storages.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -148,17 +150,16 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
                                             </Select>
                                         )}
                                     </div>
-                                </div>
-
-                                <div className="grid grid-cols-4 items-center gap-4">
-                                    <Label htmlFor="bridge" className="text-right">Network</Label>
-                                    <div className="col-span-3">
+                                    <div>
+                                        <Label className="mb-2 block">Target Network</Label>
                                         {loadingResources ? (
-                                            <div className="flex items-center text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin mr-2" /> Loading...</div>
+                                            <div className="h-10 flex items-center px-3 border rounded-md bg-muted text-muted-foreground text-sm">
+                                                <Loader2 className="h-3 w-3 animate-spin mr-2" /> Loading...
+                                            </div>
                                         ) : (
                                             <Select value={targetBridge} onValueChange={setTargetBridge}>
                                                 <SelectTrigger>
-                                                    <SelectValue placeholder="Select Bridge" />
+                                                    <SelectValue />
                                                 </SelectTrigger>
                                                 <SelectContent>
                                                     {bridges.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
@@ -167,44 +168,65 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
                                         )}
                                     </div>
                                 </div>
-                            </>
-                        )}
+                            )}
 
-                        <div className="grid grid-cols-4 items-center gap-4">
-                            <Label htmlFor="online" className="text-right">Online</Label>
-                            <div className="col-span-3 flex items-center space-x-2">
-                                <Switch id="online" checked={online} onCheckedChange={setOnline} />
-                                <Label htmlFor="online" className="font-normal text-xs text-muted-foreground">Keep VM running during migration (if compatible)</Label>
-                            </div>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="py-4">
-                        <div className="bg-muted p-4 rounded-md font-mono text-xs max-h-[300px] overflow-y-auto whitespace-pre-wrap">
-                            {logs.map((log, i) => (
-                                <div key={i} className="mb-1">{log}</div>
-                            ))}
-                            {migrating && (
-                                <div className="flex items-center mt-2 text-primary">
-                                    <Loader2 className="h-3 w-3 animate-spin mr-2" />
-                                    Migrating... (this may take a while)
+                            {targetServerId && targetStorage && targetBridge && (
+                                <div className="mt-4 p-4 border rounded-lg bg-blue-500/5 border-blue-200 dark:border-blue-900">
+                                    <h4 className="font-medium text-sm mb-2 text-blue-700 dark:text-blue-400">Migration Summary</h4>
+                                    <div className="text-sm space-y-1 text-muted-foreground">
+                                        <div className="flex justify-between">
+                                            <span>Target:</span> <span className="font-medium text-foreground">{targetServerName}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>Storage:</span> <span className="font-medium text-foreground">{targetStorage}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>Network:</span> <span className="font-medium text-foreground">{targetBridge}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>Mode:</span>
+                                            <span className={`font-medium ${online ? 'text-green-600' : 'text-amber-600'}`}>
+                                                {online ? 'Online (Live)' : 'Offline (Shutdown)'}
+                                            </span>
+                                        </div>
+                                    </div>
                                 </div>
                             )}
                         </div>
+                    </div>
+                ) : (
+                    <div className="py-4 space-y-4">
+                        <div className="bg-black/90 text-green-400 p-4 rounded-md font-mono text-xs max-h-[300px] overflow-y-auto whitespace-pre-wrap border border-green-900/50 shadow-inner">
+                            {logs.map((log, i) => (
+                                <div key={i} className="mb-1 border-l-2 border-transparent hover:border-green-500/50 pl-2">{log}</div>
+                            ))}
+                            {migrating && (
+                                <div className="flex items-center mt-2 text-primary animate-pulse">
+                                    <Loader2 className="h-3 w-3 animate-spin mr-2" />
+                                    Processing migration...
+                                </div>
+                            )}
+                        </div>
+                        {error && (
+                            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-md flex items-center gap-2 text-sm text-red-600">
+                                <AlertTriangle className="h-4 w-4" />
+                                {error}
+                            </div>
+                        )}
                     </div>
                 )}
 
                 <DialogFooter>
                     {!migrating && (
                         <>
-                            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+                            <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
                             <Button
                                 onClick={handleMigrate}
                                 disabled={!targetServerId || !targetStorage || !targetBridge || loadingResources}
-                                className="bg-primary"
+                                className={online ? "bg-green-600 hover:bg-green-700" : ""}
                             >
-                                <ArrowRightLeft className="h-4 w-4 mr-2" />
-                                Start Migration
+                                {online ? <ArrowRightLeft className="h-4 w-4 mr-2" /> : <Loader2 className="h-4 w-4 mr-2" />}
+                                {online ? 'Start Online Migration' : 'Start Offline Migration'}
                             </Button>
                         </>
                     )}

@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Server } from "lucide-react";
 import ConfigList from './ConfigList';
+import { ScheduleManager } from '@/components/config/ScheduleManager';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,6 +45,9 @@ export default function ConfigsPage() {
         backupsByServer[backup.server_id].push(backup);
     }
 
+    // Server list for schedule manager
+    const serverList = servers.map(s => ({ id: s.id, name: s.name }));
+
     return (
         <div className="space-y-6">
             <div>
@@ -65,8 +69,15 @@ export default function ConfigsPage() {
                     </CardContent>
                 </Card>
             ) : (
-                <ConfigList servers={servers} backupsByServer={backupsByServer} groups={groups} />
+                <>
+                    {/* Schedule Manager */}
+                    <ScheduleManager servers={serverList} />
+
+                    {/* Config Backups List */}
+                    <ConfigList servers={servers} backupsByServer={backupsByServer} groups={groups} />
+                </>
             )}
         </div>
     );
 }
+
