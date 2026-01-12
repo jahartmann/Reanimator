@@ -47,6 +47,7 @@ export class SSHClient {
                 host: this.config.host,
                 port: this.config.port,
                 username: this.config.username,
+                readyTimeout: 10000, // 10 seconds timeout for handshake
             };
 
             if (this.config.privateKey) {
@@ -55,7 +56,36 @@ export class SSHClient {
                 connectConfig.password = this.config.password;
             }
 
-            this.client.connect(connectConfig);
+            // Wrap connect in a promise race to handle TCP connection timeouts
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => {
+                    this.client.destroy(); // Force close
+                    reject(new Error('SSH Connection timed out after 10000ms'));
+                }, 10000);
+            });
+
+            const connectPromise = new Promise<void>((resolveConnect, rejectConnect) => {
+                this.client.on('ready', () => {
+                    console.log(`[SSH] Connected to ${this.config.host}`);
+                    resolveConnect();
+                });
+
+                this.client.on('error', (err) => {
+                    console.error(`[SSH] Connection error:`, err);
+                    rejectConnect(err);
+                });
+
+                try {
+                    this.client.connect(connectConfig);
+                } catch (e) {
+                    rejectConnect(e);
+                }
+            });
+
+            // Return the race
+            Promise.race([connectPromise, timeoutPromise])
+                .then(() => resolve())
+                .catch(err => reject(err));
         });
     }
 

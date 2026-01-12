@@ -53,41 +53,51 @@ export async function POST(
     }
 
     // For multiple files, create a ZIP
-    const { Readable } = await import('stream');
+    try {
+        const archive = archiver('zip', { zlib: { level: 9 } });
+        const chunks: Buffer[] = [];
 
-    // Create archive
-    const archive = archiver('zip', { zlib: { level: 9 } });
-    const chunks: Buffer[] = [];
+        archive.on('data', (chunk) => chunks.push(chunk));
 
-    archive.on('data', (chunk) => chunks.push(chunk));
+        // Create a promise that rejects on error
+        const archivePromise = new Promise<void>((resolve, reject) => {
+            archive.on('end', resolve);
+            archive.on('error', (err) => reject(err));
+        });
 
-    for (const file of files) {
-        const filePath = path.join(backup.backup_path, file);
+        for (const file of files) {
+            const filePath = path.join(backup.backup_path, file);
 
-        // Security check
-        try {
-            const realPath = fs.realpathSync(filePath);
-            if (!realPath.startsWith(backup.backup_path)) continue;
-        } catch {
-            continue;
+            // Security check
+            try {
+                const realPath = fs.realpathSync(filePath);
+                if (!realPath.startsWith(backup.backup_path)) continue;
+
+                if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+                    archive.file(filePath, { name: file });
+                }
+            } catch (e) {
+                console.warn(`Skipping file ${file} due to error:`, e);
+                continue;
+            }
         }
 
-        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-            archive.file(filePath, { name: file });
-        }
+        await archive.finalize();
+        await archivePromise;
+
+        const zipBuffer = Buffer.concat(chunks);
+
+        return new NextResponse(zipBuffer, {
+            headers: {
+                'Content-Type': 'application/zip',
+                'Content-Disposition': `attachment; filename="backup-${backupId}.zip"`,
+            },
+        });
+    } catch (error) {
+        console.error('ZIP creation failed:', error);
+        return NextResponse.json(
+            { error: 'Failed to create backup archive' },
+            { status: 500 }
+        );
     }
-
-    await archive.finalize();
-
-    // Wait for all data
-    await new Promise((resolve) => archive.on('end', resolve));
-
-    const zipBuffer = Buffer.concat(chunks);
-
-    return new NextResponse(zipBuffer, {
-        headers: {
-            'Content-Type': 'application/zip',
-            'Content-Disposition': `attachment; filename="backup-${backupId}.zip"`,
-        },
-    });
 }
