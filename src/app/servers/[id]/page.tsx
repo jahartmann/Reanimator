@@ -136,7 +136,7 @@ async function getSystemStats(ssh: any) {
 
 async function getNetworkStats(ssh: any) {
     try {
-        const netOutput = await ssh.exec(`ip -j addr 2>/dev/null || ip addr`, 10000);
+        const netOutput = await ssh.exec(`ip -j addr 2>/dev/null || ip addr`, 30000);
         console.log('[Network] Raw output:', netOutput.substring(0, 200));
         let networks: NetworkInterface[] = [];
 
@@ -230,7 +230,7 @@ async function getNetworkStats(ssh: any) {
 
 async function getDiskStats(ssh: any) {
     try {
-        const diskOutput = await ssh.exec(`lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL,SERIAL,FSTYPE,ROTA,TRAN 2>/dev/null || lsblk -o NAME,SIZE,TYPE,MOUNTPOINT`, 15000);
+        const diskOutput = await ssh.exec(`lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL,SERIAL,FSTYPE,ROTA,TRAN 2>/dev/null || lsblk -o NAME,SIZE,TYPE,MOUNTPOINT`, 30000);
         console.log('[Disk] Raw output:', diskOutput.substring(0, 200));
         let disks: DiskInfo[] = [];
         try {

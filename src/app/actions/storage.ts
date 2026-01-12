@@ -26,6 +26,7 @@ interface ServerStorage {
         available: number;
         usagePercent: number;
         active: boolean;
+        isShared?: boolean; // For cluster-wide shared storage (Ceph)
     }[];
 }
 
@@ -166,6 +167,29 @@ export async function getServerStorages(): Promise<ServerStorage[]> {
                 }
             } catch { /* LVM not available */ }
 
+            // Ceph pools (detect via rados or ceph df)
+            try {
+                const cephOutput = await ssh.exec(`ceph df -f json 2>/dev/null || echo ""`, 10000);
+                if (cephOutput.trim() && cephOutput.trim().startsWith('{')) {
+                    const cephData = JSON.parse(cephOutput);
+                    if (cephData.stats) {
+                        const total = cephData.stats.total_bytes || 0;
+                        const used = cephData.stats.total_used_bytes || 0;
+                        const available = cephData.stats.total_avail_bytes || 0;
+                        storages.push({
+                            name: 'ceph-cluster',
+                            type: 'ceph',
+                            total,
+                            used,
+                            available,
+                            usagePercent: total > 0 ? (used / total) * 100 : 0,
+                            active: true,
+                            isShared: true // Mark as cluster-wide shared storage
+                        });
+                    }
+                }
+            } catch { /* Ceph not available */ }
+
             // Filesystem mounts (major ones)
             try {
                 const dfOutput = await ssh.exec(`df -B1 --output=target,size,used,avail / /var /home 2>/dev/null | tail -n +2 || echo ""`, 10000);
@@ -202,6 +226,23 @@ export async function getServerStorages(): Promise<ServerStorage[]> {
         }
     }
 
+    // Deduplicate shared storage (Ceph) across cluster nodes
+    // If multiple servers report the same ceph-cluster, only show it once
+    const seenSharedStorages = new Set<string>();
+    for (const server of results) {
+        server.storages = server.storages.filter(storage => {
+            if ((storage as any).isShared) {
+                const key = `${storage.type}:${storage.name}:${storage.total}`;
+                if (seenSharedStorages.has(key)) {
+                    return false; // Skip duplicate
+                }
+                seenSharedStorages.add(key);
+            }
+            return true;
+        });
+    }
+
     return results;
 }
+
 

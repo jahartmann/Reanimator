@@ -32,26 +32,104 @@ function formatBytes(bytes: number): string {
 }
 
 function createRecoveryGuide(server: Server, date: Date): string {
-    return `# Disaster Recovery Anleitung
-## Server: ${server.name}
-## Typ: ${server.type.toUpperCase()}
-## Backup vom: ${date.toLocaleString('de-DE')}
+    const dateStr = date.toLocaleString('de-DE', { dateStyle: 'full', timeStyle: 'short' });
+    return `# 🔧 Disaster Recovery Anleitung
+
+## Server-Informationen
+| Eigenschaft | Wert |
+|-------------|------|
+| **Name** | ${server.name} |
+| **Typ** | ${server.type.toUpperCase()} |
+| **Backup-Datum** | ${dateStr} |
 
 ---
-## 1. System-Wiederherstellung (Proxmox)
-- ISO installieren (gleiche Version empfohlen)
-- Hostname und IP gleich konfigurieren
 
-## 2. Config Restore
-Dateien aus diesem Backup zurückkopieren:
-- \`/etc/pve/\` -> Cluster/VM Configs
-- \`/etc/network/interfaces\` -> Netzwerk
-- \`/etc/passwd\`, \`/etc/shadow\` -> User (Vorsicht!)
-- \`/var/spool/cron\` -> Cronjobs
+## ⚠️ Wichtiger Hinweis
+Diese Anleitung führt Sie durch die Wiederherstellung des Servers nach einem Totalausfall.
+Alle Befehle mit \`sudo\` ausführen oder als Root anmelden.
 
-## 3. Storage
-Prüfen Sie \`DISK_UUIDS.txt\` und \`/etc/fstab\`.
-UUIDs ändern sich bei neuen Disks!
+---
+
+## Schritt 1: Betriebssystem installieren
+1. Proxmox VE ISO herunterladen (gleiche oder neuere Version)
+2. Von USB/CD booten und installieren
+3. **Wichtig:** Gleichen Hostnamen verwenden: \`${server.name}\`
+4. Gleiche IP-Adresse und Netzwerkkonfiguration verwenden (siehe SYSTEM_INFO.txt)
+
+---
+
+## Schritt 2: SSH-Zugang vorbereiten
+\`\`\`bash
+# SSH-Key aus Backup kopieren
+mkdir -p /root/.ssh
+cp <backup>/root/.ssh/authorized_keys /root/.ssh/
+chmod 600 /root/.ssh/authorized_keys
+\`\`\`
+
+---
+
+## Schritt 3: Netzwerk-Konfiguration wiederherstellen
+\`\`\`bash
+# Backup der aktuellen Netzwerk-Konfiguration
+cp /etc/network/interfaces /etc/network/interfaces.bak
+
+# Konfiguration aus Backup kopieren
+cp <backup>/etc/network/interfaces /etc/network/interfaces
+
+# Netzwerk neu starten
+systemctl restart networking
+\`\`\`
+
+---
+
+## Schritt 4: Proxmox-Konfiguration wiederherstellen
+\`\`\`bash
+# VM/CT-Konfigurationen
+cp -r <backup>/etc/pve/* /etc/pve/
+
+# Speicher-Konfiguration
+cp <backup>/etc/pve/storage.cfg /etc/pve/storage.cfg
+\`\`\`
+
+---
+
+## Schritt 5: Storage wiederherstellen
+1. Prüfen Sie \`SYSTEM_INFO.txt\` für Disk-UUIDs
+2. Neue Disks haben andere UUIDs → \`/etc/fstab\` anpassen!
+
+\`\`\`bash
+# UUIDs der neuen Disks anzeigen
+blkid
+
+# fstab anpassen
+nano /etc/fstab
+\`\`\`
+
+---
+
+## Schritt 6: Dienste prüfen
+\`\`\`bash
+# Proxmox-Dienste neustarten
+systemctl restart pvedaemon pveproxy pvestatd
+
+# Status prüfen
+pvecm status  # Cluster-Status
+pvesh get /nodes  # Nodes prüfen
+\`\`\`
+
+---
+
+## 📋 Checkliste nach Wiederherstellung
+- [ ] Netzwerk erreichbar (Ping-Test)
+- [ ] Web-Interface unter https://<IP>:8006 erreichbar
+- [ ] Alle VMs/CTs sichtbar
+- [ ] Storage korrekt gemountet
+- [ ] Backups wieder konfiguriert
+
+---
+
+## 📞 Support
+Bei Problemen: Logs prüfen mit \`journalctl -xe\` oder \`dmesg\`
 `;
 }
 
