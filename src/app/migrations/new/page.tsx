@@ -12,6 +12,7 @@ import { ArrowRight, ArrowLeft, Loader2, CheckCircle2, AlertTriangle, Info, Serv
 import { getServers } from "@/app/actions/server";
 import { startServerMigration } from "@/app/actions/migration";
 import { getVMs, VirtualMachine } from "@/app/actions/vm";
+import { Badge } from "@/components/ui/badge";
 
 export default function NewMigrationPage() {
     const router = useRouter();
@@ -24,10 +25,19 @@ export default function NewMigrationPage() {
     const [vms, setVms] = useState<VirtualMachine[]>([]);
     const [loadingVms, setLoadingVms] = useState(false);
 
+
     // Step 2: Preparation (Clone Config)
     const [cloning, setCloning] = useState(false);
     const [cloneResult, setCloneResult] = useState<{ success: boolean; message: string; details?: string[] } | null>(null);
-    const [cloneOptions, setCloneOptions] = useState({ network: true, tags: true });
+    const [cloneOptions, setCloneOptions] = useState({
+        network: true,
+        hosts: false,
+        dns: false,
+        timezone: false,
+        locale: false,
+        tags: true,
+        storage: false
+    });
 
     // Step 3: Validation
     const [validating, setValidating] = useState(false);
@@ -185,58 +195,144 @@ export default function NewMigrationPage() {
                                 </div>
                             )}
 
-                            {/* Step 2: Preparation */}
+                            {/* Step 2: Preparation (Guide + Config) */}
                             {step === 2 && (
                                 <div className="space-y-6">
                                     <div>
-                                        <h2 className="text-xl font-semibold">Vorbereitung (Konfiguration Klonen)</h2>
-                                        <p className="text-sm text-muted-foreground mt-1">
-                                            Es wird empfohlen, die Netzwerkkonfiguration zu klonen, damit Ziel-Bridges (z.B. <code>vmbr2</code>) existieren.
+                                        <h2 className="text-xl font-semibold">Vorbereitung</h2>
+                                        <p className="text-sm text-muted-foreground">
+                                            Bereiten Sie den Ziel-Server vor, um eine reibungslose Migration zu gewährleisten.
                                         </p>
                                     </div>
 
-                                    <div className="space-y-4 border p-4 rounded-md">
-                                        <div className="flex items-center space-x-2">
-                                            <Checkbox
-                                                id="clone-net"
-                                                checked={cloneOptions.network}
-                                                onCheckedChange={(c) => setCloneOptions(prev => ({ ...prev, network: !!c }))}
-                                            />
-                                            <Label htmlFor="clone-net">Netzwerk-Konfiguration (/etc/network/interfaces)</Label>
-                                        </div>
-                                        <div className="flex items-center space-x-2">
-                                            <Checkbox
-                                                id="clone-tags"
-                                                checked={cloneOptions.tags}
-                                                onCheckedChange={(c) => setCloneOptions(prev => ({ ...prev, tags: !!c }))}
-                                            />
-                                            <Label htmlFor="clone-tags">Tags & Farben (datacenter.cfg)</Label>
-                                        </div>
-                                    </div>
+                                    {/* Manual Checklist Guide */}
+                                    <Alert className="bg-blue-500/10 border-blue-500/20 text-blue-700 dark:text-blue-300">
+                                        <Info className="h-4 w-4" />
+                                        <AlertTitle>Manuelle Prüfliste</AlertTitle>
+                                        <AlertDescription className="text-sm mt-2">
+                                            <ul className="list-disc ml-4 space-y-1">
+                                                <li><strong>Storage Pools:</strong> Stellen Sie sicher, dass auf dem Ziel Pools mit <em>identischen Namen</em> (z.B. <code>local-lvm</code>) existieren.</li>
+                                                <li><strong>Netzwerk:</strong> Prüfen Sie, ob benötigte Bridges (z.B. <code>vmbr1</code>) vorhanden sind. (Oder klonen Sie die Config unten).</li>
+                                                <li><strong>Warnung:</strong> Kopieren von <code>fstab</code> oder UUID-basierten Mounts kann zu Boot-Fehlern führen.</li>
+                                            </ul>
+                                        </AlertDescription>
+                                    </Alert>
 
-                                    <Button onClick={handleClone} disabled={cloning} variant="secondary" className="w-full">
-                                        {cloning ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Server className="h-4 w-4 mr-2" />}
-                                        Konfiguration jetzt klonen
-                                    </Button>
+                                    {/* Config Cloning UI */}
+                                    <div className="border rounded-md p-4 space-y-4">
+                                        <h3 className="font-medium flex items-center gap-2">
+                                            <Server className="h-4 w-4 text-muted-foreground" />
+                                            Konfiguration klonen (Optional)
+                                        </h3>
 
-                                    {cloneResult && (
-                                        <Alert className={cloneResult.success ? "border-green-500/50 bg-green-500/10 text-green-700 dark:text-green-300" : "border-red-500/50 bg-red-500/10"}>
-                                            <div className="flex items-start gap-2">
-                                                {cloneResult.success ? <CheckCircle2 className="h-5 w-5 mt-0.5" /> : <AlertTriangle className="h-5 w-5 mt-0.5" />}
-                                                <div className="flex-1">
-                                                    <AlertTitle>{cloneResult.success ? "Erfolgreich" : "Fehler"}</AlertTitle>
-                                                    <AlertDescription className="text-xs mt-1 space-y-1">
-                                                        <p>{cloneResult.message}</p>
-                                                        {cloneResult.details && (
-                                                            <pre className="mt-2 p-2 bg-black/10 rounded overflow-x-auto whitespace-pre-wrap max-h-32 text-[10px] font-mono">
-                                                                {cloneResult.details.join('\n')}
-                                                            </pre>
-                                                        )}
-                                                    </AlertDescription>
+                                        <div className="grid md:grid-cols-3 gap-4">
+                                            {/* Network Column */}
+                                            <div className="space-y-3 p-3 bg-muted/30 rounded-lg">
+                                                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Netzwerk</h4>
+                                                <div className="space-y-2">
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-net" checked={cloneOptions.network} onCheckedChange={c => setCloneOptions(o => ({ ...o, network: !!c }))} />
+                                                        <div className="grid gap-1.5 leading-none">
+                                                            <Label htmlFor="c-net">Interfaces</Label>
+                                                            <p className="text-[10px] text-muted-foreground">/etc/network/interfaces</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-hosts" checked={cloneOptions.hosts} onCheckedChange={c => setCloneOptions(o => ({ ...o, hosts: !!c }))} />
+                                                        <div className="grid gap-1.5 leading-none">
+                                                            <Label htmlFor="c-hosts">Hosts</Label>
+                                                            <p className="text-[10px] text-muted-foreground">/etc/hosts (Backup erstellt)</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-dns" checked={cloneOptions.dns} onCheckedChange={c => setCloneOptions(o => ({ ...o, dns: !!c }))} />
+                                                        <div className="grid gap-1.5 leading-none">
+                                                            <Label htmlFor="c-dns">DNS</Label>
+                                                            <p className="text-[10px] text-muted-foreground">/etc/resolv.conf</p>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </Alert>
-                                    )}
+
+                                            {/* System Column */}
+                                            <div className="space-y-3 p-3 bg-muted/30 rounded-lg">
+                                                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">System</h4>
+                                                <div className="space-y-2">
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-tz" checked={cloneOptions.timezone} onCheckedChange={c => setCloneOptions(o => ({ ...o, timezone: !!c }))} />
+                                                        <div className="grid gap-1.5 leading-none">
+                                                            <Label htmlFor="c-tz">Timezone</Label>
+                                                            <p className="text-[10px] text-muted-foreground">Setzt Zeitzone neu</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-loc" checked={cloneOptions.locale} onCheckedChange={c => setCloneOptions(o => ({ ...o, locale: !!c }))} />
+                                                        <div className="grid gap-1.5 leading-none">
+                                                            <Label htmlFor="c-loc">Locale</Label>
+                                                            <p className="text-[10px] text-muted-foreground">Generiert Locales neu</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Proxmox Column */}
+                                            <div className="space-y-3 p-3 bg-muted/30 rounded-lg">
+                                                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Proxmox</h4>
+                                                <div className="space-y-2">
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-tags" checked={cloneOptions.tags} onCheckedChange={c => setCloneOptions(o => ({ ...o, tags: !!c }))} />
+                                                        <div className="grid gap-1.5 leading-none">
+                                                            <Label htmlFor="c-tags">Tags & Farben</Label>
+                                                            <p className="text-[10px] text-muted-foreground">datacenter.cfg</p>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Storage Config with Warning */}
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-sto" checked={cloneOptions.storage} onCheckedChange={c => setCloneOptions(o => ({ ...o, storage: !!c }))} />
+                                                        <div className="grid gap-1.5 leading-none">
+                                                            <div className="flex items-center gap-2">
+                                                                <Label htmlFor="c-sto" className="text-red-600 dark:text-red-400 font-bold">Storage Config</Label>
+                                                                <Badge variant="destructive" className="text-[9px] h-4 px-1">Warnung</Badge>
+                                                            </div>
+                                                            <p className="text-[10px] text-red-600/80">Kopiert UUIDs! Gefahr bei abweichender Hardware.</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <Button
+                                            onClick={handleClone}
+                                            disabled={cloning}
+                                            className="w-full"
+                                            variant={Object.values(cloneOptions).some(Boolean) ? 'default' : 'secondary'}
+                                        >
+                                            {cloning ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Server className="h-4 w-4 mr-2" />}
+                                            Ausgewählte Konfigurationen klonen
+                                        </Button>
+
+                                        {cloneResult && (
+                                            <Alert className={cloneResult.success ? "border-green-500/50 bg-green-500/10 text-green-700 dark:text-green-300" : "border-red-500/50 bg-red-500/10"}>
+                                                <div className="flex items-start gap-2">
+                                                    {cloneResult.success ? <CheckCircle2 className="h-5 w-5 mt-0.5" /> : <AlertTriangle className="h-5 w-5 mt-0.5" />}
+                                                    <div className="flex-1">
+                                                        <AlertTitle>{cloneResult.success ? "Erfolgreich" : "Fehler"}</AlertTitle>
+                                                        <AlertDescription className="text-xs mt-1 space-y-1">
+                                                            <p>{cloneResult.message}</p>
+                                                            {cloneResult.details && (
+                                                                <div className="mt-2 max-h-32 overflow-y-auto text-[10px] font-mono bg-black/5 p-2 rounded">
+                                                                    {cloneResult.details.map((line, i) => (
+                                                                        <div key={i}>{line}</div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </AlertDescription>
+                                                    </div>
+                                                </div>
+                                            </Alert>
+                                        )}
+                                    </div>
 
                                     <div className="flex justify-between pt-4">
                                         <Button variant="outline" onClick={() => setStep(1)}>
