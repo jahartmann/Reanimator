@@ -89,10 +89,7 @@ export class SSHClient {
         });
     }
 
-    // Disconnect
-    disconnect(): void {
-        this.client.end();
-    }
+
 
     // Execute a command
     async exec(command: string, timeoutMs: number = 20000): Promise<string> {
