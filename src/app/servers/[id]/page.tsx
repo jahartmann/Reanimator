@@ -144,10 +144,13 @@ async function getSystemStats(ssh: any) {
     }
 }
 
-async function getNetworkStats(ssh: any) {
+async function getNetworkStats(ssh: any, debug: string[]) {
     try {
-        const netOutput = await ssh.exec(`ip -j addr 2>/dev/null || ip addr`, 30000);
-        console.log('[Network] Raw output:', netOutput.substring(0, 200));
+        const cmd = `PATH=$PATH:/usr/sbin:/sbin:/usr/bin:/bin ip -j addr 2>&1 || ip addr 2>&1`;
+        debug.push(`[Network] Running: ${cmd}`);
+        const netOutput = await ssh.exec(cmd, 30000);
+        debug.push(`[Network] Output (first 100 chars): ${netOutput.substring(0, 100)}...`);
+
         let networks: NetworkInterface[] = [];
 
         try {
@@ -264,10 +267,13 @@ async function getNetworkStats(ssh: any) {
     }
 }
 
-async function getDiskStats(ssh: any) {
+async function getDiskStats(ssh: any, debug: string[]) {
     try {
-        const diskOutput = await ssh.exec(`lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL,SERIAL,FSTYPE,ROTA,TRAN 2>/dev/null || lsblk -o NAME,SIZE,TYPE,MOUNTPOINT`, 30000);
-        console.log('[Disk] Raw output:', diskOutput.substring(0, 200));
+        const cmd = `PATH=$PATH:/usr/sbin:/sbin:/usr/bin:/bin lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL,SERIAL,FSTYPE,ROTA,TRAN 2>&1 || lsblk -o NAME,SIZE,TYPE,MOUNTPOINT 2>&1`;
+        debug.push(`[Disk] Running: ${cmd}`);
+        const diskOutput = await ssh.exec(cmd, 30000);
+        debug.push(`[Disk] Output (first 100 chars): ${diskOutput.substring(0, 100)}...`);
+
         let disks: DiskInfo[] = [];
         try {
             const diskJson = JSON.parse(diskOutput);
@@ -324,12 +330,16 @@ async function getDiskStats(ssh: any) {
     }
 }
 
-async function getPoolStats(ssh: any) {
+async function getPoolStats(ssh: any, debug: string[]) {
     const pools: StoragePool[] = [];
 
     // Use pvesm status - the standard Proxmox storage tool
     try {
-        const pvesmOutput = await ssh.exec(`pvesm status -content images,rootdir,vztmpl,backup,iso 2>/dev/null || echo ""`, 15000);
+        const cmd = `PATH=$PATH:/usr/sbin:/sbin:/usr/bin:/bin pvesm status -content images,rootdir,vztmpl,backup,iso 2>&1`;
+        debug.push(`[Pools] Running: ${cmd}`);
+        const pvesmOutput = await ssh.exec(cmd, 15000);
+        debug.push(`[Pools] Output (first 100 chars): ${pvesmOutput.substring(0, 100)}...`);
+
         const lines = pvesmOutput.trim().split('\n');
 
         // Determine start index (skip header)
@@ -374,21 +384,25 @@ async function getServerInfo(server: ServerItem): Promise<{
     disks: DiskInfo[];
     pools: StoragePool[];
     system: SystemInfo;
+    debug: string[];
 } | null> {
     if (!server.ssh_key) return null;
 
     let ssh;
+    const debug: string[] = [];
+
     try {
         ssh = createSSHClient(server);
         await ssh.connect();
+        debug.push('SSH Connected');
 
         // Parallel fetching of all major sections
         // Note: each function handles its own errors and returns fallback data (empty array or default obj)
         const [system, networks, disks, pools] = await Promise.all([
             getSystemStats(ssh),
-            getNetworkStats(ssh),
-            getDiskStats(ssh),
-            getPoolStats(ssh)
+            getNetworkStats(ssh, debug),
+            getDiskStats(ssh, debug),
+            getPoolStats(ssh, debug)
         ]);
 
         ssh.disconnect();
@@ -397,14 +411,23 @@ async function getServerInfo(server: ServerItem): Promise<{
             networks,
             disks,
             pools,
-            system
+            system,
+            debug
         };
     } catch (e) {
         console.error('[ServerDetail] Connection Error:', e);
         if (ssh) {
             try { ssh.disconnect(); } catch { }
         }
-        return null;
+        return {
+            networks: [],
+            disks: [],
+            pools: [],
+            system: {
+                hostname: 'Connection Error', os: 'Error', kernel: '-', uptime: '-', cpu: '-', cpuCores: 0, cpuUsage: 0, memory: '-', memoryTotal: 0, memoryUsed: 0, memoryUsage: 0, loadAvg: '-'
+            },
+            debug: [`Connection Failed: ${e instanceof Error ? e.message : String(e)}`]
+        };
     }
 }
 
@@ -728,6 +751,21 @@ export default async function ServerDetailPage({
                             </CardContent>
                         </Card>
                     </div>
+
+                    {/* Debug Information */}
+                    <Card className="overflow-hidden border-muted/60 bg-muted/5 mt-8">
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2 text-base">
+                                <Activity className="h-4 w-4" />
+                                Debug Information
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="p-0">
+                            <div className="p-4 bg-black/50 font-mono text-xs text-muted-foreground overflow-x-auto max-h-[300px] whitespace-pre-wrap">
+                                {info.debug?.join('\n') || 'No debug logs available'}
+                            </div>
+                        </CardContent>
+                    </Card>
                 </>
             )}
         </div>
