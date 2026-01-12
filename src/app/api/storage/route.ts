@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getStorageStats } from '@/app/actions/storage';
+import { getServerStorages } from '@/app/actions/storage';
 
 export async function GET() {
-    const stats = await getStorageStats();
+    const stats = await getServerStorages();
     return NextResponse.json(stats);
 }

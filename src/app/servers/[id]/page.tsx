@@ -137,6 +137,7 @@ async function getSystemStats(ssh: any) {
 async function getNetworkStats(ssh: any) {
     try {
         const netOutput = await ssh.exec(`ip -j addr 2>/dev/null || ip addr`, 10000);
+        console.log('[Network] Raw output:', netOutput.substring(0, 200));
         let networks: NetworkInterface[] = [];
 
         try {
@@ -219,6 +220,7 @@ async function getNetworkStats(ssh: any) {
             }
         }));
 
+        console.log('[Network] Parsed', networks.length, 'interfaces');
         return networks;
     } catch (e) {
         console.error('Failed to fetch network stats:', e);
@@ -229,6 +231,7 @@ async function getNetworkStats(ssh: any) {
 async function getDiskStats(ssh: any) {
     try {
         const diskOutput = await ssh.exec(`lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL,SERIAL,FSTYPE,ROTA,TRAN 2>/dev/null || lsblk -o NAME,SIZE,TYPE,MOUNTPOINT`, 15000);
+        console.log('[Disk] Raw output:', diskOutput.substring(0, 200));
         let disks: DiskInfo[] = [];
         try {
             const diskJson = JSON.parse(diskOutput);
@@ -270,6 +273,7 @@ async function getDiskStats(ssh: any) {
                 }
             }
         }
+        console.log('[Disk] Parsed', disks.length, 'disks');
         return disks.filter(d => d.name);
     } catch (e) {
         console.error('Failed to fetch disk stats:', e);
@@ -522,51 +526,58 @@ export default async function ServerDetailPage({
                                 </CardTitle>
                             </CardHeader>
                             <CardContent className="p-0">
-                                <div className="divide-y divide-border/50 max-h-[400px] overflow-y-auto">
-                                    {info.networks.map((net) => (
-                                        <div key={net.name} className="p-4 flex items-start gap-4 hover:bg-muted/5 transition-colors">
-                                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${net.state === 'UP' ? 'bg-green-500/10' : 'bg-muted'
-                                                }`}>
-                                                {net.state === 'UP' ? (
-                                                    <Wifi className="h-5 w-5 text-green-500" />
-                                                ) : (
-                                                    <WifiOff className="h-5 w-5 text-muted-foreground" />
-                                                )}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2 flex-wrap">
-                                                    <p className="font-medium">{net.name}</p>
-                                                    <span className={`text-xs px-2 py-0.5 rounded-full ${net.state === 'UP' ? 'bg-green-500/10 text-green-500' : 'bg-muted text-muted-foreground'
-                                                        }`}>
-                                                        {net.state}
-                                                    </span>
-                                                    {net.type === 'bridge' && (
-                                                        <span className="text-xs px-2 py-0.5 rounded bg-purple-500/10 text-purple-500">Bridge</span>
-                                                    )}
-                                                    {net.type === 'bond' && (
-                                                        <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-500">Bond</span>
-                                                    )}
-                                                    {net.speed && (
-                                                        <span className="text-xs text-muted-foreground">{net.speed}</span>
+                                {info.networks.length === 0 ? (
+                                    <div className="p-6 text-center text-muted-foreground">
+                                        <Network className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                                        <p>Keine Netzwerkdaten verfügbar</p>
+                                    </div>
+                                ) : (
+                                    <div className="divide-y divide-border/50 max-h-[400px] overflow-y-auto">
+                                        {info.networks.map((net) => (
+                                            <div key={net.name} className="p-4 flex items-start gap-4 hover:bg-muted/5 transition-colors">
+                                                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${net.state === 'UP' ? 'bg-green-500/10' : 'bg-muted'
+                                                    }`}>
+                                                    {net.state === 'UP' ? (
+                                                        <Wifi className="h-5 w-5 text-green-500" />
+                                                    ) : (
+                                                        <WifiOff className="h-5 w-5 text-muted-foreground" />
                                                     )}
                                                 </div>
-                                                <p className="text-sm text-muted-foreground font-mono">
-                                                    {net.ip} <span className="text-muted-foreground/50">·</span> {net.mac}
-                                                </p>
-                                                {net.slaves && net.slaves.length > 0 && (
-                                                    <p className="text-xs text-muted-foreground mt-1">
-                                                        Ports: {net.slaves.join(', ')}
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <p className="font-medium">{net.name}</p>
+                                                        <span className={`text-xs px-2 py-0.5 rounded-full ${net.state === 'UP' ? 'bg-green-500/10 text-green-500' : 'bg-muted text-muted-foreground'
+                                                            }`}>
+                                                            {net.state}
+                                                        </span>
+                                                        {net.type === 'bridge' && (
+                                                            <span className="text-xs px-2 py-0.5 rounded bg-purple-500/10 text-purple-500">Bridge</span>
+                                                        )}
+                                                        {net.type === 'bond' && (
+                                                            <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-500">Bond</span>
+                                                        )}
+                                                        {net.speed && (
+                                                            <span className="text-xs text-muted-foreground">{net.speed}</span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-sm text-muted-foreground font-mono">
+                                                        {net.ip} <span className="text-muted-foreground/50">·</span> {net.mac}
                                                     </p>
-                                                )}
-                                                {net.bridge && (
-                                                    <p className="text-xs text-muted-foreground mt-1">
-                                                        Bridge: {net.bridge}
-                                                    </p>
-                                                )}
+                                                    {net.slaves && net.slaves.length > 0 && (
+                                                        <p className="text-xs text-muted-foreground mt-1">
+                                                            Ports: {net.slaves.join(', ')}
+                                                        </p>
+                                                    )}
+                                                    {net.bridge && (
+                                                        <p className="text-xs text-muted-foreground mt-1">
+                                                            Bridge: {net.bridge}
+                                                        </p>
+                                                    )}
+                                                </div>
                                             </div>
-                                        </div>
-                                    ))}
-                                </div>
+                                        ))}
+                                    </div>
+                                )}
                             </CardContent>
                         </Card>
 
@@ -633,43 +644,50 @@ export default async function ServerDetailPage({
                                 </CardTitle>
                             </CardHeader>
                             <CardContent className="p-4">
-                                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                                    {info.disks.filter(d => d.type === 'disk').map((disk, i) => (
-                                        <div
-                                            key={i}
-                                            className={`flex flex-col gap-2 p-3 rounded-lg border transition-colors hover:border-primary/30 ${disk.transport === 'nvme' ? 'bg-purple-500/5 border-purple-500/20' :
-                                                disk.rotational === false ? 'bg-blue-500/5 border-blue-500/20' :
-                                                    'bg-muted/30 border-transparent'
-                                                }`}
-                                        >
-                                            <div className="flex items-center gap-2">
-                                                <HardDrive className={`h-5 w-5 shrink-0 ${disk.transport === 'nvme' ? 'text-purple-500' :
-                                                    disk.rotational === false ? 'text-blue-500' :
-                                                        'text-muted-foreground'
-                                                    }`} />
-                                                <div className="min-w-0">
-                                                    <p className="font-medium font-mono text-sm">{disk.name}</p>
-                                                    <p className="text-xs text-muted-foreground truncate">
-                                                        {disk.model || disk.transport || 'Unknown'}
-                                                    </p>
+                                {info.disks.filter(d => d.type === 'disk').length === 0 ? (
+                                    <div className="text-center text-muted-foreground py-6">
+                                        <HardDrive className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                                        <p>Keine Festplattendaten verfügbar</p>
+                                    </div>
+                                ) : (
+                                    <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                                        {info.disks.filter(d => d.type === 'disk').map((disk, i) => (
+                                            <div
+                                                key={i}
+                                                className={`flex flex-col gap-2 p-3 rounded-lg border transition-colors hover:border-primary/30 ${disk.transport === 'nvme' ? 'bg-purple-500/5 border-purple-500/20' :
+                                                    disk.rotational === false ? 'bg-blue-500/5 border-blue-500/20' :
+                                                        'bg-muted/30 border-transparent'
+                                                    }`}
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <HardDrive className={`h-5 w-5 shrink-0 ${disk.transport === 'nvme' ? 'text-purple-500' :
+                                                        disk.rotational === false ? 'text-blue-500' :
+                                                            'text-muted-foreground'
+                                                        }`} />
+                                                    <div className="min-w-0">
+                                                        <p className="font-medium font-mono text-sm">{disk.name}</p>
+                                                        <p className="text-xs text-muted-foreground truncate">
+                                                            {disk.model || disk.transport || 'Unknown'}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-2 text-xs">
+                                                    <span className="font-medium">{disk.size}</span>
+                                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${disk.transport === 'nvme' ? 'bg-purple-500/20 text-purple-500' :
+                                                        disk.rotational === false ? 'bg-blue-500/20 text-blue-500' :
+                                                            'bg-muted text-muted-foreground'
+                                                        }`}>
+                                                        {disk.transport === 'nvme' ? 'NVMe' :
+                                                            disk.rotational === false ? 'SSD' : 'HDD'}
+                                                    </span>
+                                                    {disk.filesystem && (
+                                                        <span className="text-muted-foreground">{disk.filesystem}</span>
+                                                    )}
                                                 </div>
                                             </div>
-                                            <div className="flex items-center gap-2 text-xs">
-                                                <span className="font-medium">{disk.size}</span>
-                                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${disk.transport === 'nvme' ? 'bg-purple-500/20 text-purple-500' :
-                                                    disk.rotational === false ? 'bg-blue-500/20 text-blue-500' :
-                                                        'bg-muted text-muted-foreground'
-                                                    }`}>
-                                                    {disk.transport === 'nvme' ? 'NVMe' :
-                                                        disk.rotational === false ? 'SSD' : 'HDD'}
-                                                </span>
-                                                {disk.filesystem && (
-                                                    <span className="text-muted-foreground">{disk.filesystem}</span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
+                                        ))}
+                                    </div>
+                                )}
 
                                 {/* Partitions */}
                                 {info.disks.filter(d => d.type === 'part' && d.mountpoint !== '-').length > 0 && (

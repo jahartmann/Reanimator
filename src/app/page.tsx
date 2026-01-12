@@ -2,8 +2,9 @@ import Link from 'next/link';
 import db from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Server, FolderCog, Clock, Download, Activity } from "lucide-react";
+import { Server, FolderCog, Clock, Download, Activity, Database } from "lucide-react";
 import { MonitoringPanel } from '@/components/ui/MonitoringPanel';
+import { StorageDashboard } from '@/components/ui/StorageDashboard';
 
 export const dynamic = 'force-dynamic';
 
@@ -89,6 +90,15 @@ export default function Dashboard() {
           <h2 className="text-xl font-semibold">Monitoring</h2>
         </div>
         <MonitoringPanel />
+      </div>
+
+      {/* Storage Dashboard */}
+      <div>
+        <div className="flex items-center gap-2 mb-4">
+          <Database className="h-5 w-5 text-primary" />
+          <h2 className="text-xl font-semibold">Storage</h2>
+        </div>
+        <StorageDashboard />
       </div>
 
       {/* Recent Backups */}

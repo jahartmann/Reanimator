@@ -24,12 +24,27 @@ function formatBytes(bytes: number): string {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+interface ParsedNetworkInterface {
+    name: string;
+    ip: string;
+    type: string;
+}
+
+interface ParsedDisk {
+    name: string;
+    size: string;
+    type: string;
+    mountpoint: string;
+}
+
 interface ParsedSystemInfo {
     osRelease: Record<string, string>;
     hostname: string;
-    network: string;
-    disks: string;
+    networkRaw: string;
+    disksRaw: string;
     fstab: string;
+    networks: ParsedNetworkInterface[];
+    disks: ParsedDisk[];
 }
 
 type SelectedItem =
@@ -90,12 +105,57 @@ export default function ConfigDetailClient({
                 if (key && val) osRelease[key] = val.replace(/"/g, '');
             });
 
+            const networkRaw = parts[2] || '';
+            const disksRaw = parts[3] || '';
+
+            // Parse network interfaces from ip addr or interfaces format
+            const networks: ParsedNetworkInterface[] = [];
+            const ifaceMatches = networkRaw.matchAll(/(\w+[\d]*(?::\s*)?)\s+inet\s+(\d+\.\d+\.\d+\.\d+)/g);
+            for (const match of ifaceMatches) {
+                networks.push({
+                    name: match[1].replace(':', '').trim(),
+                    ip: match[2],
+                    type: match[1].includes('br') ? 'bridge' : match[1].includes('bond') ? 'bond' : 'physical'
+                });
+            }
+            // Fallback: try parsing iface lines
+            if (networks.length === 0) {
+                const ifaceLines = networkRaw.split('\n').filter(l => l.includes('iface') || l.includes('address'));
+                let currentIface = '';
+                for (const line of ifaceLines) {
+                    if (line.includes('iface')) {
+                        currentIface = line.split(/\s+/)[1] || '';
+                    } else if (line.includes('address') && currentIface) {
+                        const ip = line.split(/\s+/).pop() || '';
+                        networks.push({ name: currentIface, ip, type: 'configured' });
+                        currentIface = '';
+                    }
+                }
+            }
+
+            // Parse disks from lsblk output
+            const disks: ParsedDisk[] = [];
+            const diskLines = disksRaw.split('\n').filter(l => l.trim());
+            for (const line of diskLines) {
+                const parts = line.trim().split(/\s+/);
+                if (parts.length >= 4 && (parts[2] === 'disk' || parts[2] === 'part')) {
+                    disks.push({
+                        name: parts[0].replace(/[├└─│]/g, '').trim(),
+                        size: parts[1],
+                        type: parts[2],
+                        mountpoint: parts[3] || '-'
+                    });
+                }
+            }
+
             setParsedSysInfo({
                 osRelease,
                 hostname: parts[1] || 'Unbekannt',
-                network: parts[2] || '',
-                disks: parts[3] || '',
-                fstab: parts[4] || ''
+                networkRaw,
+                disksRaw,
+                fstab: parts[4] || '',
+                networks,
+                disks
             });
         } catch (e) {
             console.error("Failed to parse system info", e);
@@ -572,13 +632,33 @@ export default function ConfigDetailClient({
                                         Netzwerk-Konfiguration
                                     </CardTitle>
                                 </CardHeader>
-                                <CardContent className="p-0 bg-[#1e1e1e]">
+                                <CardContent className="p-0">
                                     {parsedSysInfo ? (
-                                        <ScrollArea className="h-[300px]">
-                                            <pre className="p-4 text-xs font-mono text-zinc-300 leading-relaxed whitespace-pre-wrap">
-                                                {parsedSysInfo.network}
-                                            </pre>
-                                        </ScrollArea>
+                                        parsedSysInfo.networks.length > 0 ? (
+                                            <div className="divide-y divide-border/50">
+                                                {parsedSysInfo.networks.map((net, i) => (
+                                                    <div key={i} className="p-3 flex items-center gap-3 hover:bg-muted/5">
+                                                        <div className={`w-8 h-8 rounded flex items-center justify-center ${net.type === 'bridge' ? 'bg-purple-500/10 text-purple-500' :
+                                                                net.type === 'bond' ? 'bg-amber-500/10 text-amber-500' :
+                                                                    'bg-blue-500/10 text-blue-500'
+                                                            }`}>
+                                                            <Network className="h-4 w-4" />
+                                                        </div>
+                                                        <div>
+                                                            <p className="font-mono text-sm font-medium">{net.name}</p>
+                                                            <p className="text-xs text-muted-foreground">{net.ip}</p>
+                                                        </div>
+                                                        <Badge variant="outline" className="ml-auto text-xs">{net.type}</Badge>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <ScrollArea className="h-[300px]">
+                                                <pre className="p-4 text-xs font-mono text-zinc-300 leading-relaxed whitespace-pre-wrap bg-[#1e1e1e]">
+                                                    {parsedSysInfo.networkRaw}
+                                                </pre>
+                                            </ScrollArea>
+                                        )
                                     ) : (
                                         <div className="p-8 flex justify-center"><Loader2 className="animate-spin text-muted-foreground" /></div>
                                     )}
@@ -598,10 +678,21 @@ export default function ConfigDetailClient({
                                     {parsedSysInfo ? (
                                         <div className="space-y-6">
                                             <div>
-                                                <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Block Devices (lsblk)</h4>
-                                                <pre className="text-xs font-mono text-zinc-300 leading-relaxed whitespace-pre-wrap bg-zinc-900/50 p-3 rounded border border-zinc-800">
-                                                    {parsedSysInfo.disks}
-                                                </pre>
+                                                <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">Block Devices</h4>
+                                                {parsedSysInfo.disks.length > 0 ? (
+                                                    <div className="grid gap-2 grid-cols-2">
+                                                        {parsedSysInfo.disks.filter(d => d.type === 'disk').map((disk, i) => (
+                                                            <div key={i} className="p-2 rounded border border-zinc-800 bg-zinc-900/50">
+                                                                <p className="font-mono text-sm text-zinc-200">{disk.name}</p>
+                                                                <p className="text-xs text-zinc-500">{disk.size}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <pre className="text-xs font-mono text-zinc-300 leading-relaxed whitespace-pre-wrap bg-zinc-900/50 p-3 rounded border border-zinc-800">
+                                                        {parsedSysInfo.disksRaw}
+                                                    </pre>
+                                                )}
                                             </div>
                                             <div>
                                                 <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">File System Table (fstab)</h4>
