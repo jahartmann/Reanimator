@@ -7,15 +7,37 @@ import { Button } from "@/components/ui/button";
 import { Monitor, Smartphone, ArrowRightLeft, PlayCircle, StopCircle, Loader2 } from "lucide-react";
 import { VirtualMachine } from '@/app/actions/vm';
 import { MigrationDialog } from './MigrationDialog';
+import { Tag, assignTagsToResource } from '@/app/actions/tags';
+import { TagSelector } from '@/components/ui/TagSelector';
+import { toast } from 'sonner';
 
 interface VirtualMachineListProps {
     vms: VirtualMachine[];
     currentServerId: number;
     otherServers: { id: number; name: string }[];
+    availableTags: Tag[];
 }
 
-export function VirtualMachineList({ vms, currentServerId, otherServers }: VirtualMachineListProps) {
+export function VirtualMachineList({ vms, currentServerId, otherServers, availableTags }: VirtualMachineListProps) {
     const [selectedVm, setSelectedVm] = useState<VirtualMachine | null>(null);
+    const [loadingTags, setLoadingTags] = useState<Record<string, boolean>>({});
+
+    const handleTagsChange = async (vm: VirtualMachine, newTags: string[]) => {
+        setLoadingTags(prev => ({ ...prev, [vm.vmid]: true }));
+        try {
+            const res = await assignTagsToResource(currentServerId, vm.vmid, newTags);
+            if (res.success) {
+                toast.success(`Tags updated for ${vm.name}`);
+                vm.tags = newTags;
+            } else {
+                toast.error(res.message || 'Failed to update tags');
+            }
+        } catch (e) {
+            toast.error('Failed to update tags');
+        } finally {
+            setLoadingTags(prev => ({ ...prev, [vm.vmid]: false }));
+        }
+    };
 
     return (
         <Card>
@@ -39,41 +61,51 @@ export function VirtualMachineList({ vms, currentServerId, otherServers }: Virtu
                         {vms.map((vm) => (
                             <div
                                 key={vm.vmid}
-                                className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
+                                className="flex flex-col gap-2 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
                             >
-                                <div className="flex items-center gap-3 min-w-0">
-                                    <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${vm.status === 'running' ? 'bg-green-500/10 text-green-500' : 'bg-muted text-muted-foreground'
-                                        }`}>
-                                        {vm.type === 'qemu' ? (
-                                            <Monitor className="h-4 w-4" />
-                                        ) : (
-                                            <Smartphone className="h-4 w-4" />
-                                        )}
-                                    </div>
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <p className="font-medium text-sm truncate">{vm.name}</p>
-                                            <span className="text-[10px] text-muted-foreground bg-muted px-1 rounded">
-                                                {vm.vmid}
-                                            </span>
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${vm.status === 'running' ? 'bg-green-500/10 text-green-500' : 'bg-muted text-muted-foreground'
+                                            }`}>
+                                            {vm.type === 'qemu' ? (
+                                                <Monitor className="h-4 w-4" />
+                                            ) : (
+                                                <Smartphone className="h-4 w-4" />
+                                            )}
                                         </div>
-                                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                            <span className={vm.status === 'running' ? 'text-green-500' : ''}>
-                                                {vm.status}
-                                            </span>
-                                            {vm.cpus && <span>• {vm.cpus} CPU</span>}
-                                            {vm.memory && <span>• {Math.round(vm.memory / 1024 / 1024 / 1024)} GB</span>}
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <p className="font-medium text-sm truncate">{vm.name}</p>
+                                                <span className="text-[10px] text-muted-foreground bg-muted px-1 rounded">
+                                                    {vm.vmid}
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                <span className={vm.status === 'running' ? 'text-green-500' : ''}>
+                                                    {vm.status}
+                                                </span>
+                                                {vm.cpus && <span>• {vm.cpus} CPU</span>}
+                                                {vm.memory && <span>• {Math.round(vm.memory / 1024 / 1024 / 1024)} GB</span>}
+                                            </div>
                                         </div>
                                     </div>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => setSelectedVm(vm)}
+                                        title="Migrieren"
+                                    >
+                                        <ArrowRightLeft className="h-4 w-4" />
+                                    </Button>
                                 </div>
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => setSelectedVm(vm)}
-                                    title="Migrieren"
-                                >
-                                    <ArrowRightLeft className="h-4 w-4" />
-                                </Button>
+                                <div className="pl-11">
+                                    <TagSelector
+                                        availableTags={availableTags}
+                                        selectedTags={vm.tags || []}
+                                        onTagsChange={(tags) => handleTagsChange(vm, tags)}
+                                        isLoading={loadingTags[vm.vmid]}
+                                    />
+                                </div>
                             </div>
                         ))}
                     </div>

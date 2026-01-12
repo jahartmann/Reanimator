@@ -11,6 +11,7 @@ export interface VirtualMachine {
     cpus?: number;
     memory?: number;
     uptime?: number;
+    tags?: string[];
 }
 
 export interface MigrationOptions {
@@ -61,7 +62,8 @@ export async function getVMs(serverId: number): Promise<VirtualMachine[]> {
                 type: 'qemu',
                 cpus: vm.cpus,
                 memory: vm.maxmem, // maxmem is usually what we see as "Memory"
-                uptime: vm.uptime
+                uptime: vm.uptime,
+                tags: vm.tags ? vm.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : []
             })),
             ...lxcList.map((lxc: any) => ({
                 vmid: lxc.vmid,
@@ -70,7 +72,8 @@ export async function getVMs(serverId: number): Promise<VirtualMachine[]> {
                 type: 'lxc',
                 cpus: lxc.cpus,
                 memory: lxc.maxmem,
-                uptime: lxc.uptime
+                uptime: lxc.uptime,
+                tags: lxc.tags ? lxc.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : []
             }))
         ];
 
@@ -186,11 +189,96 @@ export async function migrateVM(
 
             const apiEndpoint = `host=${target.ssh_host},apitoken=${apiToken},fingerprint=${fingerprint}`;
 
+            let cmd = '';
+
+            // Auto-Map Storage/Bridge if not specified (Same-Name Logic)
+            let storageParam = '';
+            let bridgeParam = '';
+
+            if (options.targetStorage) {
+                // Explicit target (single storage for all disks)
+                storageParam = `--target-storage ${options.targetStorage}`;
+            } else {
+                // Detect used storages and map them 1:1
+                // We need to inspect the VM config to find used storages
+                try {
+                    const confCmd = type === 'qemu'
+                        ? `qm config ${vmid}`
+                        : `pct config ${vmid}`;
+                    const confOutput = await sourceSsh.exec(confCmd);
+
+                    // Regex to find storage: ie. "scsi0: local-lvm:vm-100-disk-0,size=32G"
+                    // We look for "STORAGE-ID:..." patterns.
+                    // This is heuristic. A better way would be parsing fully.
+                    // Simple approach: any word followed by colon before "vm-ID-disk" or similar
+                    // Actually, let's just use the `qm remote-migrate` feature:
+                    // If we pass `--target-storage source=target`, it maps.
+                    // If we want 1:1 mapping, we need to know the source storage names.
+
+                    // Let's assume common storages like local, local-lvm, ceph
+                    // We can parse the config lines
+                    const usedStorages = new Set<string>();
+                    const lines = confOutput.split('\n');
+                    for (const line of lines) {
+                        // match standard disk keys: scsi, ide, sata, virtio, rootfs, mp
+                        if (/^(scsi|ide|sata|virtio|rootfs|mp)\d*:/.test(line)) {
+                            const val = line.split(':')[1].trim();
+                            // val is like "local-lvm:vm-100-disk-0,size=..."
+                            if (val.includes(':')) {
+                                const store = val.split(':')[0];
+                                usedStorages.add(store);
+                            }
+                        }
+                    }
+
+                    if (usedStorages.size > 0) {
+                        const mappings = Array.from(usedStorages).map(s => `${s}=${s}`).join(',');
+                        storageParam = `--target-storage ${mappings}`;
+                        console.log(`[Migration] Auto-mapped storages: ${mappings}`);
+                    }
+
+                } catch (mapErr) {
+                    console.warn('[Migration] Failed to detect storages for mapping, relying on default behavior', mapErr);
+                }
+            }
+
+            if (options.targetBridge) {
+                bridgeParam = `--target-bridge ${options.targetBridge}`;
+            } else {
+                // Similar 1:1 mapping for bridges if possible?
+                // qm remote-migrate takes --target-bridge <bridge> which sets the DEFAULT bridge.
+                // It does NOT seem to support mapping like storage (bridge=bridge).
+                // It replaces all bridges with the target bridge.
+                // However, we can try omitting it? If omitted, it might error or fail validation.
+                // Re-reading docs: --target-bridge is required if VM uses bridge.
+                // User requirement: "vmbr0 already exists".
+                // We should probably default to 'vmbr0' if not specified, OR fetch from config.
+                // Let's default to parsing the PRIMARY bridge (net0) from config and using that.
+                try {
+                    const confCmd = type === 'qemu' ? `qm config ${vmid}` : `pct config ${vmid}`;
+                    const confOutput = await sourceSsh.exec(confCmd);
+                    const net0 = confOutput.split('\n').find(l => l.startsWith('net0:'));
+                    if (net0) {
+                        const match = net0.match(/bridge=([a-zA-Z0-9]+)/);
+                        if (match && match[1]) {
+                            bridgeParam = `--target-bridge ${match[1]}`;
+                            console.log(`[Migration] Auto-detected bridge: ${match[1]}`);
+                        }
+                    }
+                    if (!bridgeParam) bridgeParam = '--target-bridge vmbr0'; // Fallback
+                } catch (e) {
+                    bridgeParam = '--target-bridge vmbr0';
+                }
+            }
+
+            // apiEndpoint already defined above at line 190
+
+
             if (type === 'qemu') {
-                cmd = `/usr/sbin/qm remote-migrate ${vmid} ${targetVmid} '${apiEndpoint}' --target-bridge ${options.targetBridge} --target-storage ${options.targetStorage}`;
+                cmd = `/usr/sbin/qm remote-migrate ${vmid} ${targetVmid} '${apiEndpoint}' ${bridgeParam} ${storageParam}`;
                 if (options.online) cmd += ` --online`;
             } else {
-                cmd = `/usr/sbin/pct remote-migrate ${vmid} ${targetVmid} '${apiEndpoint}' --target-bridge ${options.targetBridge} --target-storage ${options.targetStorage}`;
+                cmd = `/usr/sbin/pct remote-migrate ${vmid} ${targetVmid} '${apiEndpoint}' ${bridgeParam} ${storageParam}`;
             }
 
             console.log('[Migration] Running:', cmd);

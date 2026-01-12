@@ -301,7 +301,8 @@ export class ProxmoxClient {
                 total: vm.maxmem || 0
             },
             disk: vm.disk || 0,
-            uptime: vm.uptime || 0
+            uptime: vm.uptime || 0,
+            tags: vm.tags ? vm.tags.split(',').map(t => t.trim()).filter(Boolean) : []
         }));
     }
 }
@@ -349,6 +350,7 @@ interface PVEVM {
     maxmem?: number;
     disk?: number;
     uptime?: number;
+    tags?: string;
 }
 
 export interface StorageInfo {
@@ -398,4 +400,5 @@ export interface VMInfo {
     };
     disk: number;
     uptime: number;
+    tags: string[];
 }

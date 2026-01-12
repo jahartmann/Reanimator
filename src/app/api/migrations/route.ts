@@ -24,7 +24,7 @@ export async function POST(request: Request) {
         if (result.success) {
             return NextResponse.json({ taskId: result.taskId });
         } else {
-            return NextResponse.json({ error: result.error }, { status: 500 });
+            return NextResponse.json({ error: result.message }, { status: 500 });
         }
     } catch (e) {
         return NextResponse.json({ error: String(e) }, { status: 500 });

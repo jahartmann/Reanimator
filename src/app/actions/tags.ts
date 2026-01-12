@@ -3,10 +3,20 @@
 import db from '@/lib/db';
 import { createSSHClient } from '@/lib/ssh';
 
+// server actions for managing tags
 export interface Tag {
     id: number;
     name: string;
     color: string;
+}
+
+interface Server {
+    id: number;
+    name: string;
+    ssh_host: string;
+    ssh_port: number;
+    ssh_user: string;
+    ssh_key: string;
 }
 
 // Get all tags
@@ -34,9 +44,14 @@ export async function deleteTag(id: number): Promise<{ success: boolean }> {
     return { success: true };
 }
 
+// Helper to getting server info
+function getServer(serverId: number): Server | null {
+    return db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId) as Server;
+}
+
 // Push tags to Proxmox server (set datacenter.cfg)
 export async function pushTagsToServer(serverId: number, tags: Tag[]): Promise<{ success: boolean; message?: string }> {
-    const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId) as any;
+    const server = getServer(serverId);
     if (!server) return { success: false, message: 'Server not found' };
 
     const ssh = createSSHClient({
@@ -65,6 +80,125 @@ export async function pushTagsToServer(serverId: number, tags: Tag[]): Promise<{
         return { success: true, message: output };
     } catch (e) {
         console.error('[Tags] Push failed:', e);
+        return { success: false, message: String(e) };
+    } finally {
+        await ssh.disconnect();
+    }
+}
+
+// Sync tags from Proxmox server
+export async function syncTagsFromProxmox(serverId: number): Promise<{ success: boolean; message?: string }> {
+    const server = getServer(serverId);
+    if (!server) return { success: false, message: 'Server not found' };
+
+    const ssh = createSSHClient({
+        ssh_host: server.ssh_host,
+        ssh_port: server.ssh_port,
+        ssh_user: server.ssh_user,
+        ssh_key: server.ssh_key
+    });
+
+    try {
+        await ssh.connect();
+
+        // Get cluster options to find tag-style
+        // pvesh get /cluster/options --output-format json
+        const output = await ssh.exec('pvesh get /cluster/options --output-format json');
+        const options = JSON.parse(output);
+        const tagStyle: string = options['tag-style'] || ''; // Explicit type
+
+        if (!tagStyle) {
+            console.log('No tag-style found in datacenter.cfg');
+            return { success: true, message: 'No tags to sync' };
+        }
+
+        const colorMapMatch = tagStyle.match(/color-map=([^,]+)/);
+        if (!colorMapMatch) {
+            console.log('No color-map found in tag-style');
+            return { success: true, message: 'No color map to sync' };
+        }
+
+        const colorMap = colorMapMatch[1];
+        const tags = colorMap.split(';').map((t: string) => { // Explicit type here too
+            const [name, color] = t.split(':');
+            return { name, color };
+        }).filter((t: { name: string, color: string }) => t.name && t.color);
+
+        // Update local DB
+        const insertStmt = db.prepare('INSERT INTO tags (name, color) VALUES (@name, @color) ON CONFLICT(name) DO UPDATE SET color=excluded.color');
+
+        const updateTags = db.transaction((tagsToInsert) => {
+            for (const tag of tagsToInsert) {
+                insertStmt.run(tag);
+            }
+        });
+
+        updateTags(tags);
+
+        return { success: true, message: `Synced ${tags.length} tags` };
+    } catch (e) {
+        console.error('[Tags] Sync failed:', e);
+        return { success: false, message: String(e) };
+    } finally {
+        await ssh.disconnect();
+    }
+}
+
+// Assign tags to a specific resource (VM or Container)
+export async function assignTagsToResource(
+    serverId: number,
+    vmid: string | number,
+    tags: string[]
+): Promise<{ success: boolean; message?: string }> {
+    const server = getServer(serverId);
+    if (!server) return { success: false, message: 'Server not found' };
+
+    const ssh = createSSHClient({
+        ssh_host: server.ssh_host,
+        ssh_port: server.ssh_port,
+        ssh_user: server.ssh_user,
+        ssh_key: server.ssh_key
+    });
+
+    try {
+        await ssh.connect();
+
+        // Prepare tags string: tag1,tag2,tag3
+        // Need to handle spaces or special chars if any, generally proxmox tags are simple strings
+        // But comma separated
+        const tagString = tags.map(t => t.trim()).join(',');
+
+        // We don't know if it's qemu or lxc easily without checking, but pvesh path differs.
+        // However, we can try to find where the VM is.
+        // Or simpler: The user of this function might know.
+        // Actually, 'pvesh set /nodes/{node}/{type}/{vmid} -tags {tags}'
+        // We need the node and type (qemu/lxc).
+        // Let's assume we can find it via pvesh or we update the UI to pass it.
+        // For now, let's try to find it. But wait, `pvesh` is cluster wide? 
+        // No, we need node.
+
+        // Let's first search for the VM to get node and type
+        const findCmd = `pvesh get /cluster/resources --type vm --output-format json`;
+        const resourcesJson = await ssh.exec(findCmd);
+        const resources = JSON.parse(resourcesJson);
+        const resource = resources.find((r: any) => r.vmid == vmid);
+
+        if (!resource) return { success: false, message: 'Resource not found' };
+
+        const { node, type } = resource; // type is 'qemu' or 'lxc'
+
+        // pvesh set /nodes/{node}/{type}/{vmid} -tags {tags}
+        // Note: qemu uses 'tags', lxc uses 'tags' too?
+        // Let's check docs or assume standard.
+        // For qemu: configuration option is 'tags'
+        // For lxc: configuration option is 'tags'
+
+        const cmd = `pvesh set /nodes/${node}/${type}/${vmid} -tags "${tagString}"`;
+        await ssh.exec(cmd);
+
+        return { success: true };
+    } catch (e) {
+        console.error('[Tags] Assign failed:', e);
         return { success: false, message: String(e) };
     } finally {
         await ssh.disconnect();

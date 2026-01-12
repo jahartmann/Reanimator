@@ -2,359 +2,283 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, ArrowRight, Server, HardDrive, Network, CheckCircle, Loader2, Monitor, Smartphone } from "lucide-react";
-import { getVMs, VirtualMachine, getTargetResources } from '@/app/actions/vm';
-
-interface ServerOption {
-    id: number;
-    name: string;
-    type: string;
-}
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ArrowRight, ArrowLeft, Loader2, CheckCircle2, AlertTriangle, Info, Server, Database } from "lucide-react";
+import { getServers } from "@/app/actions/server";
+import { startServerMigration } from "@/app/actions/migration";
+import { getVMs, VirtualMachine } from "@/app/actions/vm";
 
 export default function NewMigrationPage() {
     const router = useRouter();
     const [step, setStep] = useState(1);
-    const [servers, setServers] = useState<ServerOption[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [servers, setServers] = useState<any[]>([]);
 
-    // Form state
+    // Step 1: Selection
     const [sourceId, setSourceId] = useState<string>('');
     const [targetId, setTargetId] = useState<string>('');
-    const [targetStorage, setTargetStorage] = useState<string>('');
-    const [targetBridge, setTargetBridge] = useState<string>('');
-
-    // Preview data
     const [vms, setVms] = useState<VirtualMachine[]>([]);
-    const [storages, setStorages] = useState<string[]>([]);
-    const [bridges, setBridges] = useState<string[]>([]);
-    const [loadingResources, setLoadingResources] = useState(false);
-    const [submitting, setSubmitting] = useState(false);
+    const [loadingVms, setLoadingVms] = useState(false);
+
+    // Step 2: Validation (replaces resource selection)
+    const [validating, setValidating] = useState(false);
+
+    // Final
+    const [starting, setStarting] = useState(false);
 
     useEffect(() => {
-        fetchServers();
-    }, []);
-
-    async function fetchServers() {
-        try {
-            const res = await fetch('/api/servers');
-            if (res.ok) {
-                const data = await res.json();
-                setServers(data);
-            }
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    async function handleSourceSelect(id: string) {
-        setSourceId(id);
-        setVms([]);
-
-        if (id) {
+        async function load() {
             try {
-                const vmList = await getVMs(parseInt(id));
-                setVms(vmList);
+                const s = await getServers();
+                setServers(s);
             } catch (e) {
                 console.error(e);
             }
         }
-    }
+        load();
+    }, []);
 
-    async function handleTargetSelect(id: string) {
-        setTargetId(id);
-        setStorages([]);
-        setBridges([]);
-        setTargetStorage('');
-        setTargetBridge('');
-
-        if (id) {
-            setLoadingResources(true);
+    // Load VMs when source changes
+    useEffect(() => {
+        if (!sourceId) return;
+        async function loadVMs() {
+            setLoadingVms(true);
+            setVms([]);
             try {
-                const res = await getTargetResources(parseInt(id));
-                setStorages(res.storages);
-                setBridges(res.bridges);
-                if (res.storages.length > 0) setTargetStorage(res.storages[0]);
-                if (res.bridges.length > 0) setTargetBridge(res.bridges[0]);
+                const res = await getVMs(parseInt(sourceId));
+                setVms(res);
             } catch (e) {
                 console.error(e);
             } finally {
-                setLoadingResources(false);
+                setLoadingVms(false);
             }
         }
-    }
+        loadVMs();
+    }, [sourceId]);
 
-    async function handleSubmit() {
-        setSubmitting(true);
+    const handleStart = async () => {
+        setStarting(true);
         try {
-            const res = await fetch('/api/migrations', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    sourceId: parseInt(sourceId),
-                    targetId: parseInt(targetId),
-                    targetStorage,
-                    targetBridge
-                })
-            });
+            const res = await startServerMigration(
+                parseInt(sourceId),
+                parseInt(targetId),
+                vms,
+                {} // No override options -> Auto mapping
+            );
 
-            if (res.ok) {
-                const data = await res.json();
-                router.push(`/migrations/${data.taskId}`);
+            if (res.success && res.taskId) {
+                router.push(`/migrations/${res.taskId}`);
+            } else {
+                alert('Error: ' + res.message);
+                setStarting(false);
             }
         } catch (e) {
-            console.error(e);
-        } finally {
-            setSubmitting(false);
+            alert('Error: ' + e);
+            setStarting(false);
         }
-    }
-
-    const canProceed = () => {
-        if (step === 1) return !!sourceId;
-        if (step === 2) return !!targetId && !!targetStorage && !!targetBridge;
-        if (step === 3) return true;
-        return false;
     };
 
-    const sourceName = servers.find(s => s.id === parseInt(sourceId))?.name;
-    const targetName = servers.find(s => s.id === parseInt(targetId))?.name;
-
     return (
-        <div className="max-w-3xl mx-auto space-y-6">
-            <div className="flex items-center gap-4">
-                <Link href="/migrations">
-                    <Button variant="ghost" size="icon">
-                        <ArrowLeft className="h-4 w-4" />
-                    </Button>
-                </Link>
-                <div>
-                    <h1 className="text-2xl font-bold">Neue Server-Migration</h1>
-                    <p className="text-muted-foreground">Migriere alle VMs und Konfigurationen</p>
+        <div className="max-w-4xl mx-auto py-8">
+            <h1 className="text-3xl font-bold mb-8">Neue Server-Migration</h1>
+
+            <div className="grid md:grid-cols-3 gap-8">
+                {/* Steps Indicator */}
+                <div className="md:col-span-1 space-y-4">
+                    <StepIndicator current={step} number={1} title="Server wählen" desc="Quelle & Ziel definieren" />
+                    <StepIndicator current={step} number={2} title="Prüfung" desc="Voraussetzungen checken" />
+                    <StepIndicator current={step} number={3} title="Bestätigung" desc="Migration starten" />
+                </div>
+
+                {/* Content Area */}
+                <div className="md:col-span-2">
+                    <Card>
+                        <CardContent className="pt-6">
+                            {/* Step 1: Server Selection */}
+                            {step === 1 && (
+                                <div className="space-y-6">
+                                    <h2 className="text-xl font-semibold">Quelle & Ziel</h2>
+
+                                    <div className="grid gap-4">
+                                        <div className="space-y-2">
+                                            <Label>Quell-Server</Label>
+                                            <Select value={sourceId} onValueChange={setSourceId}>
+                                                <SelectTrigger>
+                                                    <SelectValue placeholder="Wähle Quelle..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {servers.map(s => (
+                                                        <SelectItem key={s.id} value={s.id.toString()} disabled={s.id.toString() === targetId}>
+                                                            {s.name} ({s.host})
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <Label>Ziel-Server</Label>
+                                            <Select value={targetId} onValueChange={setTargetId}>
+                                                <SelectTrigger>
+                                                    <SelectValue placeholder="Wähle Ziel..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {servers.map(s => (
+                                                        <SelectItem key={s.id} value={s.id.toString()} disabled={s.id.toString() === sourceId}>
+                                                            {s.name} ({s.host})
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        {sourceId && (
+                                            <div className="mt-4 p-4 border rounded-md bg-muted/40">
+                                                <h3 className="font-medium mb-2 flex items-center">
+                                                    <Database className="h-4 w-4 mr-2" />
+                                                    Zu migrierende Ressourcen
+                                                </h3>
+                                                {loadingVms ? (
+                                                    <div className="flex items-center text-sm text-muted-foreground">
+                                                        <Loader2 className="h-3 w-3 animate-spin mr-2" />
+                                                        Lade VMs...
+                                                    </div>
+                                                ) : (
+                                                    <div className="text-sm">
+                                                        <p>{vms.filter(v => v.type === 'qemu').length} VMs</p>
+                                                        <p>{vms.filter(v => v.type === 'lxc').length} LXC Container</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        <div className="flex justify-end pt-4">
+                                            <Button
+                                                onClick={() => setStep(2)}
+                                                disabled={!sourceId || !targetId || loadingVms || vms.length === 0}
+                                            >
+                                                Weiter <ArrowRight className="ml-2 h-4 w-4" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Step 2: Validation */}
+                            {step === 2 && (
+                                <div className="space-y-6">
+                                    <div className="flex items-center gap-2">
+                                        <h2 className="text-xl font-semibold">Voraussetzungen prüfen</h2>
+                                    </div>
+
+                                    <Alert className="bg-amber-500/10 border-amber-500/50 text-amber-600 dark:text-amber-400">
+                                        <AlertTriangle className="h-4 w-4" />
+                                        <AlertTitle>Konzept: Identische Umgebung</AlertTitle>
+                                        <AlertDescription>
+                                            Diese Migration basiert darauf, dass die Zielumgebung identisch zur Quellumgebung konfiguriert ist.
+                                            <br /><br />
+                                            <strong>Es wird versucht:</strong>
+                                            <ul className="list-disc ml-5 mt-1 space-y-1">
+                                                <li>VMs auf <strong>dieselben Storage-IDs</strong> zu migrieren (z.B. <code>local-lvm</code> → <code>local-lvm</code>).</li>
+                                                <li>VMs an <strong>dieselbe Bridge</strong> zu binden (z.B. <code>vmbr0</code>).</li>
+                                            </ul>
+                                            <div className="mt-3 font-medium">
+                                                Bitte stellen Sie sicher, dass alle benötigten Storages und Netzwerke auf dem Zielserver "{servers.find(s => s.id.toString() === targetId)?.name}" existieren!
+                                            </div>
+                                        </AlertDescription>
+                                    </Alert>
+
+                                    <div className="flex justify-between pt-4">
+                                        <Button variant="outline" onClick={() => setStep(1)}>
+                                            <ArrowLeft className="mr-2 h-4 w-4" /> Zurück
+                                        </Button>
+                                        <Button onClick={() => setStep(3)}>
+                                            Verstanden & Weiter <ArrowRight className="ml-2 h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Step 3: Confirm */}
+                            {step === 3 && (
+                                <div className="space-y-6">
+                                    <div className="text-center py-6">
+                                        <div className="inline-flex items-center justify-center p-4 bg-green-100 dark:bg-green-900/20 rounded-full mb-4">
+                                            <CheckCircle2 className="h-8 w-8 text-green-600" />
+                                        </div>
+                                        <h2 className="text-2xl font-bold mb-2">Bereit zur Migration</h2>
+                                        <p className="text-muted-foreground max-w-md mx-auto">
+                                            Sie sind dabei, <strong>{vms.length} Objekte</strong> von
+                                            HOST A nach HOST B zu verschieben.
+                                        </p>
+                                    </div>
+
+                                    <div className="bg-muted p-4 rounded-lg text-sm space-y-2">
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">Quelle:</span>
+                                            <span className="font-medium">{servers.find(s => s.id.toString() === sourceId)?.name}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">Ziel:</span>
+                                            <span className="font-medium">{servers.find(s => s.id.toString() === targetId)?.name}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">Modus:</span>
+                                            <span className="font-medium">Live Migration (Online)</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">Mapping:</span>
+                                            <span className="font-medium">Auto-Detect (1:1)</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex justify-between pt-4">
+                                        <Button variant="outline" onClick={() => setStep(2)} disabled={starting}>
+                                            <ArrowLeft className="mr-2 h-4 w-4" /> Zurück
+                                        </Button>
+                                        <Button onClick={handleStart} disabled={starting} className="bg-green-600 hover:bg-green-700">
+                                            {starting ? (
+                                                <>
+                                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Starte...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    Migration Starten <ArrowRight className="ml-2 h-4 w-4" />
+                                                </>
+                                            )}
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
                 </div>
             </div>
+        </div>
+    );
+}
 
-            {/* Progress Steps */}
-            <div className="flex items-center gap-2">
-                {[1, 2, 3].map((s) => (
-                    <div key={s} className="flex items-center gap-2 flex-1">
-                        <div className={`h-8 w-8 rounded-full flex items-center justify-center text-sm font-medium ${step > s ? 'bg-primary text-primary-foreground' :
-                                step === s ? 'bg-primary/20 text-primary border-2 border-primary' :
-                                    'bg-muted text-muted-foreground'
-                            }`}>
-                            {step > s ? <CheckCircle className="h-4 w-4" /> : s}
-                        </div>
-                        <span className={`text-sm ${step >= s ? 'text-foreground' : 'text-muted-foreground'}`}>
-                            {s === 1 ? 'Quelle' : s === 2 ? 'Ziel' : 'Bestätigen'}
-                        </span>
-                        {s < 3 && <div className={`flex-1 h-0.5 ${step > s ? 'bg-primary' : 'bg-muted'}`} />}
-                    </div>
-                ))}
+function StepIndicator({ current, number, title, desc }: { current: number, number: number, title: string, desc: string }) {
+    const active = current === number;
+    const completed = current > number;
+
+    return (
+        <div className={`flex items-center p-3 rounded-lg border ${active ? 'bg-background border-primary shadow-sm' : 'bg-transparent border-transparent opacity-70'}`}>
+            <div className={`
+                flex items-center justify-center w-8 h-8 rounded-full border mr-3 text-sm font-medium
+                ${active ? 'bg-primary text-primary-foreground border-primary' : ''}
+                ${completed ? 'bg-green-500 text-white border-green-500' : ''}
+                ${!active && !completed ? 'bg-muted text-muted-foreground' : ''}
+            `}>
+                {completed ? <CheckCircle2 className="h-5 w-5" /> : number}
             </div>
-
-            <Card>
-                <CardContent className="p-6">
-                    {/* Step 1: Source */}
-                    {step === 1 && (
-                        <div className="space-y-6">
-                            <div>
-                                <Label className="text-base">Quell-Server auswählen</Label>
-                                <p className="text-sm text-muted-foreground mb-4">
-                                    Von welchem Server sollen VMs und Konfigurationen migriert werden?
-                                </p>
-                                <Select value={sourceId} onValueChange={handleSourceSelect}>
-                                    <SelectTrigger className="w-full">
-                                        <SelectValue placeholder="Server auswählen..." />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {servers.map(s => (
-                                            <SelectItem key={s.id} value={s.id.toString()}>
-                                                <div className="flex items-center gap-2">
-                                                    <Server className="h-4 w-4" />
-                                                    {s.name}
-                                                    <Badge variant="secondary" className="text-xs">{s.type}</Badge>
-                                                </div>
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-
-                            {sourceId && vms.length > 0 && (
-                                <div>
-                                    <Label className="text-sm text-muted-foreground">Gefundene VMs/Container:</Label>
-                                    <div className="mt-2 flex flex-wrap gap-2">
-                                        {vms.map(vm => (
-                                            <Badge key={vm.vmid} variant="outline" className="gap-1">
-                                                {vm.type === 'qemu' ? <Monitor className="h-3 w-3" /> : <Smartphone className="h-3 w-3" />}
-                                                {vm.name} ({vm.vmid})
-                                            </Badge>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {/* Step 2: Target */}
-                    {step === 2 && (
-                        <div className="space-y-6">
-                            <div>
-                                <Label className="text-base">Ziel-Server auswählen</Label>
-                                <p className="text-sm text-muted-foreground mb-4">
-                                    Wohin sollen die VMs und Konfigurationen migriert werden?
-                                </p>
-                                <Select value={targetId} onValueChange={handleTargetSelect}>
-                                    <SelectTrigger className="w-full">
-                                        <SelectValue placeholder="Server auswählen..." />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {servers.filter(s => s.id !== parseInt(sourceId)).map(s => (
-                                            <SelectItem key={s.id} value={s.id.toString()}>
-                                                <div className="flex items-center gap-2">
-                                                    <Server className="h-4 w-4" />
-                                                    {s.name}
-                                                    <Badge variant="secondary" className="text-xs">{s.type}</Badge>
-                                                </div>
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-
-                            {targetId && (
-                                <div className="grid gap-4 md:grid-cols-2">
-                                    <div>
-                                        <Label className="flex items-center gap-2 mb-2">
-                                            <HardDrive className="h-4 w-4" />
-                                            Ziel-Storage
-                                        </Label>
-                                        {loadingResources ? (
-                                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                                <Loader2 className="h-4 w-4 animate-spin" /> Lade...
-                                            </div>
-                                        ) : (
-                                            <Select value={targetStorage} onValueChange={setTargetStorage}>
-                                                <SelectTrigger>
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    {storages.map(s => (
-                                                        <SelectItem key={s} value={s}>{s}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        )}
-                                    </div>
-                                    <div>
-                                        <Label className="flex items-center gap-2 mb-2">
-                                            <Network className="h-4 w-4" />
-                                            Ziel-Netzwerk
-                                        </Label>
-                                        {loadingResources ? (
-                                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                                <Loader2 className="h-4 w-4 animate-spin" /> Lade...
-                                            </div>
-                                        ) : (
-                                            <Select value={targetBridge} onValueChange={setTargetBridge}>
-                                                <SelectTrigger>
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    {bridges.map(b => (
-                                                        <SelectItem key={b} value={b}>{b}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {/* Step 3: Confirm */}
-                    {step === 3 && (
-                        <div className="space-y-6">
-                            <div className="text-center py-4">
-                                <div className="inline-flex items-center gap-4 px-6 py-4 bg-muted/50 rounded-lg">
-                                    <div className="text-right">
-                                        <p className="text-sm text-muted-foreground">Von</p>
-                                        <p className="font-bold text-lg">{sourceName}</p>
-                                    </div>
-                                    <ArrowRight className="h-6 w-6 text-primary" />
-                                    <div className="text-left">
-                                        <p className="text-sm text-muted-foreground">Nach</p>
-                                        <p className="font-bold text-lg">{targetName}</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="border rounded-lg p-4 space-y-3">
-                                <h3 className="font-medium">Migrations-Schritte:</h3>
-                                <div className="space-y-2 text-sm">
-                                    <div className="flex items-center gap-2">
-                                        <div className="h-2 w-2 rounded-full bg-primary" />
-                                        Konfiguration sichern & übertragen
-                                    </div>
-                                    {vms.filter(v => v.type === 'qemu').map(vm => (
-                                        <div key={vm.vmid} className="flex items-center gap-2">
-                                            <div className="h-2 w-2 rounded-full bg-primary" />
-                                            VM {vm.vmid} - {vm.name}
-                                        </div>
-                                    ))}
-                                    {vms.filter(v => v.type === 'lxc').map(lxc => (
-                                        <div key={lxc.vmid} className="flex items-center gap-2">
-                                            <div className="h-2 w-2 rounded-full bg-primary" />
-                                            LXC {lxc.vmid} - {lxc.name}
-                                        </div>
-                                    ))}
-                                    <div className="flex items-center gap-2">
-                                        <div className="h-2 w-2 rounded-full bg-primary" />
-                                        Migration abschließen
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-600 text-sm">
-                                <span>⚠️</span>
-                                <span>Die Migration kann je nach Größe der VMs einige Zeit dauern. Der Prozess läuft im Hintergrund.</span>
-                            </div>
-                        </div>
-                    )}
-                </CardContent>
-            </Card>
-
-            <div className="flex justify-between">
-                <Button
-                    variant="outline"
-                    onClick={() => setStep(s => Math.max(1, s - 1))}
-                    disabled={step === 1}
-                >
-                    <ArrowLeft className="h-4 w-4 mr-2" />
-                    Zurück
-                </Button>
-
-                {step < 3 ? (
-                    <Button onClick={() => setStep(s => s + 1)} disabled={!canProceed()}>
-                        Weiter
-                        <ArrowRight className="h-4 w-4 ml-2" />
-                    </Button>
-                ) : (
-                    <Button onClick={handleSubmit} disabled={submitting} className="bg-primary">
-                        {submitting ? (
-                            <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Wird gestartet...</>
-                        ) : (
-                            <>Migration starten</>
-                        )}
-                    </Button>
-                )}
+            <div>
+                <div className={`text-sm font-medium ${active ? 'text-foreground' : 'text-muted-foreground'}`}>{title}</div>
+                <div className="text-xs text-muted-foreground">{desc}</div>
             </div>
         </div>
     );

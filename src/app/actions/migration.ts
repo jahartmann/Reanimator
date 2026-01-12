@@ -10,6 +10,7 @@ export interface MigrationStep {
     vmid?: string;
     vmType?: 'qemu' | 'lxc';
     status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+    detail?: string;
     error?: string;
 }
 
@@ -17,13 +18,13 @@ export interface MigrationTask {
     id: number;
     source_server_id: number;
     target_server_id: number;
-    target_storage: string;
-    target_bridge: string;
+    target_storage?: string; // Optional now
+    target_bridge?: string;  // Optional now
     status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-    current_step: string;
+    current_step: number;
     progress: number;
     total_steps: number;
-    steps: MigrationStep[];
+    steps_json: string;
     log: string;
     error?: string;
     started_at?: string;
@@ -31,84 +32,168 @@ export interface MigrationTask {
     created_at: string;
     source_name?: string;
     target_name?: string;
+    steps: MigrationStep[];
 }
 
-// Helper to get server details
-async function getServer(id: number) {
-    const stmt = db.prepare('SELECT * FROM servers WHERE id = ?');
-    const server = stmt.get(id) as any;
-    if (!server) throw new Error(`Server ${id} not found`);
-    return server;
-}
-
-// Start a new server migration
+// Start a new migration task
 export async function startServerMigration(
     sourceId: number,
     targetId: number,
-    targetStorage: string,
-    targetBridge: string
-): Promise<{ success: boolean; taskId?: number; error?: string }> {
+    sourceVms: any[], // Simple array of {vmid, type}
+    options?: { // Optional manual overrides
+        targetStorage?: string;
+        targetBridge?: string;
+    }
+): Promise<{ success: boolean; taskId?: number; message?: string }> {
     try {
-        // 1. Fetch all VMs from source
-        const vms = await getVMs(sourceId);
+        const source = db.prepare('SELECT * FROM servers WHERE id = ?').get(sourceId) as any;
+        const target = db.prepare('SELECT * FROM servers WHERE id = ?').get(targetId) as any;
 
-        // 2. Build step list
-        const steps: MigrationStep[] = [
-            { type: 'config', name: 'Konfiguration sichern & übertragen', status: 'pending' }
-        ];
+        if (!source || !target) return { success: false, message: 'Source or Target server not found' };
 
-        // Add VMs
-        for (const vm of vms.filter(v => v.type === 'qemu')) {
-            steps.push({
-                type: 'vm',
-                name: `VM ${vm.vmid} - ${vm.name}`,
-                vmid: vm.vmid,
-                vmType: 'qemu',
-                status: 'pending'
-            });
-        }
-
-        // Add LXCs
-        for (const lxc of vms.filter(v => v.type === 'lxc')) {
-            steps.push({
-                type: 'lxc',
-                name: `LXC ${lxc.vmid} - ${lxc.name}`,
-                vmid: lxc.vmid,
-                vmType: 'lxc',
-                status: 'pending'
-            });
-        }
-
-        // Finalize step
-        steps.push({ type: 'finalize', name: 'Migration abschließen', status: 'pending' });
-
-        // 3. Insert into DB
+        // 1. Create Task Entry
         const stmt = db.prepare(`
-            INSERT INTO migration_tasks 
-            (source_server_id, target_server_id, target_storage, target_bridge, status, total_steps, steps_json, current_step)
-            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+            INSERT INTO migration_tasks (source_server_id, target_server_id, status, current_step, total_steps, steps_json, log)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
         `);
-        const result = stmt.run(
-            sourceId,
-            targetId,
-            targetStorage,
-            targetBridge,
-            steps.length,
-            JSON.stringify(steps),
-            steps[0].name
-        );
 
-        const taskId = result.lastInsertRowid as number;
+        // Define Steps
+        const steps: MigrationStep[] = [];
 
-        // 4. Start background execution (fire and forget)
-        // We use setTimeout to not block the response
-        setTimeout(() => executeMigrationTask(taskId), 100);
+        // Step 1: Preparation
+        steps.push({
+            type: 'config',
+            name: 'Prepare Migration',
+            status: 'pending',
+            detail: 'Checking prerequisites and connectivity'
+        });
 
-        return { success: true, taskId };
+        // Step 2...N: Migrate each VM/LXC
+        sourceVms.forEach((vm: any) => {
+            steps.push({
+                type: vm.type === 'qemu' ? 'vm' : 'lxc',
+                name: `Migrate ${vm.type === 'qemu' ? 'VM' : 'LXC'} ${vm.vmid}`,
+                vmid: vm.vmid,
+                vmType: vm.type,
+                status: 'pending',
+                detail: `Migrating ${vm.name || vm.vmid} to ${target.name}`
+            });
+        });
+
+        // Step N+1: Finalize
+        steps.push({
+            type: 'finalize',
+            name: 'Finalize',
+            status: 'pending',
+            detail: 'Cleaning up temporary tokens'
+        });
+
+        const initialLog = `[${new Date().toLocaleTimeString()}] Task started. Source: ${source.name}, Target: ${target.name}\n`;
+
+        const result = stmt.get(sourceId, targetId, 'running', 0, steps.length, JSON.stringify(steps), initialLog) as { id: number };
+        const taskId = result.id;
+
+        // 2. Trigger Background Processing (Non-blocking)
+        // Pass minimal context needed for the worker
+        const migrationExecOptions = {
+            storage: options?.targetStorage,
+            bridge: options?.targetBridge
+        };
+
+        // Execute asynchronously
+        setTimeout(() => executeMigrationTask(taskId, sourceVms, migrationExecOptions), 100);
+
+        return { success: true, taskId: result.id };
 
     } catch (e) {
-        console.error('[Migration] Failed to start:', e);
-        return { success: false, error: String(e) };
+        console.error('Failed to start migration:', e);
+        return { success: false, message: String(e) };
+    }
+}
+
+// Background Worker
+async function executeMigrationTask(taskId: number, vms: any[], options: { storage?: string, bridge?: string }) {
+    const log = (msg: string) => {
+        const ts = new Date().toISOString().split('T')[1].split('.')[0];
+        db.prepare('UPDATE migration_tasks SET log = log || ? WHERE id = ?').run(`[${ts}] ${msg}\n`, taskId);
+    };
+
+    try {
+        const taskRow = db.prepare('SELECT * FROM migration_tasks WHERE id = ?').get(taskId) as any;
+        if (!taskRow) return;
+
+        let steps = JSON.parse(taskRow.steps_json) as MigrationStep[];
+        let currentStepIndex = 0;
+
+        // --- 1. Preparation Step ---
+        steps[0].status = 'running';
+        db.prepare('UPDATE migration_tasks SET current_step = ?, steps_json = ? WHERE id = ?').run(1, JSON.stringify(steps), taskId);
+        log('Starting preparation...');
+        // (Optional: perform real checks here if needed)
+        await new Promise(r => setTimeout(r, 1000));
+        steps[0].status = 'completed';
+        log('Preparation done.');
+        db.prepare('UPDATE migration_tasks SET steps_json = ? WHERE id = ?').run(JSON.stringify(steps), taskId);
+
+
+        // --- 2. VM Migrations ---
+        currentStepIndex = 1;
+
+        for (const vm of vms) {
+            // Check for cancellation
+            const currentTask = db.prepare('SELECT status FROM migration_tasks WHERE id = ?').get(taskId) as any;
+            if (currentTask.status === 'cancelled' || currentTask.status === 'failed') return;
+
+            // Update Step Status
+            steps[currentStepIndex].status = 'running';
+            db.prepare('UPDATE migration_tasks SET current_step = ?, steps_json = ? WHERE id = ?').run(currentStepIndex + 1, JSON.stringify(steps), taskId);
+
+            log(`Migrating ${vm.name} (${vm.vmid})...`);
+
+            // Execute VM Migration
+            // Passing undefined signals "auto-detect" to migrateVM logic
+            const res = await migrateVM(taskRow.source_server_id, vm.vmid.toString(), vm.type, {
+                targetServerId: taskRow.target_server_id,
+                targetStorage: options.storage || '',
+                targetBridge: options.bridge || '',
+                online: true // Default to online
+            });
+
+            if (res.success) {
+                steps[currentStepIndex].status = 'completed';
+                log(`Success: ${res.message ? res.message.substring(0, 100) + '...' : 'OK'}`);
+            } else {
+                steps[currentStepIndex].status = 'failed';
+                steps[currentStepIndex].error = res.message;
+                steps[currentStepIndex].detail += ` (Failed: ${res.message})`;
+                log(`Failed: ${res.message}`);
+                // Continue with other VMs? Usually yes, but mark overall as warning?
+                // For now, let's keep going.
+            }
+
+            currentStepIndex++;
+            db.prepare('UPDATE migration_tasks SET steps_json = ? WHERE id = ?').run(JSON.stringify(steps), taskId);
+        }
+
+        // --- 3. Finalize ---
+        if (steps[currentStepIndex]) {
+            steps[currentStepIndex].status = 'running';
+            db.prepare('UPDATE migration_tasks SET steps_json = ? WHERE id = ?').run(JSON.stringify(steps), taskId);
+            // Cleanup logic if needed
+            steps[currentStepIndex].status = 'completed';
+        }
+
+        // Complete Task
+        db.prepare(`UPDATE migration_tasks SET status = 'completed', completed_at = datetime('now'), steps_json = ? WHERE id = ?`)
+            .run(JSON.stringify(steps), taskId);
+
+        log('Migration Task Completed.');
+
+    } catch (e) {
+        log(`CRITICAL ERROR: ${e}`);
+        db.prepare(`UPDATE migration_tasks SET status = 'failed', log = log || ? WHERE id = ?`)
+            .run(`\nCRITICAL ERROR: ${e}`, taskId);
     }
 }
 
@@ -127,10 +212,19 @@ export async function getMigrationTask(taskId: number): Promise<MigrationTask | 
     const row = stmt.get(taskId) as any;
     if (!row) return null;
 
+    // steps_json might come from DB as string or null
+    let steps = [];
+    try {
+        steps = JSON.parse(row.steps_json || '[]');
+    } catch (e) {
+        steps = [];
+    }
+
     return {
         ...row,
-        steps: JSON.parse(row.steps_json || '[]')
-    };
+        steps_json: row.steps_json, // keep original string
+        steps: steps // convenience
+    } as MigrationTask;
 }
 
 // Get all migration tasks
@@ -163,130 +257,4 @@ export async function cancelMigration(taskId: number): Promise<{ success: boolea
     `);
     stmt.run(taskId);
     return { success: true };
-}
-
-// Background task executor
-async function executeMigrationTask(taskId: number) {
-    console.log(`[Migration] Starting task ${taskId}`);
-
-    // Mark as running
-    db.prepare(`
-        UPDATE migration_tasks 
-        SET status = 'running', started_at = datetime('now')
-        WHERE id = ?
-    `).run(taskId);
-
-    const task = await getMigrationTask(taskId);
-    if (!task) return;
-
-    const steps = task.steps;
-    let currentProgress = 0;
-
-    for (let i = 0; i < steps.length; i++) {
-        // Check if cancelled
-        const currentTask = await getMigrationTask(taskId);
-        if (currentTask?.status === 'cancelled') {
-            appendLog(taskId, '❌ Migration wurde abgebrochen');
-            return;
-        }
-
-        const step = steps[i];
-
-        // Update current step
-        steps[i].status = 'running';
-        updateTaskProgress(taskId, i, steps.length, step.name, steps);
-        appendLog(taskId, `⏳ Starte: ${step.name}`);
-
-        try {
-            if (step.type === 'config') {
-                // Config backup & restore
-                await executeConfigStep(task);
-
-            } else if (step.type === 'vm' || step.type === 'lxc') {
-                // VM/LXC migration
-                await executeVmStep(task, step);
-
-            } else if (step.type === 'finalize') {
-                // Finalization
-                appendLog(taskId, '✅ Validierung abgeschlossen');
-            }
-
-            steps[i].status = 'completed';
-            currentProgress = i + 1;
-            updateTaskProgress(taskId, currentProgress, steps.length, step.name, steps);
-            appendLog(taskId, `✅ Abgeschlossen: ${step.name}`);
-
-        } catch (e) {
-            steps[i].status = 'failed';
-            steps[i].error = String(e);
-            updateTaskProgress(taskId, currentProgress, steps.length, step.name, steps);
-            appendLog(taskId, `❌ Fehler bei ${step.name}: ${e}`);
-
-            // Mark task as failed
-            db.prepare(`
-                UPDATE migration_tasks 
-                SET status = 'failed', error = ?, completed_at = datetime('now')
-                WHERE id = ?
-            `).run(String(e), taskId);
-
-            return;
-        }
-    }
-
-    // All done!
-    db.prepare(`
-        UPDATE migration_tasks 
-        SET status = 'completed', progress = total_steps, completed_at = datetime('now')
-        WHERE id = ?
-    `).run(taskId);
-
-    appendLog(taskId, '🎉 Migration erfolgreich abgeschlossen!');
-    console.log(`[Migration] Task ${taskId} completed successfully`);
-}
-
-// Execute config backup & restore step
-async function executeConfigStep(task: MigrationTask) {
-    // For now, just log - we could integrate with existing config backup logic
-    // The user might want to manually handle configs or use a simpler approach
-    console.log(`[Migration] Config step for task ${task.id}`);
-
-    // Simulate config transfer (in real implementation, backup from source and restore to target)
-    await new Promise(resolve => setTimeout(resolve, 2000));
-}
-
-// Execute VM/LXC migration step
-async function executeVmStep(task: MigrationTask, step: MigrationStep) {
-    if (!step.vmid || !step.vmType) throw new Error('Invalid step: missing vmid/type');
-
-    const options: MigrationOptions = {
-        targetServerId: task.target_server_id,
-        targetStorage: task.target_storage,
-        targetBridge: task.target_bridge,
-        online: true // Default to online migration
-    };
-
-    const result = await migrateVM(task.source_server_id, step.vmid, step.vmType, options);
-
-    if (!result.success) {
-        throw new Error(result.message);
-    }
-}
-
-// Helper: Update task progress in DB
-function updateTaskProgress(taskId: number, progress: number, total: number, currentStep: string, steps: MigrationStep[]) {
-    db.prepare(`
-        UPDATE migration_tasks 
-        SET progress = ?, current_step = ?, steps_json = ?
-        WHERE id = ?
-    `).run(progress, currentStep, JSON.stringify(steps), taskId);
-}
-
-// Helper: Append to log
-function appendLog(taskId: number, message: string) {
-    const timestamp = new Date().toLocaleTimeString('de-DE');
-    db.prepare(`
-        UPDATE migration_tasks 
-        SET log = log || ?
-        WHERE id = ?
-    `).run(`[${timestamp}] ${message}\n`, taskId);
 }

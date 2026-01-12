@@ -98,14 +98,6 @@ export async function getStorageStats(): Promise<StorageStats> {
     };
 }
 
-function parseSize(sizeStr: string): number {
-    const match = sizeStr.match(/^([\d.]+)([KMGTP]?)$/i);
-    if (!match) return 0;
-    const num = parseFloat(match[1]);
-    const unit = (match[2] || '').toUpperCase();
-    const multipliers: Record<string, number> = { 'K': 1024, 'M': 1024 ** 2, 'G': 1024 ** 3, 'T': 1024 ** 4, 'P': 1024 ** 5 };
-    return Math.round(num * (multipliers[unit] || 1));
-}
 
 // Get storage pools from all servers via SSH
 export async function getServerStorages(): Promise<ServerStorage[]> {
