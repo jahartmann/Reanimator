@@ -68,9 +68,13 @@ export default function ServersClient({ servers, groups, onDeleteServer }: Serve
     };
 
     const handleDelete = async (id: number) => {
-        if (!confirm('Möchten Sie diesen Server wirklich löschen?')) return;
+        if (!confirm('Möchten Sie diesen Server wirklich löschen? Alle zugehörigen Backups und Jobs werden ebenfalls gelöscht.')) return;
         setDeletingId(id);
-        await onDeleteServer(id);
+        try {
+            await onDeleteServer(id);
+        } catch (e) {
+            alert('Fehler beim Löschen: ' + (e instanceof Error ? e.message : String(e)));
+        }
         setDeletingId(null);
     };
 

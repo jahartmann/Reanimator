@@ -16,8 +16,47 @@ interface ServerItem {
 
 async function deleteServer(id: number) {
     'use server';
-    db.prepare('DELETE FROM servers WHERE id = ?').run(id);
-    revalidatePath('/servers');
+
+    const deleteTransaction = db.transaction((serverId: number) => {
+        // 1. Delete history for jobs related to this server
+        db.prepare(`
+            DELETE FROM history 
+            WHERE job_id IN (
+                SELECT id FROM jobs WHERE source_server_id = ? OR target_server_id = ?
+            )
+        `).run(serverId, serverId);
+
+        // 2. Delete jobs related to this server
+        db.prepare(`
+            DELETE FROM jobs 
+            WHERE source_server_id = ? OR target_server_id = ?
+        `).run(serverId, serverId);
+
+        // 3. Delete config files for backups related to this server
+        db.prepare(`
+            DELETE FROM config_files 
+            WHERE backup_id IN (
+                SELECT id FROM config_backups WHERE server_id = ?
+            )
+        `).run(serverId);
+
+        // 4. Delete config backups related to this server
+        db.prepare(`
+            DELETE FROM config_backups 
+            WHERE server_id = ?
+        `).run(serverId);
+
+        // 5. Finally delete the server
+        db.prepare('DELETE FROM servers WHERE id = ?').run(serverId);
+    });
+
+    try {
+        deleteTransaction(id);
+        revalidatePath('/servers');
+    } catch (error) {
+        console.error('Failed to delete server:', error);
+        throw new Error('Server konnte nicht gelöscht werden: ' + (error instanceof Error ? error.message : String(error)));
+    }
 }
 
 export default function ServersPage() {
