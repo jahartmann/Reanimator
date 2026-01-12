@@ -67,21 +67,78 @@ interface SystemInfo {
     loadAvg: string;
 }
 
-async function getServerInfo(server: ServerItem): Promise<{
-    networks: NetworkInterface[];
-    disks: DiskInfo[];
-    pools: StoragePool[];
-    system: SystemInfo;
-} | null> {
-    if (!server.ssh_key) return null;
-
+async function getSystemStats(ssh: any) {
     try {
-        const ssh = createSSHClient(server);
-        await ssh.connect();
+        const [
+            hostname,
+            osRelease,
+            kernel,
+            uptime,
+            cpuInfo,
+            cpuCoresOutput,
+            loadAvg,
+            cpuUsageOutput,
+            memInfoOutput,
+            memReadable
+        ] = await Promise.all([
+            ssh.exec('hostname', 5000).then((o: string) => o.trim()).catch(() => 'Unknown'),
+            ssh.exec('cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d \\"', 5000).catch(() => 'Unknown'),
+            ssh.exec('uname -r', 5000).then((o: string) => o.trim()).catch(() => 'Unknown'),
+            ssh.exec('uptime -p', 5000).then((o: string) => o.trim()).catch(() => 'Unknown'),
+            ssh.exec('grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2', 5000).then((o: string) => o.trim()).catch(() => 'Unknown'),
+            ssh.exec('nproc 2>/dev/null || grep -c processor /proc/cpuinfo', 5000).then((o: string) => o.trim()).catch(() => '1'),
+            ssh.exec('cat /proc/loadavg | cut -d" " -f1-3', 5000).then((o: string) => o.trim()).catch(() => '0.00 0.00 0.00'),
+            ssh.exec(`top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1 2>/dev/null || echo "0"`, 5000).catch(() => '0'),
+            ssh.exec(`free -b | grep Mem | awk '{print $2, $3}'`, 5000).catch(() => '0 0'),
+            ssh.exec('free -h | grep Mem | awk \'{print $2 " total, " $3 " used"}\'', 5000).then((o: string) => o.trim()).catch(() => '-')
+        ]);
 
-        // Get network interfaces with enhanced info
-        const netOutput = await ssh.exec(`ip -j addr 2>/dev/null || ip addr`);
+        const cpuCores = parseInt(cpuCoresOutput) || 1;
+        const cpuUsage = parseFloat(cpuUsageOutput.trim()) || 0;
+
+        const memParts = memInfoOutput.trim().split(/\s+/);
+        const memoryTotal = parseInt(memParts[0]) || 0;
+        const memoryUsed = parseInt(memParts[1]) || 0;
+        const memoryUsage = memoryTotal > 0 ? (memoryUsed / memoryTotal) * 100 : 0;
+
+        return {
+            hostname,
+            os: osRelease.trim(),
+            kernel,
+            uptime,
+            cpu: cpuInfo,
+            cpuCores,
+            cpuUsage,
+            memory: memReadable,
+            memoryTotal,
+            memoryUsed,
+            memoryUsage,
+            loadAvg
+        };
+    } catch (e) {
+        console.error('Failed to fetch system stats:', e);
+        return {
+            hostname: 'Error',
+            os: 'Unknown',
+            kernel: 'Unknown',
+            uptime: '-',
+            cpu: 'Unknown',
+            cpuCores: 1,
+            cpuUsage: 0,
+            memory: '-',
+            memoryTotal: 0,
+            memoryUsed: 0,
+            memoryUsage: 0,
+            loadAvg: '-'
+        };
+    }
+}
+
+async function getNetworkStats(ssh: any) {
+    try {
+        const netOutput = await ssh.exec(`ip -j addr 2>/dev/null || ip addr`, 10000);
         let networks: NetworkInterface[] = [];
+
         try {
             const netJson = JSON.parse(netOutput);
             networks = netJson
@@ -92,7 +149,7 @@ async function getServerInfo(server: ServerItem): Promise<{
                     mac: iface.address || '-',
                     state: iface.operstate || 'unknown',
                     type: iface.link_type || 'unknown',
-                    speed: '', // Will be populated below
+                    speed: '',
                     bridge: '',
                     slaves: []
                 }));
@@ -128,42 +185,50 @@ async function getServerInfo(server: ServerItem): Promise<{
             }
         }
 
-        // Enhanced network info: bridge, bond, speed
-        for (const net of networks) {
+        // Enrich networks in parallel
+        await Promise.all(networks.map(async (net) => {
             try {
-                // Check if bridge
-                const brOutput = await ssh.exec(`ls /sys/class/net/${net.name}/brif 2>/dev/null || echo ""`);
+                // We use Promise.allSettled here to avoid one interface check blocking others
+                const [brOutput, bondOutput, speedOutput, masterOutput] = await Promise.all([
+                    ssh.exec(`ls /sys/class/net/${net.name}/brif 2>/dev/null || echo ""`, 5000).catch(() => ''),
+                    ssh.exec(`cat /sys/class/net/${net.name}/bonding/slaves 2>/dev/null || echo ""`, 5000).catch(() => ''),
+                    ssh.exec(`cat /sys/class/net/${net.name}/speed 2>/dev/null || echo ""`, 5000).catch(() => ''),
+                    ssh.exec(`cat /sys/class/net/${net.name}/master/uevent 2>/dev/null | grep INTERFACE | cut -d= -f2 || echo ""`, 5000).catch(() => '')
+                ]);
+
                 if (brOutput.trim()) {
                     net.type = 'bridge';
                     net.slaves = brOutput.trim().split('\n').filter(Boolean);
                 }
 
-                // Check if bond
-                const bondOutput = await ssh.exec(`cat /sys/class/net/${net.name}/bonding/slaves 2>/dev/null || echo ""`);
                 if (bondOutput.trim()) {
                     net.type = 'bond';
                     net.slaves = bondOutput.trim().split(' ').filter(Boolean);
                 }
 
-                // Get speed
-                const speedOutput = await ssh.exec(`cat /sys/class/net/${net.name}/speed 2>/dev/null || echo ""`);
                 if (speedOutput.trim() && !isNaN(parseInt(speedOutput.trim()))) {
                     const speed = parseInt(speedOutput.trim());
                     net.speed = speed >= 1000 ? `${speed / 1000}Gbps` : `${speed}Mbps`;
                 }
 
-                // Check bridge master
-                const masterOutput = await ssh.exec(`cat /sys/class/net/${net.name}/master/uevent 2>/dev/null | grep INTERFACE | cut -d= -f2 || echo ""`);
                 if (masterOutput.trim()) {
                     net.bridge = masterOutput.trim();
                 }
-            } catch {
-                // Ignore errors for individual interface detection
+            } catch (e) {
+                // Ignore enrichment errors
             }
-        }
+        }));
 
-        // Get disk info with enhanced details
-        const diskOutput = await ssh.exec(`lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL,SERIAL,FSTYPE,ROTA,TRAN 2>/dev/null || lsblk -o NAME,SIZE,TYPE,MOUNTPOINT`);
+        return networks;
+    } catch (e) {
+        console.error('Failed to fetch network stats:', e);
+        return [];
+    }
+}
+
+async function getDiskStats(ssh: any) {
+    try {
+        const diskOutput = await ssh.exec(`lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL,SERIAL,FSTYPE,ROTA,TRAN 2>/dev/null || lsblk -o NAME,SIZE,TYPE,MOUNTPOINT`, 15000);
         let disks: DiskInfo[] = [];
         try {
             const diskJson = JSON.parse(diskOutput);
@@ -205,112 +270,110 @@ async function getServerInfo(server: ServerItem): Promise<{
                 }
             }
         }
+        return disks.filter(d => d.name);
+    } catch (e) {
+        console.error('Failed to fetch disk stats:', e);
+        return [];
+    }
+}
 
-        // Get storage pools (ZFS, Ceph, LVM)
-        let pools: StoragePool[] = [];
+async function getPoolStats(ssh: any) {
+    const pools: StoragePool[] = [];
 
-        // ZFS pools
-        try {
-            const zfsOutput = await ssh.exec(`zpool list -H -o name,size,alloc,free,health 2>/dev/null || echo ""`);
-            if (zfsOutput.trim()) {
-                for (const line of zfsOutput.trim().split('\n')) {
-                    const parts = line.split('\t').filter(Boolean);
-                    if (parts.length >= 4) {
-                        pools.push({
-                            name: parts[0],
-                            type: 'zfs',
-                            size: parts[1],
-                            used: parts[2],
-                            available: parts[3],
-                            health: parts[4] || 'UNKNOWN'
-                        });
-                    }
-                }
+    // ZFS, Ceph, LVM in parallel
+    const [zfsRes, cephRes, lvmRes] = await Promise.allSettled([
+        ssh.exec(`zpool list -H -o name,size,alloc,free,health 2>/dev/null || echo ""`, 10000),
+        ssh.exec(`ceph df -f json 2>/dev/null | jq -r '.pools[] | [.name, .stats.stored, .stats.max_avail] | @tsv' 2>/dev/null || echo ""`, 10000),
+        ssh.exec(`vgs --noheadings -o vg_name,vg_size,vg_free 2>/dev/null || echo ""`, 10000)
+    ]);
+
+    // ZFS
+    if (zfsRes.status === 'fulfilled' && zfsRes.value.trim()) {
+        for (const line of zfsRes.value.trim().split('\n')) {
+            const parts = line.split('\t').filter(Boolean);
+            if (parts.length >= 4) {
+                pools.push({
+                    name: parts[0],
+                    type: 'zfs',
+                    size: parts[1],
+                    used: parts[2],
+                    available: parts[3],
+                    health: parts[4] || 'UNKNOWN'
+                });
             }
-        } catch { /* ZFS not installed */ }
+        }
+    }
 
-        // Ceph pools (via pvesm on PVE)
-        try {
-            const cephOutput = await ssh.exec(`ceph df -f json 2>/dev/null | jq -r '.pools[] | [.name, .stats.stored, .stats.max_avail] | @tsv' 2>/dev/null || echo ""`);
-            if (cephOutput.trim()) {
-                for (const line of cephOutput.trim().split('\n')) {
-                    const parts = line.split('\t').filter(Boolean);
-                    if (parts.length >= 2) {
-                        pools.push({
-                            name: parts[0],
-                            type: 'ceph',
-                            size: '-',
-                            used: formatBytesSimple(parseInt(parts[1]) || 0),
-                            available: formatBytesSimple(parseInt(parts[2]) || 0)
-                        });
-                    }
-                }
+    // Ceph
+    if (cephRes.status === 'fulfilled' && cephRes.value.trim()) {
+        for (const line of cephRes.value.trim().split('\n')) {
+            const parts = line.split('\t').filter(Boolean);
+            if (parts.length >= 2) {
+                pools.push({
+                    name: parts[0],
+                    type: 'ceph',
+                    size: '-',
+                    used: formatBytesSimple(parseInt(parts[1]) || 0),
+                    available: formatBytesSimple(parseInt(parts[2]) || 0)
+                });
             }
-        } catch { /* Ceph not installed */ }
+        }
+    }
 
-        // LVM volume groups
-        try {
-            const lvmOutput = await ssh.exec(`vgs --noheadings -o vg_name,vg_size,vg_free 2>/dev/null || echo ""`);
-            if (lvmOutput.trim()) {
-                for (const line of lvmOutput.trim().split('\n')) {
-                    const parts = line.trim().split(/\s+/).filter(Boolean);
-                    if (parts.length >= 3) {
-                        pools.push({
-                            name: parts[0],
-                            type: 'lvm',
-                            size: parts[1],
-                            used: '-',
-                            available: parts[2]
-                        });
-                    }
-                }
+    // LVM
+    if (lvmRes.status === 'fulfilled' && lvmRes.value.trim()) {
+        for (const line of lvmRes.value.trim().split('\n')) {
+            const parts = line.trim().split(/\s+/).filter(Boolean);
+            if (parts.length >= 3) {
+                pools.push({
+                    name: parts[0],
+                    type: 'lvm',
+                    size: parts[1],
+                    used: '-',
+                    available: parts[2]
+                });
             }
-        } catch { /* LVM not installed */ }
+        }
+    }
 
-        // Get system info with CPU/Memory usage
-        const hostname = (await ssh.exec('hostname')).trim();
-        const osRelease = await ssh.exec('cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d \\"');
-        const kernel = (await ssh.exec('uname -r')).trim();
-        const uptime = (await ssh.exec('uptime -p')).trim();
-        const cpuInfo = (await ssh.exec('grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2')).trim();
-        const cpuCores = parseInt((await ssh.exec('nproc 2>/dev/null || grep -c processor /proc/cpuinfo')).trim()) || 1;
-        const loadAvg = (await ssh.exec('cat /proc/loadavg | cut -d" " -f1-3')).trim();
+    return pools;
+}
 
-        // CPU usage (average over all cores)
-        const cpuUsageOutput = await ssh.exec(`top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1 2>/dev/null || echo "0"`);
-        const cpuUsage = parseFloat(cpuUsageOutput.trim()) || 0;
+async function getServerInfo(server: ServerItem): Promise<{
+    networks: NetworkInterface[];
+    disks: DiskInfo[];
+    pools: StoragePool[];
+    system: SystemInfo;
+} | null> {
+    if (!server.ssh_key) return null;
 
-        // Memory info
-        const memInfoOutput = await ssh.exec(`free -b | grep Mem | awk '{print $2, $3}'`);
-        const memParts = memInfoOutput.trim().split(/\s+/);
-        const memoryTotal = parseInt(memParts[0]) || 0;
-        const memoryUsed = parseInt(memParts[1]) || 0;
-        const memoryUsage = memoryTotal > 0 ? (memoryUsed / memoryTotal) * 100 : 0;
-        const memInfo = (await ssh.exec('free -h | grep Mem | awk \'{print $2 " total, " $3 " used"}\'')).trim();
+    let ssh;
+    try {
+        ssh = createSSHClient(server);
+        await ssh.connect();
+
+        // Parallel fetching of all major sections
+        // Note: each function handles its own errors and returns fallback data (empty array or default obj)
+        const [system, networks, disks, pools] = await Promise.all([
+            getSystemStats(ssh),
+            getNetworkStats(ssh),
+            getDiskStats(ssh),
+            getPoolStats(ssh)
+        ]);
 
         ssh.disconnect();
 
         return {
             networks,
-            disks: disks.filter(d => d.name),
+            disks,
             pools,
-            system: {
-                hostname,
-                os: osRelease.trim(),
-                kernel,
-                uptime,
-                cpu: cpuInfo || 'Unknown',
-                cpuCores,
-                cpuUsage,
-                memory: memInfo,
-                memoryTotal,
-                memoryUsed,
-                memoryUsage,
-                loadAvg
-            }
+            system
         };
     } catch (e) {
-        console.error('[ServerDetail] Error:', e);
+        console.error('[ServerDetail] Connection Error:', e);
+        if (ssh) {
+            try { ssh.disconnect(); } catch { }
+        }
         return null;
     }
 }
@@ -521,30 +584,30 @@ export default async function ServerDetailPage({
                                         {info.pools.map((pool) => (
                                             <div key={pool.name} className="p-4 flex items-center gap-4 hover:bg-muted/5 transition-colors">
                                                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${pool.type === 'zfs' ? 'bg-cyan-500/10' :
-                                                        pool.type === 'ceph' ? 'bg-red-500/10' :
-                                                            pool.type === 'lvm' ? 'bg-amber-500/10' :
-                                                                'bg-muted'
+                                                    pool.type === 'ceph' ? 'bg-red-500/10' :
+                                                        pool.type === 'lvm' ? 'bg-amber-500/10' :
+                                                            'bg-muted'
                                                     }`}>
                                                     <Database className={`h-5 w-5 ${pool.type === 'zfs' ? 'text-cyan-500' :
-                                                            pool.type === 'ceph' ? 'text-red-500' :
-                                                                pool.type === 'lvm' ? 'text-amber-500' :
-                                                                    'text-muted-foreground'
+                                                        pool.type === 'ceph' ? 'text-red-500' :
+                                                            pool.type === 'lvm' ? 'text-amber-500' :
+                                                                'text-muted-foreground'
                                                         }`} />
                                                 </div>
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2">
                                                         <p className="font-medium">{pool.name}</p>
                                                         <span className={`text-xs px-2 py-0.5 rounded font-bold uppercase ${pool.type === 'zfs' ? 'bg-cyan-500/10 text-cyan-500' :
-                                                                pool.type === 'ceph' ? 'bg-red-500/10 text-red-500' :
-                                                                    pool.type === 'lvm' ? 'bg-amber-500/10 text-amber-500' :
-                                                                        'bg-muted text-muted-foreground'
+                                                            pool.type === 'ceph' ? 'bg-red-500/10 text-red-500' :
+                                                                pool.type === 'lvm' ? 'bg-amber-500/10 text-amber-500' :
+                                                                    'bg-muted text-muted-foreground'
                                                             }`}>
                                                             {pool.type}
                                                         </span>
                                                         {pool.health && (
                                                             <span className={`text-xs ${pool.health === 'ONLINE' ? 'text-green-500' :
-                                                                    pool.health === 'DEGRADED' ? 'text-amber-500' :
-                                                                        'text-red-500'
+                                                                pool.health === 'DEGRADED' ? 'text-amber-500' :
+                                                                    'text-red-500'
                                                                 }`}>
                                                                 {pool.health}
                                                             </span>
@@ -575,14 +638,14 @@ export default async function ServerDetailPage({
                                         <div
                                             key={i}
                                             className={`flex flex-col gap-2 p-3 rounded-lg border transition-colors hover:border-primary/30 ${disk.transport === 'nvme' ? 'bg-purple-500/5 border-purple-500/20' :
-                                                    disk.rotational === false ? 'bg-blue-500/5 border-blue-500/20' :
-                                                        'bg-muted/30 border-transparent'
+                                                disk.rotational === false ? 'bg-blue-500/5 border-blue-500/20' :
+                                                    'bg-muted/30 border-transparent'
                                                 }`}
                                         >
                                             <div className="flex items-center gap-2">
                                                 <HardDrive className={`h-5 w-5 shrink-0 ${disk.transport === 'nvme' ? 'text-purple-500' :
-                                                        disk.rotational === false ? 'text-blue-500' :
-                                                            'text-muted-foreground'
+                                                    disk.rotational === false ? 'text-blue-500' :
+                                                        'text-muted-foreground'
                                                     }`} />
                                                 <div className="min-w-0">
                                                     <p className="font-medium font-mono text-sm">{disk.name}</p>
@@ -594,8 +657,8 @@ export default async function ServerDetailPage({
                                             <div className="flex items-center gap-2 text-xs">
                                                 <span className="font-medium">{disk.size}</span>
                                                 <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${disk.transport === 'nvme' ? 'bg-purple-500/20 text-purple-500' :
-                                                        disk.rotational === false ? 'bg-blue-500/20 text-blue-500' :
-                                                            'bg-muted text-muted-foreground'
+                                                    disk.rotational === false ? 'bg-blue-500/20 text-blue-500' :
+                                                        'bg-muted text-muted-foreground'
                                                     }`}>
                                                     {disk.transport === 'nvme' ? 'NVMe' :
                                                         disk.rotational === false ? 'SSD' : 'HDD'}
