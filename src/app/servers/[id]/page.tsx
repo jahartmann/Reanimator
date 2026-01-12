@@ -146,7 +146,7 @@ async function getSystemStats(ssh: any) {
 
 async function getNetworkStats(ssh: any, debug: string[]) {
     try {
-        const cmd = `PATH=$PATH:/usr/sbin:/sbin:/usr/bin:/bin ip -j addr 2>&1 || ip addr 2>&1`;
+        const cmd = `/usr/sbin/ip -j addr 2>&1 || /bin/ip -j addr 2>&1 || ip -j addr 2>&1`;
         debug.push(`[Network] Running: ${cmd}`);
         const netOutput = await ssh.exec(cmd, 30000);
         debug.push(`[Network] Output (first 100 chars): ${netOutput.substring(0, 100)}...`);
@@ -261,15 +261,17 @@ async function getNetworkStats(ssh: any, debug: string[]) {
 
         console.log('[Network] Parsed', networks.length, 'interfaces');
         return networks;
-    } catch (e) {
+    } catch (e: any) {
         console.error('Failed to fetch network stats:', e);
+        debug.push(`[Network] Error: ${e.message || String(e)}`);
+        if (e.stderr) debug.push(`[Network] Stderr: ${e.stderr}`);
         return [];
     }
 }
 
 async function getDiskStats(ssh: any, debug: string[]) {
     try {
-        const cmd = `PATH=$PATH:/usr/sbin:/sbin:/usr/bin:/bin lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL,SERIAL,FSTYPE,ROTA,TRAN 2>&1 || lsblk -o NAME,SIZE,TYPE,MOUNTPOINT 2>&1`;
+        const cmd = `/usr/bin/lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL,SERIAL,FSTYPE,ROTA,TRAN 2>&1 || /bin/lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL,SERIAL,FSTYPE,ROTA,TRAN 2>&1 || lsblk -o NAME,SIZE,TYPE,MOUNTPOINT 2>&1`;
         debug.push(`[Disk] Running: ${cmd}`);
         const diskOutput = await ssh.exec(cmd, 30000);
         debug.push(`[Disk] Output (first 100 chars): ${diskOutput.substring(0, 100)}...`);
@@ -324,8 +326,9 @@ async function getDiskStats(ssh: any, debug: string[]) {
 
         console.log('[Disk] Parsed', disks.length, 'disks');
         return disks.filter(d => d.name);
-    } catch (e) {
+    } catch (e: any) {
         console.error('Failed to fetch disk stats:', e);
+        debug.push(`[Disk] Error: ${e.message || String(e)}`);
         return [];
     }
 }
@@ -335,7 +338,7 @@ async function getPoolStats(ssh: any, debug: string[]) {
 
     // Use pvesm status - the standard Proxmox storage tool
     try {
-        const cmd = `PATH=$PATH:/usr/sbin:/sbin:/usr/bin:/bin pvesm status -content images,rootdir,vztmpl,backup,iso 2>&1`;
+        const cmd = `/usr/sbin/pvesm status -content images,rootdir,vztmpl,backup,iso 2>&1 || pvesm status -content images,rootdir,vztmpl,backup,iso 2>&1`;
         debug.push(`[Pools] Running: ${cmd}`);
         const pvesmOutput = await ssh.exec(cmd, 15000);
         debug.push(`[Pools] Output (first 100 chars): ${pvesmOutput.substring(0, 100)}...`);
@@ -372,8 +375,9 @@ async function getPoolStats(ssh: any, debug: string[]) {
                 });
             }
         }
-    } catch (e) {
+    } catch (e: any) {
         console.error('Pool stats failed:', e);
+        debug.push(`[Pools] Error: ${e.message || String(e)}`);
     }
 
     return pools;
