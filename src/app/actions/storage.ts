@@ -190,26 +190,8 @@ export async function getServerStorages(): Promise<ServerStorage[]> {
                 }
             } catch { /* Ceph not available */ }
 
-            // Filesystem mounts (major ones)
-            try {
-                const dfOutput = await ssh.exec(`df -B1 --output=target,size,used,avail / /var /home 2>/dev/null | tail -n +2 || echo ""`, 10000);
-                for (const line of dfOutput.trim().split('\n').filter(Boolean)) {
-                    const parts = line.trim().split(/\s+/);
-                    if (parts.length >= 4) {
-                        const total = parseInt(parts[1]) || 0;
-                        const used = parseInt(parts[2]) || 0;
-                        storages.push({
-                            name: parts[0],
-                            type: 'fs',
-                            total,
-                            used,
-                            available: parseInt(parts[3]) || 0,
-                            usagePercent: total > 0 ? (used / total) * 100 : 0,
-                            active: true
-                        });
-                    }
-                }
-            } catch { /* df failed */ }
+            // Skip local filesystem mounts - they are redundant with pool-level storage
+            // and cause confusion in cluster environments
 
             ssh.disconnect();
 
@@ -227,22 +209,25 @@ export async function getServerStorages(): Promise<ServerStorage[]> {
     }
 
     // Deduplicate shared storage (Ceph) across cluster nodes
-    // If multiple servers report the same ceph-cluster, only show it once
-    const seenSharedStorages = new Set<string>();
+    // If multiple servers report the same ceph-cluster, only show it once globally
+    const seenCephClusters = new Set<string>();
+    const cephClusterEntry: { serverId: number; storage: any } | null = null;
+
     for (const server of results) {
         server.storages = server.storages.filter(storage => {
-            if ((storage as any).isShared) {
-                const key = `${storage.type}:${storage.name}:${storage.total}`;
-                if (seenSharedStorages.has(key)) {
-                    return false; // Skip duplicate
+            if (storage.isShared || storage.type === 'ceph') {
+                // Create a unique key based on total capacity (Ceph clusters have same total)
+                const key = `${storage.type}:${storage.total}`;
+                if (seenCephClusters.has(key)) {
+                    return false; // Skip duplicate Ceph
                 }
-                seenSharedStorages.add(key);
+                seenCephClusters.add(key);
             }
             return true;
         });
     }
 
-    return results;
+    // Remove empty servers after deduplication
+    return results.filter(s => s.storages.length > 0);
 }
-
 

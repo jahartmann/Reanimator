@@ -123,7 +123,11 @@ export class SSHClient {
                     });
 
                     stream.on('close', (code: number) => {
-                        if (code !== 0 && errorOutput) {
+                        // Return stdout if we have any output, even with warnings on stderr
+                        // Only fail if there's no stdout AND we have a non-zero exit code with stderr
+                        if (output.trim()) {
+                            resolveExec(output);
+                        } else if (code !== 0 && errorOutput) {
                             rejectExec(new Error(errorOutput));
                         } else {
                             resolveExec(output);
