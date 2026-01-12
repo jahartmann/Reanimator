@@ -9,7 +9,8 @@ import db from '@/lib/db'; // Wait, this is client component? No, I need server 
 // Let's make this a Server Component if possible, or Client with fetch.
 // Given strict directory structure, let's look at `src/app/actions/storage.ts` if it exists.
 
-import { getStorageStatus } from '@/app/actions/storage'; // Need to create this if missing
+// import { getStorageStatus } from '@/app/actions/storage'; // Removed unused import
+
 
 export default function StoragePage() {
     const [storages, setStorages] = useState<any[]>([]);

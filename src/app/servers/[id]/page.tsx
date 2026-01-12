@@ -10,8 +10,10 @@ import { VirtualMachineList } from '@/components/vm/VirtualMachineList';
 import TagManagement from '@/components/ui/TagManagement';
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { getTags } from '@/app/actions/tags';
+import { getServerInfo } from '@/app/actions/monitoring';
 
 export const dynamic = 'force-dynamic';
+
 
 interface ServerItem {
     id: number;
