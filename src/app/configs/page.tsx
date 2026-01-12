@@ -1,11 +1,9 @@
 import Link from 'next/link';
 import db from '@/lib/db';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Server, FolderCog } from "lucide-react";
+import { Server } from "lucide-react";
 import ConfigList from './ConfigList';
-import { revalidatePath } from 'next/cache';
-import { BackupButton } from './BackupButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +13,7 @@ interface ServerItem {
     type: 'pve' | 'pbs';
     url: string;
     ssh_host?: string;
+    group_name?: string | null;
 }
 
 interface ConfigBackup {
@@ -25,21 +24,16 @@ interface ConfigBackup {
     total_size: number;
 }
 
-
-
-
-
-function formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
 export default function ConfigsPage() {
-    const servers = db.prepare('SELECT * FROM servers ORDER BY id').all() as ServerItem[];
+    const servers = db.prepare('SELECT * FROM servers ORDER BY group_name, name').all() as ServerItem[];
     const allBackups = db.prepare('SELECT * FROM config_backups ORDER BY backup_date DESC').all() as ConfigBackup[];
+
+    // Get unique groups
+    const groups = [...new Set(
+        servers
+            .map(s => s.group_name)
+            .filter((g): g is string => g !== null && g !== undefined && g.trim() !== '')
+    )].sort();
 
     // Group backups by server
     const backupsByServer: Record<number, ConfigBackup[]> = {};
@@ -71,7 +65,7 @@ export default function ConfigsPage() {
                     </CardContent>
                 </Card>
             ) : (
-                <ConfigList servers={servers} backupsByServer={backupsByServer} />
+                <ConfigList servers={servers} backupsByServer={backupsByServer} groups={groups} />
             )}
         </div>
     );

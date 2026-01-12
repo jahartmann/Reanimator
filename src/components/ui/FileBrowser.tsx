@@ -1,12 +1,20 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { File, Folder, FolderOpen, ChevronRight, ChevronDown, Check } from 'lucide-react';
+import { File, Folder, FolderOpen, ChevronRight, ChevronDown, Check, Minus, Download } from 'lucide-react';
 import { Button } from './button';
 
 interface FileEntry {
     path: string;
     size: number;
+}
+
+interface FolderInfo {
+    path: string;
+    name: string;
+    fileCount: number;
+    totalSize: number;
+    children: string[];
 }
 
 function formatBytes(bytes: number): string {
@@ -37,6 +45,50 @@ function buildTree(files: FileEntry[]): Record<string, any> {
     return root;
 }
 
+// Get all file paths under a folder node
+function getAllFilesInFolder(node: any): string[] {
+    const files: string[] = [];
+    const children = node._children || node;
+    for (const key of Object.keys(children).filter(k => !k.startsWith('_'))) {
+        const child = children[key];
+        if (child._file) {
+            files.push(child._path);
+        } else {
+            files.push(...getAllFilesInFolder(child));
+        }
+    }
+    return files;
+}
+
+// Get folder info from a node
+function getFolderInfo(node: any, path: string, name: string): FolderInfo {
+    const files = getAllFilesInFolder(node);
+    const children = node._children || node;
+    const childKeys = Object.keys(children).filter(k => !k.startsWith('_'));
+
+    let totalSize = 0;
+    const collectSize = (n: any): void => {
+        const c = n._children || n;
+        for (const key of Object.keys(c).filter(k => !k.startsWith('_'))) {
+            const child = c[key];
+            if (child._file) {
+                totalSize += child._size || 0;
+            } else {
+                collectSize(child);
+            }
+        }
+    };
+    collectSize(node);
+
+    return {
+        path,
+        name,
+        fileCount: files.length,
+        totalSize,
+        children: childKeys
+    };
+}
+
 function TreeNode({
     name,
     node,
@@ -44,8 +96,10 @@ function TreeNode({
     level = 0,
     selectedFiles,
     onToggleSelect,
-    onOpen,
-    currentFile
+    onOpenFile,
+    onSelectFolder,
+    currentFile,
+    currentFolder
 }: {
     name: string;
     node: any;
@@ -53,13 +107,29 @@ function TreeNode({
     level?: number;
     selectedFiles: Set<string>;
     onToggleSelect: (path: string, isFolder: boolean, node: any) => void;
-    onOpen: (path: string) => void;
+    onOpenFile: (path: string) => void;
+    onSelectFolder: (info: FolderInfo, node: any) => void;
     currentFile: string | null;
+    currentFolder: string | null;
 }) {
     const [expanded, setExpanded] = useState(level < 1);
     const isFile = node._file;
     const isSelected = selectedFiles.has(isFile ? node._path : path);
-    const isCurrent = currentFile === (isFile ? node._path : null);
+    const isCurrent = isFile ? currentFile === node._path : currentFolder === path;
+
+    // Calculate folder selection state
+    let folderSelectionState: 'none' | 'partial' | 'all' = 'none';
+    if (!isFile) {
+        const folderFiles = getAllFilesInFolder(node);
+        const selectedCount = folderFiles.filter(f => selectedFiles.has(f)).length;
+        if (selectedCount === 0) {
+            folderSelectionState = 'none';
+        } else if (selectedCount === folderFiles.length) {
+            folderSelectionState = 'all';
+        } else {
+            folderSelectionState = 'partial';
+        }
+    }
 
     if (isFile) {
         return (
@@ -69,13 +139,13 @@ function TreeNode({
                 style={{ paddingLeft: `${level * 16 + 4}px` }}
             >
                 <div
-                    className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 cursor-pointer ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-muted-foreground/50 group-hover:border-muted-foreground'
+                    className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 cursor-pointer transition-colors ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-muted-foreground/50 group-hover:border-muted-foreground'
                         }`}
                     onClick={(e) => { e.stopPropagation(); onToggleSelect(node._path, false, node); }}
                 >
                     {isSelected && <Check className="h-3 w-3 text-white" />}
                 </div>
-                <div className="flex items-center gap-2 flex-1 min-w-0" onClick={() => onOpen(node._path)}>
+                <div className="flex items-center gap-2 flex-1 min-w-0" onClick={() => onOpenFile(node._path)}>
                     <File className="h-4 w-4 text-muted-foreground shrink-0" />
                     <span className="truncate flex-1">{name}</span>
                     <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100">{formatBytes(node._size)}</span>
@@ -88,26 +158,39 @@ function TreeNode({
     const childKeys = Object.keys(children).filter(k => !k.startsWith('_'));
     const fileCount = childKeys.length;
 
+    const handleFolderClick = () => {
+        const info = getFolderInfo(node, path, name);
+        onSelectFolder(info, node);
+    };
+
     return (
         <div>
             <div
-                className={`flex items-center gap-1 py-1 px-1 rounded cursor-pointer text-sm group ${isSelected ? 'bg-blue-500/20' : 'hover:bg-muted/50'
+                className={`flex items-center gap-1 py-1 px-1 rounded cursor-pointer text-sm group ${isCurrent ? 'bg-amber-500/20' : folderSelectionState !== 'none' ? 'bg-blue-500/20' : 'hover:bg-muted/50'
                     }`}
                 style={{ paddingLeft: `${level * 16 + 4}px` }}
             >
                 <div
-                    className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 cursor-pointer ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-muted-foreground/50 group-hover:border-muted-foreground'
+                    className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 cursor-pointer transition-colors ${folderSelectionState === 'all' ? 'bg-blue-500 border-blue-500' :
+                        folderSelectionState === 'partial' ? 'bg-blue-500/50 border-blue-500' :
+                            'border-muted-foreground/50 group-hover:border-muted-foreground'
                         }`}
                     onClick={(e) => { e.stopPropagation(); onToggleSelect(path, true, children); }}
                 >
-                    {isSelected && <Check className="h-3 w-3 text-white" />}
+                    {folderSelectionState === 'all' && <Check className="h-3 w-3 text-white" />}
+                    {folderSelectionState === 'partial' && <Minus className="h-3 w-3 text-white" />}
                 </div>
-                <div className="flex items-center gap-1 flex-1" onClick={() => setExpanded(!expanded)}>
+                <div
+                    className="flex items-center gap-1 cursor-pointer"
+                    onClick={() => setExpanded(!expanded)}
+                >
                     {expanded ? (
                         <ChevronDown className="h-4 w-4 text-muted-foreground" />
                     ) : (
                         <ChevronRight className="h-4 w-4 text-muted-foreground" />
                     )}
+                </div>
+                <div className="flex items-center gap-1 flex-1" onClick={handleFolderClick}>
                     {expanded ? (
                         <FolderOpen className="h-4 w-4 text-amber-500" />
                     ) : (
@@ -135,8 +218,10 @@ function TreeNode({
                             level={level + 1}
                             selectedFiles={selectedFiles}
                             onToggleSelect={onToggleSelect}
-                            onOpen={onOpen}
+                            onOpenFile={onOpenFile}
+                            onSelectFolder={onSelectFolder}
                             currentFile={currentFile}
+                            currentFolder={currentFolder}
                         />
                     ))}
                 </div>
@@ -145,31 +230,20 @@ function TreeNode({
     );
 }
 
-// Get all file paths under a folder node
-function getAllFilesInFolder(node: any): string[] {
-    const files: string[] = [];
-    const children = node._children || node;
-    for (const key of Object.keys(children).filter(k => !k.startsWith('_'))) {
-        const child = children[key];
-        if (child._file) {
-            files.push(child._path);
-        } else {
-            files.push(...getAllFilesInFolder(child));
-        }
-    }
-    return files;
-}
-
 export function FileBrowser({
     files,
     selectedFile,
     onSelectFile,
-    onDownload
+    onDownload,
+    onSelectFolder,
+    selectedFolder
 }: {
     files: FileEntry[];
     selectedFile: string | null;
     onSelectFile: (path: string) => void;
     onDownload: (paths: string[]) => void;
+    onSelectFolder?: (info: FolderInfo, node: any) => void;
+    selectedFolder?: string | null;
 }) {
     const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
     const tree = useMemo(() => buildTree(files), [files]);
@@ -209,6 +283,12 @@ export function FileBrowser({
         onDownload(Array.from(selectedPaths));
     }
 
+    function handleFolderSelect(info: FolderInfo, node: any) {
+        if (onSelectFolder) {
+            onSelectFolder(info, node);
+        }
+    }
+
     const selectedSize = files
         .filter(f => selectedPaths.has(f.path))
         .reduce((sum, f) => sum + f.size, 0);
@@ -236,6 +316,7 @@ export function FileBrowser({
                             onClick={handleDownload}
                             className="ml-auto text-xs"
                         >
+                            <Download className="h-3.5 w-3.5 mr-1.5" />
                             Download
                         </Button>
                     </>
@@ -252,11 +333,15 @@ export function FileBrowser({
                         path={key}
                         selectedFiles={selectedPaths}
                         onToggleSelect={handleToggleSelect}
-                        onOpen={onSelectFile}
+                        onOpenFile={onSelectFile}
+                        onSelectFolder={handleFolderSelect}
                         currentFile={selectedFile}
+                        currentFolder={selectedFolder || null}
                     />
                 ))}
             </div>
         </div>
     );
 }
+
+export type { FolderInfo };

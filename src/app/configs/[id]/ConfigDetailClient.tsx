@@ -4,17 +4,12 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Download, Copy, Check, Upload, Loader2, HardDrive, Info, BookOpen, Terminal, Network, ShieldCheck, ChevronDown, ChevronRight, FileText } from "lucide-react";
-import { FileBrowser } from "@/components/ui/FileBrowser";
+import { ArrowLeft, Download, Copy, Check, Upload, Loader2, HardDrive, Info, BookOpen, Terminal, Network, ShieldCheck, FileText, Folder, Files, Archive } from "lucide-react";
+import { FileBrowser, FolderInfo } from "@/components/ui/FileBrowser";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import {
-    Collapsible,
-    CollapsibleContent,
-    CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 
 interface FileEntry {
     path: string;
@@ -37,6 +32,11 @@ interface ParsedSystemInfo {
     fstab: string;
 }
 
+type SelectedItem =
+    | { type: 'file'; path: string }
+    | { type: 'folder'; info: FolderInfo; node: any }
+    | null;
+
 export default function ConfigDetailClient({
     backupId,
     serverName,
@@ -50,7 +50,7 @@ export default function ConfigDetailClient({
 }) {
     const [files, setFiles] = useState<FileEntry[]>([]);
     const [loading, setLoading] = useState(true);
-    const [selectedFile, setSelectedFile] = useState<string | null>(null);
+    const [selectedItem, setSelectedItem] = useState<SelectedItem>(null);
     const [fileContent, setFileContent] = useState<string | null>(null);
     const [loadingContent, setLoadingContent] = useState(false);
     const [copied, setCopied] = useState(false);
@@ -129,7 +129,7 @@ export default function ConfigDetailClient({
     }
 
     async function handleSelectFile(path: string) {
-        setSelectedFile(path);
+        setSelectedItem({ type: 'file', path });
         setLoadingContent(true);
         try {
             const res = await fetch(`/api/config-backups/${backupId}?file=${encodeURIComponent(path)}`);
@@ -139,6 +139,11 @@ export default function ConfigDetailClient({
             setFileContent('Fehler beim Laden');
         }
         setLoadingContent(false);
+    }
+
+    function handleSelectFolder(info: FolderInfo, node: any) {
+        setSelectedItem({ type: 'folder', info, node });
+        setFileContent(null); // Clear file content when folder is selected
     }
 
     async function handleDownload(paths: string[]) {
@@ -169,15 +174,45 @@ export default function ConfigDetailClient({
         setDownloading(false);
     }
 
+    async function handleFolderDownload() {
+        if (selectedItem?.type !== 'folder') return;
+
+        // Get all files in the folder
+        const folderPath = selectedItem.info.path;
+        const folderFiles = files.filter(f => f.path.startsWith(folderPath + '/') || f.path === folderPath);
+
+        if (folderFiles.length === 0) {
+            // Use the children from the folder info
+            const collectPaths = (node: any, basePath: string): string[] => {
+                const paths: string[] = [];
+                const children = node._children || node;
+                for (const key of Object.keys(children).filter(k => !k.startsWith('_'))) {
+                    const child = children[key];
+                    const childPath = `${basePath}/${key}`;
+                    if (child._file) {
+                        paths.push(child._path);
+                    } else {
+                        paths.push(...collectPaths(child, childPath));
+                    }
+                }
+                return paths;
+            };
+            const pathsToDownload = collectPaths(selectedItem.node, selectedItem.info.path);
+            await handleDownload(pathsToDownload);
+        } else {
+            await handleDownload(folderFiles.map(f => f.path));
+        }
+    }
+
     async function handleRestore() {
-        if (!selectedFile || !confirm(`Datei "${selectedFile}" auf dem Server wiederherstellen?`)) return;
+        if (selectedItem?.type !== 'file' || !confirm(`Datei "${selectedItem.path}" auf dem Server wiederherstellen?`)) return;
 
         setRestoring(true);
         try {
             const res = await fetch(`/api/config-backups/${backupId}/restore`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filePath: selectedFile })
+                body: JSON.stringify({ filePath: selectedItem.path })
             });
             const result = await res.json();
             alert(result.message);
@@ -193,6 +228,78 @@ export default function ConfigDetailClient({
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         }
+    }
+
+    // Render preview panel content based on selected item type
+    function renderPreviewContent() {
+        if (loadingContent) {
+            return (
+                <div className="flex justify-center items-center h-full text-muted-foreground/50">
+                    <Loader2 className="h-8 w-8 animate-spin" />
+                </div>
+            );
+        }
+
+        if (selectedItem?.type === 'folder') {
+            const { info } = selectedItem;
+            return (
+                <div className="flex flex-col items-center justify-center h-full p-8 text-center">
+                    <div className="w-20 h-20 rounded-2xl bg-amber-500/10 flex items-center justify-center mb-6">
+                        <Folder className="h-10 w-10 text-amber-500" />
+                    </div>
+                    <h3 className="text-lg font-semibold mb-2">{info.name}</h3>
+                    <p className="text-sm text-muted-foreground mb-6 font-mono">{info.path}</p>
+
+                    <div className="grid grid-cols-2 gap-4 mb-8 w-full max-w-xs">
+                        <div className="bg-muted/30 rounded-lg p-4 text-center">
+                            <Files className="h-5 w-5 mx-auto mb-2 text-blue-500" />
+                            <p className="text-2xl font-bold">{info.fileCount}</p>
+                            <p className="text-xs text-muted-foreground">Dateien</p>
+                        </div>
+                        <div className="bg-muted/30 rounded-lg p-4 text-center">
+                            <Archive className="h-5 w-5 mx-auto mb-2 text-green-500" />
+                            <p className="text-2xl font-bold">{formatBytes(info.totalSize)}</p>
+                            <p className="text-xs text-muted-foreground">Größe</p>
+                        </div>
+                    </div>
+
+                    <div className="w-full max-w-xs">
+                        <p className="text-xs text-muted-foreground mb-3">Enthält {info.children.length} Einträge</p>
+                        <Button
+                            className="w-full"
+                            onClick={handleFolderDownload}
+                            disabled={downloading}
+                        >
+                            {downloading ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                                <Download className="h-4 w-4 mr-2" />
+                            )}
+                            Ordner herunterladen
+                        </Button>
+                    </div>
+                </div>
+            );
+        }
+
+        if (selectedItem?.type === 'file' && fileContent) {
+            return (
+                <ScrollArea className="h-full">
+                    <pre className="p-4 text-xs text-zinc-300 mobile:text-[10px] whitespace-pre-wrap font-mono leading-relaxed">
+                        {fileContent}
+                    </pre>
+                </ScrollArea>
+            );
+        }
+
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
+                <div className="w-16 h-16 rounded-full bg-muted/10 flex items-center justify-center">
+                    <FileText className="h-8 w-8 opacity-20" />
+                </div>
+                <p>Wählen Sie eine Datei oder einen Ordner aus</p>
+            </div>
+        );
     }
 
     return (
@@ -263,24 +370,32 @@ export default function ConfigDetailClient({
                                 ) : (
                                     <FileBrowser
                                         files={files}
-                                        selectedFile={selectedFile}
+                                        selectedFile={selectedItem?.type === 'file' ? selectedItem.path : null}
+                                        selectedFolder={selectedItem?.type === 'folder' ? selectedItem.info.path : null}
                                         onSelectFile={handleSelectFile}
+                                        onSelectFolder={handleSelectFolder}
                                         onDownload={handleDownload}
                                     />
                                 )}
                             </CardContent>
                         </Card>
 
-                        {/* File Viewer */}
+                        {/* Preview Panel */}
                         <Card className="lg:col-span-2 h-full overflow-hidden flex flex-col border-muted/60 shadow-sm">
                             <CardHeader className="shrink-0 py-3 px-4 border-b bg-muted/30 flex flex-row items-center justify-between">
                                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                                    <Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
+                                    {selectedItem?.type === 'folder' ? (
+                                        <Folder className="h-4 w-4 text-amber-500 shrink-0" />
+                                    ) : (
+                                        <Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
+                                    )}
                                     <CardTitle className="text-sm font-mono truncate">
-                                        {selectedFile || 'Keine Datei ausgewählt'}
+                                        {selectedItem?.type === 'file' ? selectedItem.path :
+                                            selectedItem?.type === 'folder' ? selectedItem.info.path :
+                                                'Keine Auswahl'}
                                     </CardTitle>
                                 </div>
-                                {selectedFile && (
+                                {selectedItem?.type === 'file' && (
                                     <div className="flex gap-2 ml-4">
                                         <Button variant="ghost" size="sm" onClick={handleCopy} className="h-8">
                                             {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
@@ -289,7 +404,7 @@ export default function ConfigDetailClient({
                                             variant="ghost"
                                             size="sm"
                                             className="h-8"
-                                            onClick={() => handleDownload([selectedFile])}
+                                            onClick={() => handleDownload([selectedItem.path])}
                                         >
                                             <Download className="h-4 w-4" />
                                         </Button>
@@ -302,24 +417,7 @@ export default function ConfigDetailClient({
                                 )}
                             </CardHeader>
                             <CardContent className="flex-1 overflow-auto p-0 bg-[#1e1e1e]">
-                                {loadingContent ? (
-                                    <div className="flex justify-center items-center h-full text-muted-foreground/50">
-                                        <Loader2 className="h-8 w-8 animate-spin" />
-                                    </div>
-                                ) : fileContent ? (
-                                    <ScrollArea className="h-full">
-                                        <pre className="p-4 text-xs text-zinc-300 mobile:text-[10px] whitespace-pre-wrap font-mono leading-relaxed">
-                                            {fileContent}
-                                        </pre>
-                                    </ScrollArea>
-                                ) : (
-                                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
-                                        <div className="w-16 h-16 rounded-full bg-muted/10 flex items-center justify-center">
-                                            <FileText className="h-8 w-8 opacity-20" />
-                                        </div>
-                                        <p>Wählen Sie eine Datei aus, um den Inhalt anzuzeigen</p>
-                                    </div>
-                                )}
+                                {renderPreviewContent()}
                             </CardContent>
                         </Card>
                     </div>

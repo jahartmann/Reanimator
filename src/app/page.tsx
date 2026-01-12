@@ -2,7 +2,8 @@ import Link from 'next/link';
 import db from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Server, FolderCog, Clock, Download } from "lucide-react";
+import { Server, FolderCog, Clock, Download, Activity } from "lucide-react";
+import { MonitoringPanel } from '@/components/ui/MonitoringPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +29,8 @@ export default function Dashboard() {
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-3">
-        <Card>
+        <Card className="overflow-hidden">
+          <div className="h-1 bg-gradient-to-r from-orange-500 to-red-500" />
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Server</CardTitle>
             <Server className="h-4 w-4 text-muted-foreground" />
@@ -37,7 +39,8 @@ export default function Dashboard() {
             <div className="text-2xl font-bold">{servers.count}</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="overflow-hidden">
+          <div className="h-1 bg-gradient-to-r from-blue-500 to-cyan-500" />
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Jobs</CardTitle>
             <Clock className="h-4 w-4 text-muted-foreground" />
@@ -46,7 +49,8 @@ export default function Dashboard() {
             <div className="text-2xl font-bold">{jobs.count}</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="overflow-hidden">
+          <div className="h-1 bg-gradient-to-r from-purple-500 to-pink-500" />
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Backups</CardTitle>
             <FolderCog className="h-4 w-4 text-muted-foreground" />
@@ -58,7 +62,7 @@ export default function Dashboard() {
       </div>
 
       {/* Quick Actions */}
-      <Card>
+      <Card className="overflow-hidden border-muted/60">
         <CardHeader>
           <CardTitle>Schnellaktionen</CardTitle>
         </CardHeader>
@@ -78,8 +82,17 @@ export default function Dashboard() {
         </CardContent>
       </Card>
 
+      {/* Monitoring Section */}
+      <div>
+        <div className="flex items-center gap-2 mb-4">
+          <Activity className="h-5 w-5 text-primary" />
+          <h2 className="text-xl font-semibold">Monitoring</h2>
+        </div>
+        <MonitoringPanel />
+      </div>
+
       {/* Recent Backups */}
-      <Card>
+      <Card className="overflow-hidden border-muted/60">
         <CardHeader>
           <CardTitle>Letzte Backups</CardTitle>
         </CardHeader>
@@ -89,7 +102,7 @@ export default function Dashboard() {
           ) : (
             <div className="space-y-2">
               {recentBackups.map((backup) => (
-                <div key={backup.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                <div key={backup.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors">
                   <div>
                     <p className="font-medium">{backup.server_name}</p>
                     <p className="text-sm text-muted-foreground">

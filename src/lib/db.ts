@@ -111,6 +111,9 @@ try {
 try {
   db.exec(`ALTER TABLE jobs ADD COLUMN job_type TEXT DEFAULT 'backup'`);
 } catch (e) { /* Column exists */ }
+try {
+  db.exec(`ALTER TABLE servers ADD COLUMN group_name TEXT DEFAULT NULL`);
+} catch (e) { /* Column exists */ }
 
 export default db;
 export { backupDir };

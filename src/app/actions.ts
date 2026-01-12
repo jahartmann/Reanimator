@@ -16,10 +16,13 @@ export async function addServer(formData: FormData) {
     const ssh_user = formData.get('ssh_user') as string || 'root';
     const ssh_password = formData.get('ssh_password') as string || null;
 
+    // Group
+    const group_name = formData.get('group_name') as string || null;
+
     db.prepare(`
-        INSERT INTO servers (name, type, url, auth_token, ssh_host, ssh_port, ssh_user, ssh_key, status) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(name, type, url, token, ssh_host, ssh_port, ssh_user, ssh_password, 'unknown');
+        INSERT INTO servers (name, type, url, auth_token, ssh_host, ssh_port, ssh_user, ssh_key, status, group_name) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(name, type, url, token, ssh_host, ssh_port, ssh_user, ssh_password, 'unknown', group_name);
 
     revalidatePath('/servers');
     redirect('/servers');
