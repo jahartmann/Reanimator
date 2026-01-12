@@ -33,10 +33,16 @@ export default function NewMigrationPage() {
         network: true,
         hosts: false,
         dns: false,
+        firewall: false,
+        users: false,
+        domains: false,
         timezone: false,
         locale: false,
+        modules: false,
+        sysctl: false,
         tags: true,
-        storage: false
+        storage: false,
+        backup: false
     });
 
     // Step 3: Validation
@@ -201,7 +207,7 @@ export default function NewMigrationPage() {
                                     <div>
                                         <h2 className="text-xl font-semibold">Vorbereitung</h2>
                                         <p className="text-sm text-muted-foreground">
-                                            Bereiten Sie den Ziel-Server vor, um eine reibungslose Migration zu gewährleisten.
+                                            Bereiten Sie den Ziel-Server vor. Wählen Sie aus, welche Konfigurationen geklont werden sollen.
                                         </p>
                                     </div>
 
@@ -212,8 +218,8 @@ export default function NewMigrationPage() {
                                         <AlertDescription className="text-sm mt-2">
                                             <ul className="list-disc ml-4 space-y-1">
                                                 <li><strong>Storage Pools:</strong> Stellen Sie sicher, dass auf dem Ziel Pools mit <em>identischen Namen</em> (z.B. <code>local-lvm</code>) existieren.</li>
-                                                <li><strong>Netzwerk:</strong> Prüfen Sie, ob benötigte Bridges (z.B. <code>vmbr1</code>) vorhanden sind. (Oder klonen Sie die Config unten).</li>
-                                                <li><strong>Warnung:</strong> Kopieren von <code>fstab</code> oder UUID-basierten Mounts kann zu Boot-Fehlern führen.</li>
+                                                <li><strong>Netzwerk:</strong> Prüfen Sie Bridges. (Auto-Fallback auf `vmbr0` aktiv).</li>
+                                                <li><strong>Warnung:</strong> Kopieren von <code>fstab</code> o.ä. manuell prüfen.</li>
                                             </ul>
                                         </AlertDescription>
                                     </Alert>
@@ -222,80 +228,134 @@ export default function NewMigrationPage() {
                                     <div className="border rounded-md p-4 space-y-4">
                                         <h3 className="font-medium flex items-center gap-2">
                                             <Server className="h-4 w-4 text-muted-foreground" />
-                                            Konfiguration klonen (Optional)
+                                            Konfiguration klonen (Auswahl)
                                         </h3>
 
-                                        <div className="grid md:grid-cols-3 gap-4">
-                                            {/* Network Column */}
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-4">
+
+                                            {/* Group 1: Network & Security */}
                                             <div className="space-y-3 p-3 bg-muted/30 rounded-lg">
-                                                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Netzwerk</h4>
+                                                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                                                    Netzwerk & Security
+                                                </h4>
                                                 <div className="space-y-2">
                                                     <div className="flex items-start space-x-2">
                                                         <Checkbox id="c-net" checked={cloneOptions.network} onCheckedChange={c => setCloneOptions(o => ({ ...o, network: !!c }))} />
-                                                        <div className="grid gap-1.5 leading-none">
+                                                        <div className="grid gap-1 leading-none">
                                                             <Label htmlFor="c-net">Interfaces</Label>
                                                             <p className="text-[10px] text-muted-foreground">/etc/network/interfaces</p>
                                                         </div>
                                                     </div>
                                                     <div className="flex items-start space-x-2">
                                                         <Checkbox id="c-hosts" checked={cloneOptions.hosts} onCheckedChange={c => setCloneOptions(o => ({ ...o, hosts: !!c }))} />
-                                                        <div className="grid gap-1.5 leading-none">
+                                                        <div className="grid gap-1 leading-none">
                                                             <Label htmlFor="c-hosts">Hosts</Label>
-                                                            <p className="text-[10px] text-muted-foreground">/etc/hosts (Backup erstellt)</p>
+                                                            <p className="text-[10px] text-muted-foreground">/etc/hosts</p>
                                                         </div>
                                                     </div>
                                                     <div className="flex items-start space-x-2">
                                                         <Checkbox id="c-dns" checked={cloneOptions.dns} onCheckedChange={c => setCloneOptions(o => ({ ...o, dns: !!c }))} />
-                                                        <div className="grid gap-1.5 leading-none">
+                                                        <div className="grid gap-1 leading-none">
                                                             <Label htmlFor="c-dns">DNS</Label>
                                                             <p className="text-[10px] text-muted-foreground">/etc/resolv.conf</p>
                                                         </div>
                                                     </div>
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-fw" checked={cloneOptions.firewall} onCheckedChange={c => setCloneOptions(o => ({ ...o, firewall: !!c }))} />
+                                                        <div className="grid gap-1 leading-none">
+                                                            <Label htmlFor="c-fw">Firewall</Label>
+                                                            <p className="text-[10px] text-muted-foreground">Cluster & Host Rules</p>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
 
-                                            {/* System Column */}
+                                            {/* Group 2: Access & Auth */}
+                                            <div className="space-y-3 p-3 bg-amber-500/5 rounded-lg border border-amber-500/10">
+                                                <h4 className="text-xs font-semibold uppercase tracking-wider text-amber-600 flex items-center gap-2">
+                                                    Zugriff & Auth (Kritisch)
+                                                </h4>
+                                                <div className="space-y-2">
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-usr" checked={cloneOptions.users} onCheckedChange={c => setCloneOptions(o => ({ ...o, users: !!c }))} />
+                                                        <div className="grid gap-1 leading-none">
+                                                            <Label htmlFor="c-usr">Benutzer & Rechte</Label>
+                                                            <p className="text-[10px] text-muted-foreground">/etc/pve/user.cfg</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-dom" checked={cloneOptions.domains} onCheckedChange={c => setCloneOptions(o => ({ ...o, domains: !!c }))} />
+                                                        <div className="grid gap-1 leading-none">
+                                                            <Label htmlFor="c-dom">Realms (AD/LDAP)</Label>
+                                                            <p className="text-[10px] text-muted-foreground">/etc/pve/domains.cfg</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Group 3: System & Kernel */}
                                             <div className="space-y-3 p-3 bg-muted/30 rounded-lg">
-                                                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">System</h4>
+                                                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">System & Kernel</h4>
                                                 <div className="space-y-2">
                                                     <div className="flex items-start space-x-2">
                                                         <Checkbox id="c-tz" checked={cloneOptions.timezone} onCheckedChange={c => setCloneOptions(o => ({ ...o, timezone: !!c }))} />
-                                                        <div className="grid gap-1.5 leading-none">
+                                                        <div className="grid gap-1 leading-none">
                                                             <Label htmlFor="c-tz">Timezone</Label>
-                                                            <p className="text-[10px] text-muted-foreground">Setzt Zeitzone neu</p>
+                                                            <p className="text-[10px] text-muted-foreground">/etc/timezone</p>
                                                         </div>
                                                     </div>
                                                     <div className="flex items-start space-x-2">
                                                         <Checkbox id="c-loc" checked={cloneOptions.locale} onCheckedChange={c => setCloneOptions(o => ({ ...o, locale: !!c }))} />
-                                                        <div className="grid gap-1.5 leading-none">
+                                                        <div className="grid gap-1 leading-none">
                                                             <Label htmlFor="c-loc">Locale</Label>
-                                                            <p className="text-[10px] text-muted-foreground">Generiert Locales neu</p>
+                                                            <p className="text-[10px] text-muted-foreground">/etc/locale.gen</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-mod" checked={cloneOptions.modules} onCheckedChange={c => setCloneOptions(o => ({ ...o, modules: !!c }))} />
+                                                        <div className="grid gap-1 leading-none">
+                                                            <Label htmlFor="c-mod">Kernel Modules</Label>
+                                                            <p className="text-[10px] text-muted-foreground">/etc/modules</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-sys" checked={cloneOptions.sysctl} onCheckedChange={c => setCloneOptions(o => ({ ...o, sysctl: !!c }))} />
+                                                        <div className="grid gap-1 leading-none">
+                                                            <Label htmlFor="c-sys">Sysctl</Label>
+                                                            <p className="text-[10px] text-muted-foreground">/etc/sysctl.conf</p>
                                                         </div>
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            {/* Proxmox Column */}
+                                            {/* Group 4: Proxmox Defaults */}
                                             <div className="space-y-3 p-3 bg-muted/30 rounded-lg">
                                                 <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Proxmox</h4>
                                                 <div className="space-y-2">
                                                     <div className="flex items-start space-x-2">
                                                         <Checkbox id="c-tags" checked={cloneOptions.tags} onCheckedChange={c => setCloneOptions(o => ({ ...o, tags: !!c }))} />
-                                                        <div className="grid gap-1.5 leading-none">
+                                                        <div className="grid gap-1 leading-none">
                                                             <Label htmlFor="c-tags">Tags & Farben</Label>
                                                             <p className="text-[10px] text-muted-foreground">datacenter.cfg</p>
                                                         </div>
                                                     </div>
+                                                    <div className="flex items-start space-x-2">
+                                                        <Checkbox id="c-bak" checked={cloneOptions.backup} onCheckedChange={c => setCloneOptions(o => ({ ...o, backup: !!c }))} />
+                                                        <div className="grid gap-1 leading-none">
+                                                            <Label htmlFor="c-bak">Backup Settings</Label>
+                                                            <p className="text-[10px] text-muted-foreground">/etc/vzdump.conf</p>
+                                                        </div>
+                                                    </div>
 
                                                     {/* Storage Config with Warning */}
-                                                    <div className="flex items-start space-x-2">
+                                                    <div className="flex items-start space-x-2 mt-2">
                                                         <Checkbox id="c-sto" checked={cloneOptions.storage} onCheckedChange={c => setCloneOptions(o => ({ ...o, storage: !!c }))} />
-                                                        <div className="grid gap-1.5 leading-none">
+                                                        <div className="grid gap-1 leading-none">
                                                             <div className="flex items-center gap-2">
                                                                 <Label htmlFor="c-sto" className="text-red-600 dark:text-red-400 font-bold">Storage Config</Label>
                                                                 <Badge variant="destructive" className="text-[9px] h-4 px-1">Warnung</Badge>
                                                             </div>
-                                                            <p className="text-[10px] text-red-600/80">Kopiert UUIDs! Gefahr bei abweichender Hardware.</p>
+                                                            <p className="text-[10px] text-red-600/80">Kopiert UUIDs! Gefahr bei abweichender Hardware. Prüfen!</p>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -305,7 +365,7 @@ export default function NewMigrationPage() {
                                         <Button
                                             onClick={handleClone}
                                             disabled={cloning}
-                                            className="w-full"
+                                            className="w-full mt-4"
                                             variant={Object.values(cloneOptions).some(Boolean) ? 'default' : 'secondary'}
                                         >
                                             {cloning ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Server className="h-4 w-4 mr-2" />}

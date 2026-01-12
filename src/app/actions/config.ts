@@ -6,13 +6,26 @@ import { getServer } from './server';
 
 
 export interface CloneOptions {
-    network?: boolean; // /etc/network/interfaces
-    hosts?: boolean;   // /etc/hosts
-    dns?: boolean;     // /etc/resolv.conf
-    timezone?: boolean;// /etc/timezone
-    locale?: boolean;  // /etc/locale.gen
-    tags?: boolean;    // datacenter.cfg (tag-style)
-    storage?: boolean; // /etc/pve/storage.cfg
+    // Network & Security
+    network?: boolean;   // /etc/network/interfaces
+    hosts?: boolean;     // /etc/hosts
+    dns?: boolean;       // /etc/resolv.conf
+    firewall?: boolean;  // /etc/pve/firewall/cluster.fw & /etc/pve/nodes/{node}/host.fw
+
+    // Access & Auth
+    users?: boolean;     // /etc/pve/user.cfg
+    domains?: boolean;   // /etc/pve/domains.cfg (Realms)
+
+    // System & Kernel
+    timezone?: boolean;  // /etc/timezone
+    locale?: boolean;    // /etc/locale.gen
+    modules?: boolean;   // /etc/modules
+    sysctl?: boolean;    // /etc/sysctl.conf
+
+    // Proxmox Defaults
+    tags?: boolean;      // datacenter.cfg (tag-style)
+    storage?: boolean;   // /etc/pve/storage.cfg
+    backup?: boolean;    // /etc/vzdump.conf
 }
 
 export async function cloneServerConfig(
@@ -114,6 +127,63 @@ export async function cloneServerConfig(
 
         if (options.locale) {
             await copyFile('Locale', '/etc/locale.gen', 'locale-gen');
+        }
+
+        if (options.firewall) {
+            logs.push('--- Firewall Configuration ---');
+            // 1. Cluster Firewall
+            try {
+                const fwPath = '/etc/pve/firewall/cluster.fw';
+                // Check if exists first (cat causing error if missing)
+                const exists = await sourceSsh.exec(`[ -f ${fwPath} ] && echo "yes" || echo "no"`);
+                if (exists.trim() === 'yes') {
+                    await copyFile('Cluster Firewall', fwPath);
+                } else {
+                    logs.push(`Skipping ${fwPath} (not found on source)`);
+                }
+            } catch (e) {
+                logs.push(`Error checking cluster firewall: ${e}`);
+            }
+
+            // 2. Host Firewall (Local Node)
+            // Note: We map Source Node config to Target Node config!
+            // Source: /etc/pve/nodes/{source_node}/host.fw
+            // Target: /etc/pve/nodes/{target_node}/host.fw
+            /* 
+               Implementation Note: Finding precise node name via SSH can be tricky if `hostname` differs from directory.
+               Assuming standard Proxmox structure: /etc/pve/local/host.fw refers to local node.
+            */
+            try {
+                const localFwPath = '/etc/pve/local/host.fw';
+                const exists = await sourceSsh.exec(`[ -f ${localFwPath} ] && echo "yes" || echo "no"`);
+                if (exists.trim() === 'yes') {
+                    await copyFile('Host Firewall', localFwPath);
+                }
+            } catch (e) {
+                logs.push(`Error checking host firewall: ${e}`);
+            }
+        }
+
+        if (options.users) {
+            // /etc/pve/user.cfg contains Users, Groups, Permissions
+            await copyFile('Users & Groups', '/etc/pve/user.cfg');
+        }
+
+        if (options.domains) {
+            // /etc/pve/domains.cfg contains Auth Realms (PAM, PBA, LDAP)
+            await copyFile('Auth Realms', '/etc/pve/domains.cfg');
+        }
+
+        if (options.modules) {
+            await copyFile('Kernel Modules', '/etc/modules');
+        }
+
+        if (options.sysctl) {
+            await copyFile('Sysctl', '/etc/sysctl.conf', 'sysctl -p');
+        }
+
+        if (options.backup) {
+            await copyFile('VZDump (Backup) Settings', '/etc/vzdump.conf');
         }
 
         if (options.storage) {
