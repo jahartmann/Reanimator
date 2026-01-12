@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Download, Copy, Check, Upload, Loader2, HardDrive, Info, BookOpen, Terminal, Network, ShieldCheck, FileText, Folder, Files, Archive } from "lucide-react";
-import { FileBrowser, FolderInfo } from "@/components/ui/FileBrowser";
+import { ArrowLeft, Download, Copy, Check, Upload, Loader2, HardDrive, Info, BookOpen, Terminal, Network, ShieldCheck, FileText, Folder, Files, Archive, CheckSquare } from "lucide-react";
+import { FileBrowser, FolderInfo, SelectionInfo } from "@/components/ui/FileBrowser";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,7 @@ interface ParsedSystemInfo {
 type SelectedItem =
     | { type: 'file'; path: string }
     | { type: 'folder'; info: FolderInfo; node: any }
+    | { type: 'multiple'; selection: SelectionInfo }
     | null;
 
 export default function ConfigDetailClient({
@@ -57,6 +58,9 @@ export default function ConfigDetailClient({
     const [restoring, setRestoring] = useState(false);
     const [downloading, setDownloading] = useState(false);
 
+    // Track current selection paths for download
+    const [currentSelectionPaths, setCurrentSelectionPaths] = useState<string[]>([]);
+
     // New States for parsed info
     const [guideContent, setGuideContent] = useState<string | null>(null);
     const [systemInfoRaw, setSystemInfoRaw] = useState<string | null>(null);
@@ -78,16 +82,7 @@ export default function ConfigDetailClient({
 
     function parseSystemInfo(raw: string) {
         try {
-            // Split by separator defined in backup-logic.ts: echo "---";
             const parts = raw.split('---').map(s => s.trim());
-
-            // Expected order:
-            // 0: os-release
-            // 1: hostname
-            // 2: ip a
-            // 3: lsblk
-            // 4: fstab
-
             const osReleaseLines = parts[0]?.split('\n').filter(l => l.includes('=')) || [];
             const osRelease: Record<string, string> = {};
             osReleaseLines.forEach(line => {
@@ -114,7 +109,6 @@ export default function ConfigDetailClient({
             const data = await res.json();
             setFiles(data);
 
-            // Load guide and system info
             const guideRes = await fetch(`/api/config-backups/${backupId}?file=WIEDERHERSTELLUNG.md`);
             const guideData = await guideRes.json();
             if (guideData.content) setGuideContent(guideData.content);
@@ -143,8 +137,29 @@ export default function ConfigDetailClient({
 
     function handleSelectFolder(info: FolderInfo, node: any) {
         setSelectedItem({ type: 'folder', info, node });
-        setFileContent(null); // Clear file content when folder is selected
+        setFileContent(null);
     }
+
+    // Handle selection changes from checkboxes
+    const handleSelectionChange = useCallback((info: SelectionInfo | null) => {
+        if (!info || info.fileCount === 0) {
+            setCurrentSelectionPaths([]);
+            // Don't clear selectedItem here - keep showing clicked item
+            return;
+        }
+
+        setCurrentSelectionPaths(info.paths);
+
+        // Update preview to show selection info
+        if (info.fileCount === 1) {
+            // Single file selected - show file preview
+            handleSelectFile(info.paths[0]);
+        } else {
+            // Multiple files selected - show selection summary
+            setSelectedItem({ type: 'multiple', selection: info });
+            setFileContent(null);
+        }
+    }, [backupId]);
 
     async function handleDownload(paths: string[]) {
         if (paths.length === 0) return;
@@ -157,50 +172,57 @@ export default function ConfigDetailClient({
                 body: JSON.stringify({ files: paths })
             });
 
-            if (!res.ok) throw new Error('Download failed');
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({ error: 'Download failed' }));
+                throw new Error(errorData.error || 'Download failed');
+            }
 
             const blob = await res.blob();
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = paths.length === 1 ? paths[0].split('/').pop() || 'file' : `backup-${backupId}.zip`;
+            a.download = paths.length === 1 ? paths[0].split('/').pop() || 'file' : `backup-${backupId}.tar.gz`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         } catch (err) {
-            alert('Download fehlgeschlagen');
+            alert(`Download fehlgeschlagen: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`);
         }
         setDownloading(false);
     }
 
-    async function handleFolderDownload() {
-        if (selectedItem?.type !== 'folder') return;
+    // Download from preview panel - uses currentSelectionPaths or selectedItem
+    async function handlePreviewDownload() {
+        let pathsToDownload: string[] = [];
 
-        // Get all files in the folder
-        const folderPath = selectedItem.info.path;
-        const folderFiles = files.filter(f => f.path.startsWith(folderPath + '/') || f.path === folderPath);
-
-        if (folderFiles.length === 0) {
-            // Use the children from the folder info
+        if (currentSelectionPaths.length > 0) {
+            // Use checkbox selection
+            pathsToDownload = currentSelectionPaths;
+        } else if (selectedItem?.type === 'file') {
+            pathsToDownload = [selectedItem.path];
+        } else if (selectedItem?.type === 'folder') {
+            // Collect all files from folder
             const collectPaths = (node: any, basePath: string): string[] => {
                 const paths: string[] = [];
                 const children = node._children || node;
                 for (const key of Object.keys(children).filter(k => !k.startsWith('_'))) {
                     const child = children[key];
-                    const childPath = `${basePath}/${key}`;
                     if (child._file) {
                         paths.push(child._path);
                     } else {
-                        paths.push(...collectPaths(child, childPath));
+                        paths.push(...collectPaths(child, `${basePath}/${key}`));
                     }
                 }
                 return paths;
             };
-            const pathsToDownload = collectPaths(selectedItem.node, selectedItem.info.path);
+            pathsToDownload = collectPaths(selectedItem.node, selectedItem.info.path);
+        } else if (selectedItem?.type === 'multiple') {
+            pathsToDownload = selectedItem.selection.paths;
+        }
+
+        if (pathsToDownload.length > 0) {
             await handleDownload(pathsToDownload);
-        } else {
-            await handleDownload(folderFiles.map(f => f.path));
         }
     }
 
@@ -240,6 +262,51 @@ export default function ConfigDetailClient({
             );
         }
 
+        // Multiple selection
+        if (selectedItem?.type === 'multiple') {
+            const { selection } = selectedItem;
+            return (
+                <div className="flex flex-col items-center justify-center h-full p-8 text-center">
+                    <div className="w-20 h-20 rounded-2xl bg-blue-500/10 flex items-center justify-center mb-6">
+                        <CheckSquare className="h-10 w-10 text-blue-500" />
+                    </div>
+                    <h3 className="text-lg font-semibold mb-2">Mehrfachauswahl</h3>
+                    <p className="text-sm text-muted-foreground mb-6">
+                        {selection.fileCount} Dateien ausgewählt
+                    </p>
+
+                    <div className="grid grid-cols-2 gap-4 mb-8 w-full max-w-xs">
+                        <div className="bg-muted/30 rounded-lg p-4 text-center">
+                            <Files className="h-5 w-5 mx-auto mb-2 text-blue-500" />
+                            <p className="text-2xl font-bold">{selection.fileCount}</p>
+                            <p className="text-xs text-muted-foreground">Dateien</p>
+                        </div>
+                        <div className="bg-muted/30 rounded-lg p-4 text-center">
+                            <Archive className="h-5 w-5 mx-auto mb-2 text-green-500" />
+                            <p className="text-2xl font-bold">{formatBytes(selection.totalSize)}</p>
+                            <p className="text-xs text-muted-foreground">Größe</p>
+                        </div>
+                    </div>
+
+                    <div className="w-full max-w-xs">
+                        <Button
+                            className="w-full"
+                            onClick={handlePreviewDownload}
+                            disabled={downloading}
+                        >
+                            {downloading ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                                <Download className="h-4 w-4 mr-2" />
+                            )}
+                            Auswahl herunterladen
+                        </Button>
+                    </div>
+                </div>
+            );
+        }
+
+        // Folder selected
         if (selectedItem?.type === 'folder') {
             const { info } = selectedItem;
             return (
@@ -267,7 +334,7 @@ export default function ConfigDetailClient({
                         <p className="text-xs text-muted-foreground mb-3">Enthält {info.children.length} Einträge</p>
                         <Button
                             className="w-full"
-                            onClick={handleFolderDownload}
+                            onClick={handlePreviewDownload}
                             disabled={downloading}
                         >
                             {downloading ? (
@@ -282,6 +349,7 @@ export default function ConfigDetailClient({
             );
         }
 
+        // File content
         if (selectedItem?.type === 'file' && fileContent) {
             return (
                 <ScrollArea className="h-full">
@@ -300,6 +368,14 @@ export default function ConfigDetailClient({
                 <p>Wählen Sie eine Datei oder einen Ordner aus</p>
             </div>
         );
+    }
+
+    // Get current preview title
+    function getPreviewTitle() {
+        if (selectedItem?.type === 'file') return selectedItem.path;
+        if (selectedItem?.type === 'folder') return selectedItem.info.path;
+        if (selectedItem?.type === 'multiple') return `${selectedItem.selection.fileCount} Dateien ausgewählt`;
+        return 'Keine Auswahl';
     }
 
     return (
@@ -374,6 +450,7 @@ export default function ConfigDetailClient({
                                         selectedFolder={selectedItem?.type === 'folder' ? selectedItem.info.path : null}
                                         onSelectFile={handleSelectFile}
                                         onSelectFolder={handleSelectFolder}
+                                        onSelectionChange={handleSelectionChange}
                                         onDownload={handleDownload}
                                     />
                                 )}
@@ -386,13 +463,13 @@ export default function ConfigDetailClient({
                                 <div className="flex items-center gap-2 min-w-0 flex-1">
                                     {selectedItem?.type === 'folder' ? (
                                         <Folder className="h-4 w-4 text-amber-500 shrink-0" />
+                                    ) : selectedItem?.type === 'multiple' ? (
+                                        <CheckSquare className="h-4 w-4 text-blue-500 shrink-0" />
                                     ) : (
                                         <Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
                                     )}
                                     <CardTitle className="text-sm font-mono truncate">
-                                        {selectedItem?.type === 'file' ? selectedItem.path :
-                                            selectedItem?.type === 'folder' ? selectedItem.info.path :
-                                                'Keine Auswahl'}
+                                        {getPreviewTitle()}
                                     </CardTitle>
                                 </div>
                                 {selectedItem?.type === 'file' && (
@@ -405,6 +482,7 @@ export default function ConfigDetailClient({
                                             size="sm"
                                             className="h-8"
                                             onClick={() => handleDownload([selectedItem.path])}
+                                            disabled={downloading}
                                         >
                                             <Download className="h-4 w-4" />
                                         </Button>
@@ -457,7 +535,6 @@ export default function ConfigDetailClient({
                 {/* SYSTEM INFO TAB */}
                 <TabsContent value="info" className="flex-1 min-h-0 pt-4 data-[state=inactive]:hidden">
                     <div className="h-full overflow-hidden grid lg:grid-cols-2 gap-6">
-                        {/* Left Column: OS & Network */}
                         <div className="space-y-6 overflow-y-auto pr-2">
                             <Card className="border-muted/60 shadow-sm overflow-hidden">
                                 <CardHeader className="py-4 bg-muted/20 border-b">
@@ -480,10 +557,6 @@ export default function ConfigDetailClient({
                                             <div className="p-4 grid grid-cols-3 gap-2 hover:bg-muted/5 transition-colors">
                                                 <span className="text-sm font-medium text-muted-foreground">Version</span>
                                                 <span className="col-span-2 text-sm">{parsedSysInfo.osRelease.VERSION || 'N/A'}</span>
-                                            </div>
-                                            <div className="p-4 grid grid-cols-3 gap-2 hover:bg-muted/5 transition-colors">
-                                                <span className="text-sm font-medium text-muted-foreground">ID</span>
-                                                <span className="col-span-2 text-sm font-mono text-muted-foreground">{parsedSysInfo.osRelease.ID || 'N/A'}</span>
                                             </div>
                                         </div>
                                     ) : (
@@ -513,7 +586,6 @@ export default function ConfigDetailClient({
                             </Card>
                         </div>
 
-                        {/* Right Column: Storage */}
                         <div className="space-y-6 overflow-y-auto pr-2">
                             <Card className="border-muted/60 shadow-sm overflow-hidden flex flex-col h-full">
                                 <CardHeader className="py-4 bg-muted/20 border-b shrink-0">

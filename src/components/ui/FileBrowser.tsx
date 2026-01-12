@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { File, Folder, FolderOpen, ChevronRight, ChevronDown, Check, Minus, Download } from 'lucide-react';
 import { Button } from './button';
 
@@ -15,6 +15,14 @@ interface FolderInfo {
     fileCount: number;
     totalSize: number;
     children: string[];
+}
+
+interface SelectionInfo {
+    type: 'file' | 'folder' | 'multiple';
+    paths: string[];
+    totalSize: number;
+    fileCount: number;
+    folderCount: number;
 }
 
 function formatBytes(bytes: number): string {
@@ -106,7 +114,7 @@ function TreeNode({
     path: string;
     level?: number;
     selectedFiles: Set<string>;
-    onToggleSelect: (path: string, isFolder: boolean, node: any) => void;
+    onToggleSelect: (path: string, isFolder: boolean, node: any, name: string) => void;
     onOpenFile: (path: string) => void;
     onSelectFolder: (info: FolderInfo, node: any) => void;
     currentFile: string | null;
@@ -141,7 +149,7 @@ function TreeNode({
                 <div
                     className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 cursor-pointer transition-colors ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-muted-foreground/50 group-hover:border-muted-foreground'
                         }`}
-                    onClick={(e) => { e.stopPropagation(); onToggleSelect(node._path, false, node); }}
+                    onClick={(e) => { e.stopPropagation(); onToggleSelect(node._path, false, node, name); }}
                 >
                     {isSelected && <Check className="h-3 w-3 text-white" />}
                 </div>
@@ -175,7 +183,7 @@ function TreeNode({
                         folderSelectionState === 'partial' ? 'bg-blue-500/50 border-blue-500' :
                             'border-muted-foreground/50 group-hover:border-muted-foreground'
                         }`}
-                    onClick={(e) => { e.stopPropagation(); onToggleSelect(path, true, children); }}
+                    onClick={(e) => { e.stopPropagation(); onToggleSelect(path, true, children, name); }}
                 >
                     {folderSelectionState === 'all' && <Check className="h-3 w-3 text-white" />}
                     {folderSelectionState === 'partial' && <Minus className="h-3 w-3 text-white" />}
@@ -236,6 +244,7 @@ export function FileBrowser({
     onSelectFile,
     onDownload,
     onSelectFolder,
+    onSelectionChange,
     selectedFolder
 }: {
     files: FileEntry[];
@@ -243,12 +252,45 @@ export function FileBrowser({
     onSelectFile: (path: string) => void;
     onDownload: (paths: string[]) => void;
     onSelectFolder?: (info: FolderInfo, node: any) => void;
+    onSelectionChange?: (info: SelectionInfo | null) => void;
     selectedFolder?: string | null;
 }) {
     const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
     const tree = useMemo(() => buildTree(files), [files]);
 
-    function handleToggleSelect(path: string, isFolder: boolean, node: any) {
+    // Notify parent when selection changes
+    useEffect(() => {
+        if (!onSelectionChange) return;
+
+        if (selectedPaths.size === 0) {
+            onSelectionChange(null);
+            return;
+        }
+
+        const selectedFiles = files.filter(f => selectedPaths.has(f.path));
+        const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+
+        // Determine if selection includes folders (paths that are prefixes of selected files)
+        const folderPaths = new Set<string>();
+        selectedPaths.forEach(path => {
+            const parts = path.split('/');
+            for (let i = 1; i < parts.length; i++) {
+                folderPaths.add(parts.slice(0, i).join('/'));
+            }
+        });
+
+        const info: SelectionInfo = {
+            type: selectedPaths.size === 1 ? 'file' : 'multiple',
+            paths: Array.from(selectedPaths),
+            totalSize,
+            fileCount: selectedPaths.size,
+            folderCount: folderPaths.size
+        };
+
+        onSelectionChange(info);
+    }, [selectedPaths, files, onSelectionChange]);
+
+    function handleToggleSelect(path: string, isFolder: boolean, node: any, name: string) {
         const newSelected = new Set(selectedPaths);
 
         if (isFolder) {
@@ -280,6 +322,7 @@ export function FileBrowser({
     }
 
     function handleDownload() {
+        if (selectedPaths.size === 0) return;
         onDownload(Array.from(selectedPaths));
     }
 
@@ -292,6 +335,9 @@ export function FileBrowser({
     const selectedSize = files
         .filter(f => selectedPaths.has(f.path))
         .reduce((sum, f) => sum + f.size, 0);
+
+    // Expose selected paths for external use
+    const getSelectedPaths = () => Array.from(selectedPaths);
 
     return (
         <div className="flex flex-col h-full">
@@ -344,4 +390,4 @@ export function FileBrowser({
     );
 }
 
-export type { FolderInfo };
+export type { FolderInfo, SelectionInfo };
