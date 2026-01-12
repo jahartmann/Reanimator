@@ -5,13 +5,13 @@ const path = require('path');
 // Ensure data directory exists
 const dataDir = path.join(process.cwd(), 'data');
 if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(dataDir, { recursive: true });
 }
 
 // Ensure backup directory exists
 const backupDir = path.join(process.cwd(), 'data', 'config-backups');
 if (!fs.existsSync(backupDir)) {
-    fs.mkdirSync(backupDir, { recursive: true });
+  fs.mkdirSync(backupDir, { recursive: true });
 }
 
 const db = new Database(path.join(dataDir, 'proxhost.db'));
@@ -99,23 +99,46 @@ db.exec(`
 
 // Run migrations for existing databases
 try {
-    db.exec(`ALTER TABLE servers ADD COLUMN ssh_host TEXT`);
+  db.exec(`ALTER TABLE servers ADD COLUMN ssh_host TEXT`);
 } catch (e) { /* Column exists */ }
 try {
-    db.exec(`ALTER TABLE servers ADD COLUMN ssh_port INTEGER DEFAULT 22`);
+  db.exec(`ALTER TABLE servers ADD COLUMN ssh_port INTEGER DEFAULT 22`);
 } catch (e) { /* Column exists */ }
 try {
-    db.exec(`ALTER TABLE servers ADD COLUMN ssh_user TEXT DEFAULT 'root'`);
+  db.exec(`ALTER TABLE servers ADD COLUMN ssh_user TEXT DEFAULT 'root'`);
 } catch (e) { /* Column exists */ }
 try {
-    db.exec(`ALTER TABLE servers ADD COLUMN ssh_key TEXT`);
+  db.exec(`ALTER TABLE servers ADD COLUMN ssh_key TEXT`);
 } catch (e) { /* Column exists */ }
 try {
-    db.exec(`ALTER TABLE jobs ADD COLUMN job_type TEXT DEFAULT 'backup'`);
+  db.exec(`ALTER TABLE jobs ADD COLUMN job_type TEXT DEFAULT 'backup'`);
 } catch (e) { /* Column exists */ }
 try {
-    db.exec(`ALTER TABLE servers ADD COLUMN group_name TEXT DEFAULT NULL`);
+  db.exec(`ALTER TABLE servers ADD COLUMN group_name TEXT DEFAULT NULL`);
 } catch (e) { /* Column exists */ }
+
+// Migration tasks table for full server migrations
+db.exec(`
+  CREATE TABLE IF NOT EXISTS migration_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_server_id INTEGER NOT NULL,
+    target_server_id INTEGER NOT NULL,
+    target_storage TEXT NOT NULL,
+    target_bridge TEXT NOT NULL,
+    status TEXT DEFAULT 'pending', -- pending, running, completed, failed, cancelled
+    current_step TEXT,
+    progress INTEGER DEFAULT 0,
+    total_steps INTEGER DEFAULT 0,
+    steps_json TEXT, -- JSON array: [{type, name, vmid?, status, error?}]
+    log TEXT DEFAULT '',
+    error TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(source_server_id) REFERENCES servers(id),
+    FOREIGN KEY(target_server_id) REFERENCES servers(id)
+  );
+`);
 
 console.log('Database migrations completed.');
 db.close();

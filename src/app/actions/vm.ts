@@ -111,50 +111,91 @@ export async function migrateVM(
     let tempTokenSecret = '';
 
     try {
-        // 1. Connect to Target to generate a temporary API Token
-        // This is needed because remote-migrate requires an API endpoint + token
-        await targetSsh.connect();
+        // 1. Connect to both servers
+        await Promise.all([sourceSsh.connect(), targetSsh.connect()]);
+
+        const sourceNode = (await sourceSsh.exec('hostname')).trim();
         const targetNode = (await targetSsh.exec('hostname')).trim();
 
-        // Generate token: pveum user token add root@pam <id> --privsep 0 --output-format json
-        // We grep the value from the output
-        const tokenCmd = `pveum user token add root@pam ${tempTokenId} --privsep 0 --output-format json`;
-        const tokenJson = await targetSsh.exec(tokenCmd);
-        const tokenData = JSON.parse(tokenJson);
-        tempTokenSecret = tokenData.value; // The secret value
+        // 2. Detect if both are in the same cluster
+        // pvecm status returns cluster info; if not in cluster, it fails or returns "not in a cluster"
+        let sameCluster = false;
+        try {
+            const sourceCluster = await sourceSsh.exec('pvecm status 2>/dev/null | grep "Cluster name:" | awk \'{print $3}\'', 5000);
+            const targetCluster = await targetSsh.exec('pvecm status 2>/dev/null | grep "Cluster name:" | awk \'{print $3}\'', 5000);
 
-        // Construct API Token string: root@pam!mig123456=uuid-secret
-        const apiToken = `root@pam!${tempTokenId}=${tempTokenSecret}`;
-
-        // Construct Remote Endpoint
-        // "host=192.168.1.5,apitoken=root@pam!mig...=...,fingerprint=..."
-        const fpCmd = `openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`;
-        const fingerprint = (await targetSsh.exec(fpCmd)).trim();
-
-        // 2. Connect to Source
-        await sourceSsh.connect();
-
-        // 3. Construct Migration Command
-        // qm remote-migrate <vmid> <target-vmid> '<api-endpoint>' --target-bridge <bridge> --target-storage <storage> --online
-        const targetVmid = vmid;
-
-        // API Endpoint string format: 'host=IP,apitoken=TOKEN,fingerprint=FP'
-        const apiEndpoint = `host=${target.ssh_host},apitoken=${apiToken},fingerprint=${fingerprint}`;
-
-        // Command
-        let cmd = '';
-        if (type === 'qemu') {
-            cmd = `/usr/sbin/qm remote-migrate ${vmid} ${targetVmid} '${apiEndpoint}' --target-bridge ${options.targetBridge} --target-storage ${options.targetStorage}`;
-            if (options.online) cmd += ` --online`;
-        } else {
-            // pct remote-migrate <vmid> <target-vmid> '<api-endpoint>' --target-bridge <bridge> --target-storage <storage>
-            cmd = `/usr/sbin/pct remote-migrate ${vmid} ${targetVmid} '${apiEndpoint}' --target-bridge ${options.targetBridge} --target-storage ${options.targetStorage}`;
+            if (sourceCluster.trim() && targetCluster.trim() && sourceCluster.trim() === targetCluster.trim()) {
+                sameCluster = true;
+                console.log(`[Migration] Same cluster detected: ${sourceCluster.trim()}`);
+            }
+        } catch (e) {
+            // Not in a cluster or pvecm not available
+            console.log('[Migration] Cluster detection failed, assuming cross-cluster migration');
         }
 
-        console.log('[Migration] Running:', cmd);
+        let cmd = '';
+        let output = '';
 
-        // Execute (Long timeout)
-        const output = await sourceSsh.exec(cmd, 600 * 1000);
+        if (sameCluster) {
+            // ========== INTRA-CLUSTER MIGRATION ==========
+            // Use standard qm/pct migrate (no need for API tokens)
+            console.log(`[Migration] Using intra-cluster migration to ${targetNode}`);
+
+            if (type === 'qemu') {
+                cmd = `/usr/sbin/qm migrate ${vmid} ${targetNode} --target-storage ${options.targetStorage}`;
+                if (options.online) cmd += ` --online`;
+            } else {
+                cmd = `/usr/sbin/pct migrate ${vmid} ${targetNode} --target-storage ${options.targetStorage}`;
+                if (options.online) cmd += ` --restart`; // LXC uses --restart for live migration
+            }
+
+            console.log('[Migration] Running:', cmd);
+            output = await sourceSsh.exec(cmd, 600 * 1000);
+
+        } else {
+            // ========== CROSS-CLUSTER / STANDALONE MIGRATION ==========
+            // Use qm remote-migrate with API token
+            console.log(`[Migration] Using cross-cluster remote-migrate`);
+
+            // Generate temporary API Token on Target
+            const tokenCmd = `pveum user token add root@pam ${tempTokenId} --privsep 0 --output-format json`;
+            const tokenJson = await targetSsh.exec(tokenCmd);
+            const tokenData = JSON.parse(tokenJson);
+            tempTokenSecret = tokenData.value;
+
+            const apiToken = `root@pam!${tempTokenId}=${tempTokenSecret}`;
+
+            // Get SSL Fingerprint
+            const fpCmd = `openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`;
+            const fingerprint = (await targetSsh.exec(fpCmd)).trim();
+
+            // Check if VMID is free on target, if not, get next available VMID
+            let targetVmid = vmid;
+            try {
+                const checkCmd = `pvesh get /cluster/resources --type vm 2>/dev/null | grep -q '"vmid":${vmid}' && echo "exists" || echo "free"`;
+                const checkResult = (await targetSsh.exec(checkCmd, 5000)).trim();
+                if (checkResult === 'exists') {
+                    // Get next free VMID
+                    const nextIdCmd = `pvesh get /cluster/nextid`;
+                    targetVmid = (await targetSsh.exec(nextIdCmd, 5000)).trim();
+                    console.log(`[Migration] VMID ${vmid} exists on target, using ${targetVmid} instead`);
+                }
+            } catch (e) {
+                console.log('[Migration] Could not check VMID availability, using same VMID');
+            }
+
+            const apiEndpoint = `host=${target.ssh_host},apitoken=${apiToken},fingerprint=${fingerprint}`;
+
+            if (type === 'qemu') {
+                cmd = `/usr/sbin/qm remote-migrate ${vmid} ${targetVmid} '${apiEndpoint}' --target-bridge ${options.targetBridge} --target-storage ${options.targetStorage}`;
+                if (options.online) cmd += ` --online`;
+            } else {
+                cmd = `/usr/sbin/pct remote-migrate ${vmid} ${targetVmid} '${apiEndpoint}' --target-bridge ${options.targetBridge} --target-storage ${options.targetStorage}`;
+            }
+
+            console.log('[Migration] Running:', cmd);
+            output = await sourceSsh.exec(cmd, 600 * 1000);
+        }
 
         return { success: true, message: output };
 
@@ -162,7 +203,7 @@ export async function migrateVM(
         console.error('[Migration] Failed:', e);
         return { success: false, message: String(e) };
     } finally {
-        // Cleanup Token on Target
+        // Cleanup Token on Target (only for cross-cluster)
         try {
             if (tempTokenSecret) {
                 await targetSsh.exec(`pveum user token delete root@pam ${tempTokenId}`);
