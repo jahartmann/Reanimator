@@ -81,12 +81,3 @@ export async function deleteScheduledJob(jobId: number): Promise<{ success: bool
     return { success: true };
 }
 
-// Common schedule presets
-export const schedulePresets = [
-    { label: 'Täglich um 02:00', value: '0 2 * * *' },
-    { label: 'Täglich um 04:00', value: '0 4 * * *' },
-    { label: 'Wöchentlich (Sonntag 03:00)', value: '0 3 * * 0' },
-    { label: 'Monatlich (1. um 03:00)', value: '0 3 1 * *' },
-    { label: 'Alle 6 Stunden', value: '0 */6 * * *' },
-    { label: 'Alle 12 Stunden', value: '0 */12 * * *' },
-];

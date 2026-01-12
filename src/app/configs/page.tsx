@@ -29,24 +29,16 @@ export default function ConfigsPage() {
     const servers = db.prepare('SELECT * FROM servers ORDER BY group_name, name').all() as ServerItem[];
     const allBackups = db.prepare('SELECT * FROM config_backups ORDER BY backup_date DESC').all() as ConfigBackup[];
 
-    // Debug logging
-    console.log('[ConfigsPage] DB Servers type:', typeof servers, Array.isArray(servers));
-    console.log('[ConfigsPage] DB Backups type:', typeof allBackups, Array.isArray(allBackups));
-
-    // Ensure arrays
-    const safelyServers = Array.isArray(servers) ? servers : [];
-    const safelyBackups = Array.isArray(allBackups) ? allBackups : [];
-
     // Get unique groups
     const groups = [...new Set(
-        safelyServers
+        servers
             .map(s => s.group_name)
             .filter((g): g is string => g !== null && g !== undefined && g.trim() !== '')
     )].sort();
 
     // Group backups by server
     const backupsByServer: Record<number, ConfigBackup[]> = {};
-    for (const backup of safelyBackups) {
+    for (const backup of allBackups) {
         if (!backupsByServer[backup.server_id]) {
             backupsByServer[backup.server_id] = [];
         }
@@ -54,7 +46,7 @@ export default function ConfigsPage() {
     }
 
     // Server list for schedule manager
-    const serverList = safelyServers.map(s => ({ id: s.id, name: s.name }));
+    const serverList = servers.map(s => ({ id: s.id, name: s.name }));
 
     return (
         <div className="space-y-6">
