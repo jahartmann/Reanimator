@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, Server, Network, HardDrive, Cpu, Wifi, WifiOff, Clock, Gauge, Activity, Database, Box } from "lucide-react";
 import { createSSHClient } from '@/lib/ssh';
 import { ServerVisualization } from '@/components/ui/ServerVisualization';
+import { getVMs } from '@/app/actions/vm';
+import { VirtualMachineList } from '@/components/vm/VirtualMachineList';
 
 export const dynamic = 'force-dynamic';
 
@@ -461,7 +463,12 @@ export default async function ServerDetailPage({
         );
     }
 
-    const info = await getServerInfo(server);
+    const [info, vms] = await Promise.all([
+        getServerInfo(server),
+        getVMs(serverId)
+    ]);
+
+    const otherServers = db.prepare('SELECT id, name FROM servers WHERE id != ?').all(serverId) as { id: number; name: string }[];
 
     return (
         <div className="space-y-8">
@@ -630,6 +637,15 @@ export default async function ServerDetailPage({
                                 )}
                             </CardContent>
                         </Card>
+
+                        {/* Virtual Machines */}
+                        <div className="lg:col-span-2">
+                            <VirtualMachineList
+                                vms={vms}
+                                currentServerId={serverId}
+                                otherServers={otherServers}
+                            />
+                        </div>
 
                         {/* Storage Pools */}
                         {info.pools.length > 0 && (

@@ -299,6 +299,9 @@ export class SSHClient {
             });
         });
     }
+    async disconnect(): Promise<void> {
+        this.client.end();
+    }
 }
 
 // Helper to create SSH client from server config
