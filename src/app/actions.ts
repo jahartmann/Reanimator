@@ -53,10 +53,59 @@ export async function addServer(formData: FormData) {
         }
     }
 
-    db.prepare(`
-        INSERT INTO servers (name, type, url, auth_token, ssl_fingerprint, ssh_host, ssh_port, ssh_user, ssh_key, status, group_name) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(name, type, url, token, ssl_fingerprint, ssh_host, ssh_port, ssh_user, ssh_password, 'unknown', group_name);
+    // Cluster Import
+    const import_cluster = formData.get('import_cluster') === 'on';
+    const cluster_nodes_json = formData.get('cluster_nodes_json') as string;
+
+    if (import_cluster && cluster_nodes_json) {
+        try {
+            const nodes = JSON.parse(cluster_nodes_json) as { name: string; ip: string }[];
+            console.log(`[AddServer] Bulk importing ${nodes.length} cluster nodes...`);
+
+            const insertStmt = db.prepare(`
+                INSERT INTO servers (name, type, url, auth_token, ssl_fingerprint, ssh_host, ssh_port, ssh_user, ssh_key, status, group_name) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+
+            const runTransaction = db.transaction((nodes: { name: string; ip: string }[]) => {
+                for (const node of nodes) {
+                    // Use the IP for SSH and URL construction
+                    const nodeUrl = `https://${node.ip}:8006`;
+
+                    // Allow overwrite of existing if exact match on SSH Host/Name? 
+                    // For now, naive insert. Unique constraint on name might exist? 
+                    // Schema doesn't enforce unique name strictly usually but nice to have.
+                    // We'll just insert.
+
+                    insertStmt.run(
+                        node.name, // Name matches detected node name
+                        type,
+                        nodeUrl,
+                        token,
+                        ssl_fingerprint,
+                        node.ip, // SSH Host = Cluster IP
+                        ssh_port,
+                        ssh_user,
+                        ssh_password,
+                        'unknown',
+                        group_name
+                    );
+                }
+            });
+
+            runTransaction(nodes);
+
+        } catch (e) {
+            console.error('Failed to import cluster nodes', e);
+            throw new Error('Cluster import failed: ' + String(e));
+        }
+    } else {
+        // Standard Single Server Add
+        db.prepare(`
+            INSERT INTO servers (name, type, url, auth_token, ssl_fingerprint, ssh_host, ssh_port, ssh_user, ssh_key, status, group_name) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(name, type, url, token, ssl_fingerprint, ssh_host, ssh_port, ssh_user, ssh_password, 'unknown', group_name);
+    }
 
     revalidatePath('/servers');
     redirect('/servers');
@@ -175,12 +224,37 @@ export async function testSSHConnection(formData: FormData) {
             console.warn('Could not fetch fingerprint during test:', e);
         }
 
+        // Detect Cluster Nodes
+        let clusterNodes: { name: string; ip: string }[] = [];
+        try {
+            const membersJson = await client.exec('cat /etc/pve/.members');
+            const members = JSON.parse(membersJson);
+            if (members && members.nodename) {
+                // Determine the current node name (we already did hostname check implicitly or can get it)
+                // Actually, .members lists all nodes.
+                // We want to return ALL nodes so the user can see the full cluster.
+                // The structure is { "nodename": { "ip": "...", ... }, ... }
+                for (const [name, data] of Object.entries(members.nodename)) {
+                    if (typeof data === 'object' && data !== null && 'ip' in data) {
+                        clusterNodes.push({ name, ip: (data as any).ip });
+                    }
+                }
+            }
+        } catch (e) {
+            // Not a cluster or permission denied
+        }
+
         await client.disconnect();
+
+        let message = 'SSH Verbindung erfolgreich';
+        if (fingerprint) message += ' + Fingerprint geladen';
+        if (clusterNodes.length > 1) message += ` + ${clusterNodes.length} Cluster-Nodes gefunden`;
 
         return {
             success: true,
-            message: fingerprint ? 'SSH Verbindung erfolgreich + Fingerprint geladen' : 'SSH Verbindung erfolgreich',
-            fingerprint
+            message,
+            fingerprint,
+            clusterNodes
         };
     } catch (err) {
         return { success: false, message: `SSH Fehler: ${err instanceof Error ? err.message : String(err)}` };

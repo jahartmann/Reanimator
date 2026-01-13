@@ -16,7 +16,12 @@ export default function NewServerForm({ existingGroups }: NewServerFormProps) {
     const [sshStatus, setSSHStatus] = useState<'none' | 'success' | 'error'>('none');
     const [sshMessage, setSSHMessage] = useState('');
     const [tokenStatus, setTokenStatus] = useState<'none' | 'success' | 'error'>('none');
+    const [tokenStatus, setTokenStatus] = useState<'none' | 'success' | 'error'>('none');
     const [tokenMessage, setTokenMessage] = useState('');
+
+    // Cluster Import State
+    const [detectedNodes, setDetectedNodes] = useState<{ name: string; ip: string }[]>([]);
+    const [importCluster, setImportCluster] = useState(true);
 
     // Proxmox Auth State for Token Gen
     const [pmUser, setPmUser] = useState('root@pam');
@@ -35,6 +40,20 @@ export default function NewServerForm({ existingGroups }: NewServerFormProps) {
 
         setSSHStatus(res.success ? 'success' : 'error');
         setSSHMessage(res.message);
+
+        if (res.success) {
+            if (res.fingerprint) {
+                const fpInput = document.getElementById('token') as unknown as { form: HTMLFormElement };
+                // Wait, need to target the fingerprint input by ID.
+                // Re-using logic from previous step, but ensuring I don't break valid logic.
+                const fpInputEl = document.getElementById('ssl_fingerprint') as HTMLInputElement;
+                if (fpInputEl) fpInputEl.value = res.fingerprint;
+            }
+            if (res.clusterNodes && res.clusterNodes.length > 0) {
+                setDetectedNodes(res.clusterNodes);
+                setImportCluster(true);
+            }
+        }
 
         if (res.success && res.fingerprint) {
             const fpInput = document.getElementById('ssl_fingerprint') as HTMLInputElement;
@@ -246,14 +265,58 @@ export default function NewServerForm({ existingGroups }: NewServerFormProps) {
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="grid gap-2">
-                                    <label htmlFor="ssh_host" className="text-sm font-medium">SSH Host</label>
-                                    <Input id="ssh_host" name="ssh_host" placeholder="Leer = aus URL" />
-                                </div>
-                                <div className="grid gap-2">
-                                    <label htmlFor="ssh_port" className="text-sm font-medium">SSH Port</label>
                                     <Input id="ssh_port" name="ssh_port" type="number" defaultValue="22" />
                                 </div>
                             </div>
+
+                            {/* Detected Cluster Nodes Info */}
+                            {detectedNodes.length > 1 && (
+                                <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg space-y-3">
+                                    <div className="flex items-start gap-3">
+                                        <div className="p-2 bg-blue-500/20 rounded-full text-blue-500">
+                                            <Network className="h-4 w-4" />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <h4 className="font-medium text-sm text-blue-500">Proxmox Cluster Erkannt</h4>
+                                            <p className="text-xs text-muted-foreground">
+                                                Es wurden {detectedNodes.length} Nodes im Cluster gefunden.
+                                                Möchten Sie alle Nodes auf einmal importieren?
+                                            </p>
+
+                                            <div className="flex items-center gap-2 mt-2">
+                                                <input
+                                                    type="checkbox"
+                                                    id="import_cluster"
+                                                    name="import_cluster"
+                                                    className="h-4 w-4 rounded border-gray-300"
+                                                    checked={importCluster}
+                                                    onChange={(e) => setImportCluster(e.target.checked)}
+                                                />
+                                                <label htmlFor="import_cluster" className="text-sm font-medium cursor-pointer">
+                                                    Ja, alle {detectedNodes.length} Cluster-Nodes importieren
+                                                </label>
+                                            </div>
+
+                                            {importCluster && (
+                                                <div className="mt-2 text-xs font-mono bg-background/50 p-2 rounded max-h-[100px] overflow-y-auto">
+                                                    {detectedNodes.map(n => (
+                                                        <div key={n.name} className="flex justify-between">
+                                                            <span>{n.name}</span>
+                                                            <span className="text-muted-foreground">{n.ip}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+
+                                            <input type="hidden" name="cluster_nodes_json" value={JSON.stringify(detectedNodes)} />
+                                        </div>
+                                    </div>
+                                    <p className="text-[10px] text-muted-foreground pl-11">
+                                        Hinweis: Es wird für alle Nodes der gleiche API-Token und SSH-Nutzer verwendet.
+                                        Stellen Sie sicher, dass der Token "Cluster-weit" gültig ist (Standard).
+                                    </p>
+                                </div>
+                            )}
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="grid gap-2">

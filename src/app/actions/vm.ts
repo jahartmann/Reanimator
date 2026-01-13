@@ -1,7 +1,9 @@
 'use server';
 
-import { createSSHClient } from '@/lib/ssh';
+import { createSSHClient, SSHClient } from '@/lib/ssh';
 import db from '@/lib/db';
+
+// --- Interfaces ---
 
 export interface VirtualMachine {
     vmid: string;
@@ -12,9 +14,8 @@ export interface VirtualMachine {
     memory?: number;
     uptime?: number;
     tags?: string[];
-    // New: Network and Storage info for mapping display
-    networks?: string[];   // e.g., ['vmbr0', 'vmbr1']
-    storages?: string[];   // e.g., ['local-lvm', 'nas-storage']
+    networks?: string[];
+    storages?: string[];
 }
 
 export interface MigrationOptions {
@@ -495,8 +496,48 @@ export async function migrateVM(
 
             // Execute migration command
             console.log('[Migration] Executing:', migrateCmd.replace(cleanToken, '***'));
+            // Execute migration command
+            console.log('[Migration] Executing:', migrateCmd.replace(cleanToken, '***'));
             const upid = (await sourceSsh.exec(migrateCmd)).trim();
-            // ...
+            console.log(`[Migration] Task started with UPID: ${upid}`);
+
+            // Poll for completion
+            let status = 'running';
+            let exitStatus = '';
+
+            while (status === 'running') {
+                await new Promise(r => setTimeout(r, 2000));
+                // Use sourceSsh since the task is on the source node (remote_migrate)
+                const checkCmd = `pvesh get /nodes/${sourceNode}/tasks/${upid}/status --output-format json`;
+                try {
+                    const resJson = await sourceSsh.exec(checkCmd);
+                    const res = JSON.parse(resJson);
+                    status = res.status; // 'running' or 'stopped'
+                    exitStatus = res.exitstatus;
+                    if (status !== 'running') {
+                        console.log(`[Migration] Task finished: ${status}, Exit: ${exitStatus}`);
+                    }
+                } catch (e) {
+                    console.warn('[Migration] Failed to poll status, retrying...', e);
+                }
+            }
+
+            if (exitStatus !== 'OK') {
+                // Fetch log errors
+                let errorLog = `Migration failed with exit status: ${exitStatus}`;
+                try {
+                    const logCmd = `pvesh get /nodes/${sourceNode}/tasks/${upid}/log --output-format json`; // limit?
+                    const logsJson = await sourceSsh.exec(logCmd);
+                    const logs = JSON.parse(logsJson);
+                    // Find last few lines
+                    errorLog += '\nRecent Logs:\n' + logs.slice(-10).map((l: any) => l.t).join('\n');
+                } catch (e) {
+                    errorLog += ' (Could not fetch detailed logs)';
+                }
+                throw new Error(errorLog);
+            }
+
+            output = 'Migration completed successfully (UPID: ' + upid + ')';
         }
 
         return { success: true, message: output };
