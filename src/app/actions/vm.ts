@@ -116,7 +116,7 @@ async function migrateLocal(ctx: MigrationContext): Promise<string> {
 }
 
 async function migrateRemote(ctx: MigrationContext): Promise<string> {
-    const { sourceSsh, targetSsh, target, type, vmid, options, onLog } = ctx;
+    const { sourceSsh, targetSsh, target, type, vmid, options, onLog, sourceNode } = ctx;
     const log = (msg: string) => { console.log(msg); if (onLog) onLog(msg); };
 
     // 1. Validate Token
