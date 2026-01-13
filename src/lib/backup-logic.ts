@@ -307,9 +307,11 @@ export async function restoreFileToRemote(serverId: number, backupId: number, re
     await ssh.connect();
 
     try {
-        await ssh.uploadFile(localPath, normalized);
+        // CRITICAL: Use absolute path on remote (must start with /)
+        const remotePath = '/' + normalized;
+        await ssh.uploadFile(localPath, remotePath);
         ssh.disconnect();
-        return { success: true, message: `Datei wiederhergestellt: ${normalized}` };
+        return { success: true, message: `Datei wiederhergestellt: ${remotePath}` };
     } catch (e) {
         ssh.disconnect();
         throw e;

@@ -12,6 +12,9 @@ export interface VirtualMachine {
     memory?: number;
     uptime?: number;
     tags?: string[];
+    // New: Network and Storage info for mapping display
+    networks?: string[];   // e.g., ['vmbr0', 'vmbr1']
+    storages?: string[];   // e.g., ['local-lvm', 'nas-storage']
 }
 
 export interface MigrationOptions {
@@ -54,27 +57,80 @@ export async function getVMs(serverId: number): Promise<VirtualMachine[]> {
         const qemuList = JSON.parse(qemuJson);
         const lxcList = JSON.parse(lxcJson);
 
+        // Helper to extract networks and storages from VM config
+        const extractResources = (config: any) => {
+            const networks: string[] = [];
+            const storages: string[] = [];
+
+            for (const [key, val] of Object.entries(config)) {
+                // Network interfaces: net0, net1, etc.
+                if (/^net\d+$/.test(key) && typeof val === 'string') {
+                    const bridgeMatch = val.match(/bridge=([^,\s]+)/);
+                    if (bridgeMatch) networks.push(bridgeMatch[1]);
+                }
+                // Storage: scsi0, sata0, virtio0, ide0, rootfs, mp0-mp9
+                if (/^(scsi|sata|virtio|ide|efidisk|rootfs|mp)\d*$/.test(key) && typeof val === 'string') {
+                    const storageMatch = val.match(/^([^:]+):/);
+                    if (storageMatch) storages.push(storageMatch[1]);
+                }
+            }
+            return { networks: [...new Set(networks)], storages: [...new Set(storages)] };
+        };
+
+        // Fetch configs for all VMs in parallel (batched)
+        const allVmIds = [
+            ...qemuList.map((v: any) => ({ vmid: v.vmid, type: 'qemu' })),
+            ...lxcList.map((v: any) => ({ vmid: v.vmid, type: 'lxc' }))
+        ];
+
+        const configPromises = allVmIds.map(async (vm) => {
+            try {
+                const cmd = vm.type === 'qemu'
+                    ? `pvesh get /nodes/${nodeName}/qemu/${vm.vmid}/config --output-format json 2>/dev/null || echo "{}"`
+                    : `pvesh get /nodes/${nodeName}/lxc/${vm.vmid}/config --output-format json 2>/dev/null || echo "{}"`;
+                const raw = await ssh.exec(cmd);
+                return { vmid: vm.vmid, config: JSON.parse(raw) };
+            } catch {
+                return { vmid: vm.vmid, config: {} };
+            }
+        });
+
+        const configs = await Promise.all(configPromises);
+        const configMap = new Map(configs.map(c => [c.vmid.toString(), c.config]));
+
         const vms: VirtualMachine[] = [
-            ...qemuList.map((vm: any) => ({
-                vmid: vm.vmid,
-                name: vm.name,
-                status: vm.status,
-                type: 'qemu',
-                cpus: vm.cpus,
-                memory: vm.maxmem, // maxmem is usually what we see as "Memory"
-                uptime: vm.uptime,
-                tags: vm.tags ? vm.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : []
-            })),
-            ...lxcList.map((lxc: any) => ({
-                vmid: lxc.vmid,
-                name: lxc.name,
-                status: lxc.status,
-                type: 'lxc',
-                cpus: lxc.cpus,
-                memory: lxc.maxmem,
-                uptime: lxc.uptime,
-                tags: lxc.tags ? lxc.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : []
-            }))
+            ...qemuList.map((vm: any) => {
+                const cfg = configMap.get(vm.vmid.toString()) || {};
+                const { networks, storages } = extractResources(cfg);
+                return {
+                    vmid: vm.vmid,
+                    name: vm.name,
+                    status: vm.status,
+                    type: 'qemu' as const,
+                    cpus: vm.cpus,
+                    memory: vm.maxmem,
+                    uptime: vm.uptime,
+                    tags: vm.tags ? vm.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : [],
+                    networks,
+                    storages
+                };
+            }),
+            ...lxcList.map((lxc: any) => {
+                const cfg = configMap.get(lxc.vmid.toString()) || {};
+                const { networks, storages } = extractResources(cfg);
+                return {
+                    vmid: lxc.vmid,
+                    name: lxc.name,
+                    status: lxc.status,
+                    type: 'lxc' as const,
+                    cpus: lxc.cpus,
+                    memory: lxc.maxmem,
+                    uptime: lxc.uptime,
+                    tags: lxc.tags ? lxc.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : [],
+                    networks,
+                    storages
+                };
+            })
         ];
 
         // Sort by VMID
@@ -142,13 +198,17 @@ export async function migrateVM(
         if (sameCluster) {
             // ========== INTRA-CLUSTER MIGRATION ==========
             // Use standard qm/pct migrate (no need for API tokens)
+            // VMID stays the same within cluster - just move to different node
             console.log(`[Migration] Using intra-cluster migration to ${targetNode}`);
 
+            // Build storage mapping if specified
+            const storageFlag = options.targetStorage ? `--target-storage ${options.targetStorage}` : '';
+
             if (type === 'qemu') {
-                cmd = `/usr/sbin/qm migrate ${vmid} ${targetNode} --target-storage ${options.targetStorage}`;
+                cmd = `/usr/sbin/qm migrate ${vmid} ${targetNode} ${storageFlag}`;
                 if (options.online) cmd += ` --online`;
             } else {
-                cmd = `/usr/sbin/pct migrate ${vmid} ${targetNode} --target-storage ${options.targetStorage}`;
+                cmd = `/usr/sbin/pct migrate ${vmid} ${targetNode} ${storageFlag}`;
                 if (options.online) cmd += ` --restart`; // LXC uses --restart for live migration
             }
 

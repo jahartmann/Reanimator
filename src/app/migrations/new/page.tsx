@@ -182,9 +182,42 @@ export default function NewMigrationPage() {
                                                         Lade VMs...
                                                     </div>
                                                 ) : (
-                                                    <div className="text-sm">
-                                                        <p>{vms.filter(v => v.type === 'qemu').length} VMs</p>
-                                                        <p>{vms.filter(v => v.type === 'lxc').length} LXC Container</p>
+                                                    <div className="text-sm space-y-3">
+                                                        <div className="flex gap-4">
+                                                            <span>{vms.filter(v => v.type === 'qemu').length} VMs</span>
+                                                            <span>{vms.filter(v => v.type === 'lxc').length} LXC Container</span>
+                                                        </div>
+
+                                                        {/* VM Details Table */}
+                                                        <div className="max-h-48 overflow-y-auto border rounded-md">
+                                                            <table className="w-full text-xs">
+                                                                <thead className="bg-muted sticky top-0">
+                                                                    <tr>
+                                                                        <th className="text-left p-2">ID</th>
+                                                                        <th className="text-left p-2">Name</th>
+                                                                        <th className="text-left p-2">Netzwerk</th>
+                                                                        <th className="text-left p-2">Storage</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    {vms.slice(0, 20).map(vm => (
+                                                                        <tr key={vm.vmid} className="border-t">
+                                                                            <td className="p-2 font-mono">{vm.vmid}</td>
+                                                                            <td className="p-2">{vm.name || '-'}</td>
+                                                                            <td className="p-2">
+                                                                                {vm.networks?.length ? vm.networks.join(', ') : <span className="text-muted-foreground">-</span>}
+                                                                            </td>
+                                                                            <td className="p-2">
+                                                                                {vm.storages?.length ? vm.storages.join(', ') : <span className="text-muted-foreground">-</span>}
+                                                                            </td>
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
+                                                            {vms.length > 20 && (
+                                                                <p className="text-center text-muted-foreground text-xs p-2">+{vms.length - 20} weitere</p>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 )}
                                             </div>

@@ -286,23 +286,64 @@ export default function ConfigDetailClient({
         }
     }
 
-    async function handleRestore() {
-        if (selectedItem?.type !== 'file' || !confirm(`Datei "${selectedItem.path}" auf dem Server wiederherstellen?`)) return;
+    async function handleRestore(paths?: string[]) {
+        // Determine which paths to restore
+        let pathsToRestore: string[] = [];
+        if (paths) {
+            pathsToRestore = paths;
+        } else if (selectedItem?.type === 'file') {
+            pathsToRestore = [selectedItem.path];
+        } else if (selectedItem?.type === 'folder') {
+            // Collect all files from folder
+            const collectPaths = (node: any, basePath: string): string[] => {
+                const children = Object.entries(node).filter(([k]) => !k.startsWith('_'));
+                const paths: string[] = [];
+                for (const [key, child] of children) {
+                    const c = child as any;
+                    if (c._file) {
+                        paths.push(c._path);
+                    } else {
+                        paths.push(...collectPaths(c, `${basePath}/${key}`));
+                    }
+                }
+                return paths;
+            };
+            pathsToRestore = collectPaths(selectedItem.node, selectedItem.info.path);
+        } else if (selectedItem?.type === 'multiple') {
+            pathsToRestore = selectedItem.selection.paths;
+        }
+
+        if (pathsToRestore.length === 0) return;
+
+        const confirmMsg = pathsToRestore.length === 1
+            ? `Datei "${pathsToRestore[0]}" auf dem Server wiederherstellen?`
+            : `${pathsToRestore.length} Dateien auf dem Server wiederherstellen?`;
+
+        if (!confirm(confirmMsg)) return;
 
         setRestoring(true);
-        try {
-            const res = await fetch(`/api/config-backups/${backupId}/restore`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filePath: selectedItem.path })
-            });
-            const result = await res.json();
-            alert(result.message);
-        } catch {
-            alert('Restore fehlgeschlagen');
+        const results: string[] = [];
+        let successCount = 0;
+
+        for (const filePath of pathsToRestore) {
+            try {
+                const res = await fetch(`/api/config-backups/${backupId}/restore`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filePath })
+                });
+                const result = await res.json();
+                if (result.success) successCount++;
+                results.push(`${filePath}: ${result.success ? '✓' : result.message}`);
+            } catch (e) {
+                results.push(`${filePath}: Fehler`);
+            }
         }
+
+        alert(`Restore abgeschlossen: ${successCount}/${pathsToRestore.length} erfolgreich`);
         setRestoring(false);
     }
+
 
     function handleCopy() {
         if (fileContent) {
@@ -348,7 +389,7 @@ export default function ConfigDetailClient({
                         </div>
                     </div>
 
-                    <div className="w-full max-w-xs">
+                    <div className="w-full max-w-xs space-y-2">
                         <Button
                             className="w-full"
                             onClick={handlePreviewDownload}
@@ -360,6 +401,19 @@ export default function ConfigDetailClient({
                                 <Download className="h-4 w-4 mr-2" />
                             )}
                             Auswahl herunterladen
+                        </Button>
+                        <Button
+                            className="w-full"
+                            variant="outline"
+                            onClick={() => handleRestore()}
+                            disabled={restoring}
+                        >
+                            {restoring ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                                <Upload className="h-4 w-4 mr-2" />
+                            )}
+                            Auswahl wiederherstellen
                         </Button>
                     </div>
                 </div>
@@ -390,7 +444,7 @@ export default function ConfigDetailClient({
                         </div>
                     </div>
 
-                    <div className="w-full max-w-xs">
+                    <div className="w-full max-w-xs space-y-2">
                         <p className="text-xs text-muted-foreground mb-3">Enthält {info.children.length} Einträge</p>
                         <Button
                             className="w-full"
@@ -403,6 +457,19 @@ export default function ConfigDetailClient({
                                 <Download className="h-4 w-4 mr-2" />
                             )}
                             Ordner herunterladen
+                        </Button>
+                        <Button
+                            className="w-full"
+                            variant="outline"
+                            onClick={() => handleRestore()}
+                            disabled={restoring}
+                        >
+                            {restoring ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                                <Upload className="h-4 w-4 mr-2" />
+                            )}
+                            Ordner wiederherstellen
                         </Button>
                     </div>
                 </div>
@@ -547,7 +614,7 @@ export default function ConfigDetailClient({
                                             <Download className="h-4 w-4" />
                                         </Button>
                                         <Separator orientation="vertical" className="h-4 self-center" />
-                                        <Button variant="outline" size="sm" className="h-8 shadow-none" onClick={handleRestore} disabled={restoring}>
+                                        <Button variant="outline" size="sm" className="h-8 shadow-none" onClick={() => handleRestore()} disabled={restoring}>
                                             {restoring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
                                             <span className="ml-2">Restore</span>
                                         </Button>
