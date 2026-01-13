@@ -102,138 +102,90 @@ export function TaskManager() {
         }
     };
 
-    // Floating dock for active tasks
-    const ActiveTasksDock = () => {
-        if (tasks.length === 0) return null;
-
-        return (
-            <div className="fixed bottom-4 right-4 z-50 w-80">
-                <Card className="shadow-2xl border-2 overflow-hidden">
-                    {/* Header */}
-                    <div
-                        className="flex items-center justify-between px-3 py-2 bg-primary text-primary-foreground cursor-pointer"
-                        onClick={() => setMinimized(!minimized)}
-                    >
-                        <div className="flex items-center gap-2">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            <span className="font-medium text-sm">
-                                {tasks.length} aktive Task{tasks.length !== 1 ? 's' : ''}
-                            </span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 text-primary-foreground hover:bg-primary-foreground/20"
-                                onClick={(e) => { e.stopPropagation(); setShowAll(true); }}
-                                title="Alle Tasks anzeigen"
-                            >
-                                <ListTodo className="h-3 w-3" />
-                            </Button>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 text-primary-foreground hover:bg-primary-foreground/20"
-                                onClick={(e) => { e.stopPropagation(); setMinimized(!minimized); }}
-                            >
-                                {minimized ? <Maximize2 className="h-3 w-3" /> : <Minimize2 className="h-3 w-3" />}
+    // Sidebar Trigger Button
+    const SidebarTrigger = () => (
+        <div className="relative">
+            {/* Popover Panels */}
+            {showAll && (
+                <div className="absolute left-full bottom-0 ml-4 w-96 z-50 animate-in fade-in slide-in-from-left-5">
+                    <Card className="shadow-2xl border bg-card/95 backdrop-blur-sm p-0 overflow-hidden flex flex-col max-h-[80vh]">
+                        <div className="p-3 border-b flex items-center justify-between bg-muted/50">
+                            <h3 className="font-semibold flex items-center gap-2 text-sm">
+                                <ListTodo className="h-4 w-4" />
+                                Alle Tasks
+                            </h3>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowAll(false)}>
+                                <Minimize2 className="h-3 w-3" />
                             </Button>
                         </div>
-                    </div>
+                        <div className="overflow-y-auto p-2 space-y-2">
+                            {allTasks.length === 0 ? <div className="p-4 text-center text-xs text-muted-foreground">Keine Tasks</div> : (
+                                allTasks.map(task => (
+                                    <div key={task.id} className="text-xs border rounded p-2 hover:bg-muted/50 cursor-pointer" onClick={() => setSelectedTask(task)}>
+                                        <div className="flex justify-between mb-1">
+                                            <span className="font-medium">{task.type}</span>
+                                            <Badge variant="outline" className="text-[10px] h-4">{task.status}</Badge>
+                                        </div>
+                                        <div className="text-muted-foreground truncate">{task.source} → {task.target}</div>
+                                        <Progress value={task.progress} className="h-1 mt-2" />
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </Card>
+                </div>
+            )}
 
-                    {/* Task List */}
-                    {!minimized && (
+            {(tasks.length > 0 && !minimized) && (
+                <div className="absolute left-full bottom-0 ml-4 w-80 z-50 animate-in fade-in slide-in-from-left-5 mb-2">
+                    <Card className="shadow-2xl border bg-card/95 backdrop-blur-sm overflow-hidden">
+                        <div className="p-3 border-b flex items-center justify-between bg-primary/10">
+                            <div className="flex items-center gap-2 text-primary font-medium text-sm">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                {tasks.length} Laufend
+                            </div>
+                            <div className="flex gap-1">
+                                <Button size="icon" variant="ghost" className="h-6 w-6" title="Verlauf" onClick={() => { setShowAll(!showAll); setMinimized(true); }}>
+                                    <ListTodo className="h-3 w-3" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setMinimized(true)}>
+                                    <Minimize2 className="h-3 w-3" />
+                                </Button>
+                            </div>
+                        </div>
                         <div className="max-h-64 overflow-y-auto">
                             {tasks.map(task => (
-                                <div
-                                    key={task.id}
-                                    className="border-t p-3 space-y-2 hover:bg-muted/50 cursor-pointer"
-                                    onClick={() => setSelectedTask(task)}
-                                >
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <Badge variant="default" className="text-[10px]">
-                                                {task.type}
-                                            </Badge>
-                                            <span className="text-xs text-muted-foreground">
-                                                {task.source} <ArrowRight className="inline h-3 w-3" /> {task.target}
-                                            </span>
-                                        </div>
+                                <div key={task.id} className="border-b last:border-0 p-3 hover:bg-muted/50 cursor-pointer" onClick={() => setSelectedTask(task)}>
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div className="text-xs font-medium">{task.type}</div>
+                                        <div className="text-[10px] text-muted-foreground">{task.progress}%</div>
                                     </div>
-                                    <div className="space-y-1">
-                                        <Progress value={task.progress} className="h-1.5" />
-                                        <div className="flex justify-between text-[10px] text-muted-foreground">
-                                            <span>Schritt {task.currentStep}/{task.totalSteps}</span>
-                                            <span>{task.progress}%</span>
-                                        </div>
+                                    <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                                        {task.source} <ArrowRight className="h-3 w-3" /> {task.target}
                                     </div>
+                                    <Progress value={task.progress} className="h-1.5" />
                                 </div>
                             ))}
                         </div>
-                    )}
-                </Card>
-            </div>
-        );
-    };
+                    </Card>
+                </div>
+            )}
 
-    // Full Task History Dialog
-    const TaskHistoryDialog = () => (
-        <Dialog open={showAll} onOpenChange={setShowAll}>
-            <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
-                <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2">
-                        <ListTodo className="h-5 w-5" />
-                        Task Übersicht
-                        <Button variant="ghost" size="sm" onClick={fetchTasks}>
-                            <RefreshCw className="h-4 w-4" />
-                        </Button>
-                    </DialogTitle>
-                </DialogHeader>
-                <div className="overflow-y-auto flex-1">
-                    {allTasks.length === 0 ? (
-                        <div className="text-center py-8 text-muted-foreground">
-                            Keine Tasks vorhanden
-                        </div>
-                    ) : (
-                        <div className="space-y-2">
-                            {allTasks.map(task => (
-                                <div
-                                    key={task.id}
-                                    className="flex items-center gap-4 p-3 border rounded-lg hover:bg-muted/50 cursor-pointer"
-                                    onClick={() => { setSelectedTask(task); setShowAll(false); }}
-                                >
-                                    {getStatusIcon(task.status)}
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <span className="font-medium text-sm">{task.type}</span>
-                                            <span className="text-xs text-muted-foreground">
-                                                {task.source} → {task.target}
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center gap-2 mt-1">
-                                            <Progress value={task.progress} className="h-1 flex-1" />
-                                            <span className="text-xs text-muted-foreground w-10 text-right">
-                                                {task.progress}%
-                                            </span>
-                                        </div>
-                                    </div>
-                                    <Badge className={`${getStatusColor(task.status)} text-white text-[10px]`}>
-                                        {task.status}
-                                    </Badge>
-                                    <a
-                                        href={`/migrations/${task.id}`}
-                                        className="text-primary hover:underline"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        <ExternalLink className="h-4 w-4" />
-                                    </a>
-                                </div>
-                            ))}
-                        </div>
+            <button
+                onClick={() => setMinimized(!minimized)}
+                className="flex items-center gap-3 px-4 py-3 rounded-md text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors w-full"
+            >
+                <div className="relative">
+                    <ListTodo className="h-4 w-4" />
+                    {tasks.length > 0 && (
+                        <span className="absolute -top-1.5 -right-1.5 bg-blue-500 text-white text-[9px] w-3.5 h-3.5 flex items-center justify-center rounded-full animate-pulse">
+                            {tasks.length}
+                        </span>
                     )}
                 </div>
-            </DialogContent>
-        </Dialog>
+                Tasks
+            </button>
+        </div>
     );
 
     // Task Detail Dialog
@@ -281,8 +233,7 @@ export function TaskManager() {
 
     return (
         <>
-            <ActiveTasksDock />
-            <TaskHistoryDialog />
+            <SidebarTrigger />
             <TaskDetailDialog />
         </>
     );

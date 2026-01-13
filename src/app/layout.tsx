@@ -35,7 +35,6 @@ export default function RootLayout({
             {children}
           </div>
         </main>
-        <TaskManager />
       </body>
     </html>
   );

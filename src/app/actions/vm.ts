@@ -248,23 +248,26 @@ export async function migrateVM(
 
         } else {
             // ========== CROSS-CLUSTER / STANDALONE MIGRATION ==========
-            // Use qm remote-migrate with API token
-            console.log(`[Migration] Using cross-cluster remote-migrate`);
+            // Use temporary user + token strategy to avoid root@pam restrictions/issues
+            console.log(`[Migration] Using cross-cluster remote-migrate with temp user`);
 
-            // Generate temporary API Token on Target with proper privileges
-            // First ensure the token doesn't exist (cleanup from previous failed attempts)
-            await targetSsh.exec(`pveum user token remove root@pam ${tempTokenId} 2>/dev/null || true`);
+            // 1. Create Temporary User
+            const tempUser = `mig-${tempTokenId}`;
+            const tempUserFull = `${tempUser}@pve`;
 
-            const tokenCmd = `pveum user token add root@pam ${tempTokenId} --privsep 0 --output-format json`;
+            // Create user
+            await targetSsh.exec(`pveum user add ${tempUserFull} --password ${tempTokenSecret} 2>/dev/null || true`);
+
+            // Grant Administrator role (Global)
+            await targetSsh.exec(`pveum acl modify / -user '${tempUserFull}' -role Administrator`);
+
+            // 2. Create API Token for this user
+            const tokenCmd = `pveum user token add ${tempUserFull} ${tempTokenId} --privsep 0 --output-format json`;
             const tokenJson = await targetSsh.exec(tokenCmd);
             const tokenData = JSON.parse(tokenJson);
-            tempTokenSecret = tokenData.value;
+            const tokenSecret = tokenData.value;
 
-            // GRANT PERMISSIONS: Sys.Incoming, PVEVMAdmin, etc. for the token
-            // Simplest for root@pam is to give Administrator on /
-            await targetSsh.exec(`pveum acl modify / -token 'root@pam!${tempTokenId}' -role Administrator`);
-
-            const apiToken = `root@pam!${tempTokenId}=${tempTokenSecret}`;
+            const apiToken = `${tempUserFull}!${tempTokenId}=${tokenSecret}`;
 
             // Get SSL Fingerprint
             const fpCmd = `openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`;
@@ -417,13 +420,19 @@ export async function migrateVM(
         console.error('[Migration] Failed:', e);
         return { success: false, message: String(e) };
     } finally {
-        // Cleanup Token on Target (only for cross-cluster)
-        try {
-            if (tempTokenSecret) {
-                await targetSsh.exec(`pveum user token delete root@pam ${tempTokenId}`);
+        // Clean up: Remove temp user and tokens
+        // tempTokenId is only set for cross-cluster migrations
+        if (tempTokenId) {
+            try {
+                const tempUser = `mig-${tempTokenId}`;
+                const tempUserFull = `${tempUser}@pve`;
+                console.log(`[Migration] Cleaning up temporary user ${tempUserFull}...`);
+
+                // Removing user automatically removes tokens and ACLs
+                await targetSsh.exec(`pveum user delete ${tempUserFull}`);
+            } catch (e) {
+                console.warn('[Migration] Failed to cleanup temp user/token:', e);
             }
-        } catch (cleanupErr) {
-            console.error('Failed to cleanup temp token:', cleanupErr);
         }
 
         await sourceSsh.disconnect();

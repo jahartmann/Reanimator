@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { LayoutDashboard, Server, FolderCog, Settings, ArrowRightLeft, Tag as TagIcon, HardDrive } from 'lucide-react';
+import TaskManager from '../TaskManager';
 
 const navItems = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard },
@@ -29,6 +30,9 @@ export function Sidebar() {
                         {item.name}
                     </Link>
                 ))}
+                <div className="pt-2 mt-2 border-t border-border/50">
+                    <TaskManager />
+                </div>
             </nav>
             <div className="p-4 border-t border-border text-xs text-muted-foreground">
                 v1.0.0
