@@ -43,6 +43,7 @@ export async function startServerMigration(
     options?: { // Optional manual overrides
         targetStorage?: string;
         targetBridge?: string;
+        autoVmid?: boolean; // If true, auto-select next available VMID
     }
 ): Promise<{ success: boolean; taskId?: number; message?: string }> {
     try {
@@ -98,7 +99,8 @@ export async function startServerMigration(
         // Pass minimal context needed for the worker
         const migrationExecOptions = {
             storage: options?.targetStorage,
-            bridge: options?.targetBridge
+            bridge: options?.targetBridge,
+            autoVmid: options?.autoVmid ?? true // Default to true
         };
 
         // Execute asynchronously
@@ -113,7 +115,7 @@ export async function startServerMigration(
 }
 
 // Background Worker
-async function executeMigrationTask(taskId: number, vms: any[], options: { storage?: string, bridge?: string }) {
+async function executeMigrationTask(taskId: number, vms: any[], options: { storage?: string, bridge?: string, autoVmid?: boolean }) {
     const log = (msg: string) => {
         const ts = new Date().toISOString().split('T')[1].split('.')[0];
         db.prepare('UPDATE migration_tasks SET log = log || ? WHERE id = ?').run(`[${ts}] ${msg}\n`, taskId);
@@ -157,7 +159,8 @@ async function executeMigrationTask(taskId: number, vms: any[], options: { stora
                 targetServerId: taskRow.target_server_id,
                 targetStorage: options.storage || '',
                 targetBridge: options.bridge || '',
-                online: true // Default to online
+                online: true, // Default to online
+                autoVmid: options.autoVmid ?? true
             });
 
             if (res.success) {

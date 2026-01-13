@@ -22,6 +22,8 @@ export interface MigrationOptions {
     targetStorage: string;
     targetBridge: string;
     online: boolean;
+    targetVmid?: string;  // Custom VMID on target (optional)
+    autoVmid?: boolean;   // If true, automatically use next available VMID
 }
 
 // Helper to get server details
@@ -264,37 +266,36 @@ export async function migrateVM(
             const fpCmd = `openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`;
             const fingerprint = (await targetSsh.exec(fpCmd)).trim();
 
-            // Check if VMID is free on target cluster, if not, get next available VMID
-            let targetVmid = vmid;
-            try {
-                // Get all VMs in target cluster and check if our VMID is taken
-                const checkCmd = `pvesh get /cluster/resources --type vm --output-format json 2>/dev/null || echo "[]"`;
-                const checkResult = await targetSsh.exec(checkCmd, 10000);
-                const clusterVms = JSON.parse(checkResult);
+            // Determine target VMID based on options
+            let targetVmid: string;
 
-                // Check if any VM has our VMID
-                const vmIdExists = clusterVms.some((vm: any) =>
-                    vm.vmid !== undefined && vm.vmid.toString() === vmid.toString()
-                );
-
-                if (vmIdExists) {
-                    // Get next free VMID from target cluster
-                    const nextIdCmd = `pvesh get /cluster/nextid 2>/dev/null || echo "100"`;
-                    const nextIdResult = await targetSsh.exec(nextIdCmd, 5000);
-                    targetVmid = nextIdResult.trim();
-                    console.log(`[Migration] VMID ${vmid} exists on target cluster, using ${targetVmid} instead`);
-                }
-            } catch (e) {
-                console.log('[Migration] Could not check VMID availability:', e);
-                // As a fallback, try to get next available ID anyway
+            if (options.targetVmid) {
+                // User specified a custom VMID
+                targetVmid = options.targetVmid;
+                console.log(`[Migration] Using user-specified VMID: ${targetVmid}`);
+            } else if (options.autoVmid !== false) {
+                // Auto-select next available VMID (default behavior for cross-cluster)
                 try {
-                    const nextIdCmd = `pvesh get /cluster/nextid 2>/dev/null || echo "100"`;
+                    const nextIdCmd = `pvesh get /cluster/nextid --output-format json 2>/dev/null`;
                     const nextIdResult = await targetSsh.exec(nextIdCmd, 5000);
-                    targetVmid = nextIdResult.trim();
-                    console.log(`[Migration] Using fallback VMID: ${targetVmid}`);
-                } catch {
-                    console.log('[Migration] Using original VMID as last resort');
+                    targetVmid = nextIdResult.trim().replace(/"/g, '');
+                    console.log(`[Migration] Using next available VMID on target: ${targetVmid}`);
+                } catch (e) {
+                    // Fallback: try without json format
+                    try {
+                        const nextIdCmd = `pvesh get /cluster/nextid 2>/dev/null || echo "100"`;
+                        const nextIdResult = await targetSsh.exec(nextIdCmd, 5000);
+                        targetVmid = nextIdResult.trim();
+                        console.log(`[Migration] Using fallback VMID: ${targetVmid}`);
+                    } catch {
+                        targetVmid = vmid;
+                        console.log('[Migration] Using original VMID as last resort');
+                    }
                 }
+            } else {
+                // Keep original VMID (user unchecked auto-select)
+                targetVmid = vmid;
+                console.log(`[Migration] Keeping original VMID: ${targetVmid}`);
             }
 
             const apiEndpoint = `host=${target.ssh_host},apitoken=PVEAPIToken=${apiToken},fingerprint=${fingerprint}`;

@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Loader2, ArrowRightLeft, AlertTriangle } from "lucide-react";
 import { VirtualMachine, migrateVM, getTargetResources } from '@/app/actions/vm';
 import { useRouter } from 'next/navigation';
@@ -24,6 +25,10 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
     const [targetStorage, setTargetStorage] = useState<string>('');
     const [targetBridge, setTargetBridge] = useState<string>('');
     const [online, setOnline] = useState(true);
+
+    // VMID options
+    const [autoVmid, setAutoVmid] = useState(true);  // Default: auto-select next free
+    const [targetVmid, setTargetVmid] = useState<string>('');
 
     const [loadingResources, setLoadingResources] = useState(false);
     const [storages, setStorages] = useState<string[]>([]);
@@ -62,6 +67,7 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
 
     async function handleMigrate() {
         if (!targetServerId || !targetStorage || !targetBridge) return;
+        if (!autoVmid && !targetVmid) return; // Require VMID if auto is off
         setMigrating(true);
         setError(null);
         setLogs(prev => [...prev, `Starting migration of ${vm.name} (${vm.vmid})...`]);
@@ -71,7 +77,9 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
                 targetServerId: parseInt(targetServerId),
                 targetStorage,
                 targetBridge,
-                online
+                online,
+                autoVmid,
+                targetVmid: autoVmid ? undefined : targetVmid
             });
             if (res.success) {
                 setLogs(prev => [...prev, 'Migration finished successfully.', 'Log:', res.message || '']);
@@ -186,6 +194,33 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
                                             </Select>
                                         )}
                                     </div>
+                                </div>
+                            )}
+
+                            {/* VMID Selection */}
+                            {targetServerId && (
+                                <div className="p-4 border rounded-lg bg-muted/30 animate-in fade-in">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <Label htmlFor="autoVmid" className="cursor-pointer font-medium text-sm">
+                                            Automatisch nächste freie VMID verwenden
+                                        </Label>
+                                        <Switch id="autoVmid" checked={autoVmid} onCheckedChange={setAutoVmid} />
+                                    </div>
+                                    {!autoVmid && (
+                                        <div className="animate-in fade-in slide-in-from-top-2">
+                                            <Label className="mb-2 block text-sm">Ziel-VMID</Label>
+                                            <Input
+                                                type="number"
+                                                placeholder={vm.vmid}
+                                                value={targetVmid}
+                                                onChange={(e) => setTargetVmid(e.target.value)}
+                                                className="max-w-[150px]"
+                                            />
+                                            <p className="text-xs text-muted-foreground mt-1">
+                                                Original: {vm.vmid}
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 

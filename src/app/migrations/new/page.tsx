@@ -48,6 +48,9 @@ export default function NewMigrationPage() {
     // Step 3: Validation
     const [validating, setValidating] = useState(false);
 
+    // Migration Options
+    const [autoVmid, setAutoVmid] = useState(true); // Default: auto-select next free VMID
+
     // Final
     const [starting, setStarting] = useState(false);
 
