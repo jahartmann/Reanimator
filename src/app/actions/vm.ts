@@ -317,10 +317,43 @@ export async function migrateVM(
                 }
             }
 
+            // --- TOKEN VERIFICATION (Pre-Flight Check) ---
+            console.log('[Migration] Verifying API Token validity via curl from source...');
+            try {
+                // Check version endpoint on target (lightweight, auth-protected)
+                // -k: allow insecure (self-signed)
+                // -s: silent
+                // -o /dev/null: discard body
+                // -w "%{http_code}": print status code
+                // Timeout 5s
+                const verifyCmd = `curl -k -s -o /dev/null -w "%{http_code}" --max-time 5 -H "Authorization: PVEAPIToken=${cleanToken}" https://${migrationHost}:8006/api2/json/version`;
+                const verifyStatus = (await sourceSsh.exec(verifyCmd)).trim();
+
+                console.log(`[Migration] Token verification status: ${verifyStatus}`);
+
+                if (verifyStatus === '401') {
+                    throw new Error(`Target rejected API Token (401 Unauthorized). The token is invalid, expired, or has insufficient permissions.\nToken ID: ${cleanToken.split('=')[0]}`);
+                }
+
+                if (verifyStatus !== '200') {
+                    console.warn(`[Migration] Token verification returned unexpected status ${verifyStatus}, but proceeding...`);
+                } else {
+                    console.log('[Migration] Token verified successfully.');
+                }
+
+            } catch (verifyErr: any) {
+                // Determine if we should block
+                if (verifyErr.message && verifyErr.message.includes('401')) {
+                    throw verifyErr; // Block migration
+                }
+                console.warn('[Migration] Could not verify token (curl failed or network issue), proceeding with risk...', verifyErr);
+            }
+
             // Construct Endpoint String
             // Note: We use the raw token.
             // Escape single quotes in the endpoint string just in case, though unlikely in token/host.
-            const apiEndpoint = `host=${migrationHost},apitoken=${cleanToken},fingerprint=${fingerprint}`;
+            // Re-adding PVEAPIToken= prefix as it is standard for the value expected by PVE
+            const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${cleanToken},fingerprint=${fingerprint}`;
             const safeEndpoint = apiEndpoint.replace(/'/g, "'\\''");
 
             console.log(`[Migration] Constructed Remote Endpoint: host=${migrationHost}, fingerprint=${fingerprint}, token=...`);
