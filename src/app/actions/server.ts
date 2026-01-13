@@ -53,8 +53,7 @@ export async function getServer(id: number): Promise<Server | null> {
         ssl_fingerprint: row.ssl_fingerprint
     };
 }
-    };
-}
+
 
 export async function getServerResources(serverId: number): Promise<{ storages: string[], bridges: string[] }> {
     const server = await getServer(serverId);
