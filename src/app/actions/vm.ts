@@ -342,9 +342,10 @@ export async function migrateVM(
             }
 
             // Construct Endpoint String
-            // Note: We do NOT encodeURIComponent the token because pvesh/remote_migrate expects the raw token in the string.
-            // encoding it breaks the PVEAPIToken format (e.g. %40 instead of @).
+            // Note: We use the raw token.
+            // Escape single quotes in the endpoint string just in case, though unlikely in token/host.
             const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${cleanToken},fingerprint=${fingerprint}`;
+            const safeEndpoint = apiEndpoint.replace(/'/g, "'\\''");
 
             console.log(`[Migration] Constructed Remote Endpoint: host=${migrationHost}, fingerprint=${fingerprint}, token=...`);
 
@@ -479,7 +480,8 @@ export async function migrateVM(
             console.log('[Migration] Starting remote-migrate via pvesh (SSH)...');
 
             // Construct pvesh command
-            let migrateCmd = `pvesh create /nodes/${sourceNode}/qemu/${vmid}/remote_migrate --target-vmid ${targetVmid} --target-endpoint "${apiEndpoint}" --online ${options.online ? 1 : 0}`;
+            // CRITICAL: Use single quotes for target-endpoint to prevent shell expansion of '!' in the token
+            let migrateCmd = `pvesh create /nodes/${sourceNode}/qemu/${vmid}/remote_migrate --target-vmid ${targetVmid} --target-endpoint '${safeEndpoint}' --online ${options.online ? 1 : 0}`;
 
             if (finalBridge) migrateCmd += ` --target-bridge ${finalBridge}`;
             if (finalStorage) migrateCmd += ` --target-storage ${finalStorage}`;
