@@ -260,6 +260,10 @@ export async function migrateVM(
             const tokenData = JSON.parse(tokenJson);
             tempTokenSecret = tokenData.value;
 
+            // GRANT PERMISSIONS: Sys.Incoming, PVEVMAdmin, etc. for the token
+            // Simplest for root@pam is to give Administrator on /
+            await targetSsh.exec(`pveum acl modify / -token 'root@pam!${tempTokenId}' -role Administrator`);
+
             const apiToken = `root@pam!${tempTokenId}=${tempTokenSecret}`;
 
             // Get SSL Fingerprint

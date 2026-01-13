@@ -51,8 +51,18 @@ export function TaskManager() {
                 createdAt: t.created_at
             }));
 
-            // Active tasks for floating dock
-            const active = mapped.filter((t: Task) => t.status === 'running' || t.status === 'pending');
+            // Active tasks for floating dock:
+            // - Running or Pending
+            // - Failed or Completed within the last 5 minutes
+            const fiveMinutesAgo = new Date(Date.now() - 5 * 60000).toISOString();
+
+            const active = mapped.filter((t: Task) => {
+                if (t.status === 'running' || t.status === 'pending') return true;
+                // Keep completed/failed visible for a while
+                if (t.createdAt && t.createdAt > fiveMinutesAgo) return true;
+                return false;
+            });
+
             setTasks(active);
 
             // All recent tasks (last 10)
