@@ -11,6 +11,7 @@ import TagManagement from '@/components/ui/TagManagement';
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { getTags } from '@/app/actions/tags';
 import { getServerInfo } from '@/app/actions/monitoring';
+import EditServerDialog from '@/components/server/EditServerDialog';
 
 export const dynamic = 'force-dynamic';
 
@@ -88,7 +89,14 @@ export default async function ServerDetailPage({
                             {server.type.toUpperCase()} · {server.ssh_host || new URL(server.url).hostname}
                         </p>
                     </div>
-                    <div className="ml-auto">
+                    <div className="ml-auto flex items-center gap-2">
+                        <EditServerDialog server={{
+                            ...server,
+                            group_name: server.group_name || undefined,
+                            // ensure undefined types match what component expects if needed, 
+                            // but 'as any' or explicit spread works.
+                            // Actually Interface matches closely.
+                        }} />
                         <Dialog>
                             <DialogTrigger asChild>
                                 <Button variant="outline" size="sm">

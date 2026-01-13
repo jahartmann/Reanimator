@@ -62,6 +62,52 @@ export async function addServer(formData: FormData) {
     redirect('/servers');
 }
 
+export async function updateServer(id: number, formData: FormData) {
+    const name = formData.get('name') as string;
+    const type = formData.get('type') as string;
+    const url = formData.get('url') as string;
+    const token = formData.get('token') as string;
+
+    // SSH configuration
+    const ssh_host = formData.get('ssh_host') as string || null;
+    const ssh_port = parseInt(formData.get('ssh_port') as string) || 22;
+    const ssh_user = formData.get('ssh_user') as string || 'root';
+    const ssh_password = formData.get('ssh_password') as string || null; // Only update if provided? Or always?
+    // In this simple implementation, we update everything passed.
+
+    // Group & SSL
+    const group_name = formData.get('group_name') as string || null;
+    const ssl_fingerprint = formData.get('ssl_fingerprint') as string || null;
+
+    // We don't re-run auto-fetch here automatically because the user might be editing manually.
+    // The Edit Form can use the existing testSSHConnection to fetch it if needed.
+
+    // Preserve existing password if not provided? 
+    // Usually forms send empty string if field is empty.
+    // Let's check if password is provided. If it's an empty string or null, we might want to KEEP the old one IF the user didn't mean to clear it.
+    // However, for simplicity and security, if the user leaves it blank we might assume no change? 
+    // Standard pattern: If password field is empty, don't update password column.
+
+    let passwordUpdateFragment = '';
+    const updateParams: any[] = [name, type, url, token, ssl_fingerprint, ssh_host, ssh_port, ssh_user, group_name];
+
+    if (ssh_password && ssh_password.trim() !== '') {
+        passwordUpdateFragment = ', ssh_key = ?';
+        updateParams.push(ssh_password);
+    }
+
+    updateParams.push(id); // Where ID
+
+    db.prepare(`
+        UPDATE servers 
+        SET name = ?, type = ?, url = ?, auth_token = ?, ssl_fingerprint = ?, ssh_host = ?, ssh_port = ?, ssh_user = ?, group_name = ?${passwordUpdateFragment}
+        WHERE id = ?
+    `).run(...updateParams);
+
+    revalidatePath('/servers');
+    revalidatePath(`/servers/${id}`);
+}
+
 export async function deleteServer(id: number) {
     db.prepare('DELETE FROM servers WHERE id = ?').run(id);
     revalidatePath('/servers');
