@@ -246,8 +246,8 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     console.log('[Migration] Command:', nativeCmd.replace(cleanToken, '***'));
 
     try {
-        // Execute with PTY and bash wrap
-        const output = await sourceSsh.exec(`bash -c "${nativeCmd.replace(/"/g, '\\"')}"`, 3600000, { pty: true });
+        // Execute directly (SSH2 spawns a shell)
+        const output = await sourceSsh.exec(nativeCmd, 3600000, { pty: true });
         return `Cross-cluster migration completed successfully (Native).\nLogs:\n${output}`;
     } catch (nativeError: any) {
         console.warn(`[Migration] Native strategy failed: ${nativeError.message}. Falling back to Streaming Backup/Restore...`);
