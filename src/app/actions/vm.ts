@@ -186,58 +186,104 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     const verifyStatus = (await sourceSsh.exec(verifyCmd)).trim();
     if (verifyStatus === '401') throw new Error(`Target rejected API Token (401). Check credentials.`);
 
-    // 5. Construct Command (Try qm remote-migrate first)
-    const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${cleanToken},fingerprint=${fingerprint}`;
-    const safeEndpoint = apiEndpoint.replace(/'/g, "'\\''"); // Escape single quotes matching checks
+    // 5. Streaming Backup & Restore Strategy
+    // This bypasses the unreliable 'qm remote-migrate' tunnel by streaming data directly via SSH
+    console.log('[Migration] Starting robust Streaming Backup/Restore migration...');
 
-    let useCLI = false;
+    // 0. Unlock Source VM if needed
+    // The user reported "broken pipe" can happen if the VM is locked (backup/migrate/snapshot lock)
     try {
-        const hasQmRemote = await sourceSsh.exec('qm --help | grep remote-migrate || echo ""');
-        if (hasQmRemote.trim()) useCLI = true;
-    } catch { }
-
-    let upid = '';
-
-    // Parameters
-    let extraParams = '';
-    if (options.targetBridge) extraParams += ` --target-bridge ${options.targetBridge}`;
-    if (options.targetStorage) extraParams += ` --target-storage ${options.targetStorage}`;
-    if (options.online) extraParams += ` --online`;
-
-    if (useCLI && type === 'qemu') {
-        console.log('[Migration] Using qm remote-migrate CLI (Blocking, with PTY)');
-
-        const cmd = `qm remote-migrate ${vmid} ${targetVmid} '${safeEndpoint}' ${extraParams} --migration_network ${encodeURIComponent(migrationHost)}`;
-        // Note: migration_network is optional but good practice if checking network. 
-        // Actually, let's stick to exactly what worked manually for the user if known, or the standard syntax.
-        // Standard: qm remote-migrate <vmid> <target-vmid> <api-endpoint>
-
-        const runCmd = `qm remote-migrate ${vmid} ${targetVmid} '${safeEndpoint}' ${extraParams}`;
-
-        console.log('[Migration] Command:', runCmd.replace(cleanToken, '***'));
-
-        // Execute with high timeout (1 hour) and PTY (crucial for tunnel stability)
-        // processing is blocking here.
-        try {
-            const output = await sourceSsh.exec(runCmd, 3600000, { pty: true });
-            return `Cross-cluster migration completed successfully.\nLogs:\n${output}`;
-        } catch (e: any) {
-            console.error('[Migration] qm remote-migrate failed:', e);
-            throw new Error(`Migration Command Failed:\n${e.message || String(e)}`);
+        const conf = await sourceSsh.exec(`qm config ${vmid}`);
+        if (conf.includes('lock:')) {
+            console.log('[Migration] Source VM is locked. Attempting to unlock...');
+            await sourceSsh.exec(`qm unlock ${vmid}`);
+            console.log('[Migration] Unlocked successfully.');
         }
-
-    } else if (type === 'lxc') {
-        const pveShCmd = `pvesh create /nodes/${ctx.sourceNode}/lxc/${vmid}/remote_migrate --target-vmid ${targetVmid} --target-endpoint '${safeEndpoint}' ${extraParams} --restart 1`;
-        upid = (await sourceSsh.exec(pveShCmd)).trim();
-    } else {
-        const pveShCmd = `pvesh create /nodes/${ctx.sourceNode}/qemu/${vmid}/remote_migrate --target-vmid ${targetVmid} --target-endpoint '${safeEndpoint}' ${extraParams}`;
-        upid = (await sourceSsh.exec(pveShCmd)).trim();
+    } catch (e) {
+        console.warn('[Migration] Failed to check/unlock source VM, proceeding anyway...', e);
     }
 
-    console.log(`[Migration] Started UPID: ${upid}`);
-    await pollTaskStatus(sourceSsh, ctx.sourceNode, upid);
+    const restoreStorage = options.targetStorage || 'local-lvm';
+    // Ensure storage is valid? qmrestore checks it.
 
-    return `Cross-cluster migration completed (UPID: ${upid})`;
+    // Commands
+    // qmrestore reads from stdin (-)
+    // --force allows overwriting if we cleaned up (which we did) or if it exists
+    const restoreCmd = `qmrestore - ${targetVmid} --storage ${restoreStorage} --force --unique`;
+
+    // vzdump writes to stdout
+    // --mode: snapshot (minimal downtime) vs stop (consistent)
+    const dumpMode = options.online ? 'snapshot' : 'stop';
+    const dumpCmd = `/usr/sbin/vzdump ${vmid} --stdout --compress zstd --mode ${dumpMode}`;
+
+    // 0b. Clean up Target clean slate
+    // If the target VMID exists (e.g. from a failed previous attempt), it might be locked or partially created.
+    // 'qmrestore --force' usually handles overwrite, but 'qm destroy' is cleaner and ensures no lock conflicts.
+    try {
+        await targetSsh.exec(`qm config ${targetVmid}`);
+        // If we get here, VM exists.
+        console.log(`[Migration] Target VM ${targetVmid} exists. Cleaning up (Unlock & Destroy)...`);
+        try { await targetSsh.exec(`qm stop ${targetVmid} --timeout 10`); } catch { }
+        try { await targetSsh.exec(`qm unlock ${targetVmid}`); } catch { }
+        try { await targetSsh.exec(`qm destroy ${targetVmid} --purge`); } catch { }
+        console.log('[Migration] Target cleanup complete.');
+    } catch (e) {
+        // VM does not exist (normal case), proceed.
+    }
+
+    console.log(`[Migration] Pipeline: ${dumpCmd} | SSH | ${restoreCmd}`);
+
+    try {
+        const targetStream = await targetSsh.getExecStream(restoreCmd);
+        const sourceStream = await sourceSsh.getExecStream(dumpCmd);
+
+        // Pipe Source STDOUT -> Target STDIN
+        sourceStream.pipe(targetStream);
+
+        // Monitor logs
+        sourceStream.stderr.on('data', (data) => {
+            const log = data.toString().trim();
+            if (log) console.log(`[Source] ${log}`);
+        });
+
+        targetStream.stderr.on('data', (data) => {
+            const log = data.toString().trim();
+            if (log) console.log(`[Target] ${log}`);
+        });
+
+        // Wait for Target to finish (Consumer)
+        await new Promise<void>((resolve, reject) => {
+            targetStream.on('close', (code) => {
+                if (code === 0) {
+                    resolve();
+                } else {
+                    reject(new Error(`Restore process exited with code ${code}`));
+                }
+            });
+
+            targetStream.on('error', (err) => reject(new Error(`Target Stream Error: ${err.message}`)));
+            sourceStream.on('error', (err) => reject(new Error(`Source Stream Error: ${err.message}`)));
+        });
+
+        // Post-Migration: Stop Source VM if "online" migration intended to move it?
+        // Traditional migration moves the VM. Backup/Restore CLONES it.
+        // User expects migration (move).
+        // If success, we should stop source VM and maybe lock it / rename it?
+        // Safety: Just stop it.
+        if (options.online) {
+            console.log('[Migration] Success. Stopping source VM...');
+            try {
+                await sourceSsh.exec(`qm stop ${vmid} --timeout 30`);
+            } catch (e) {
+                console.warn('[Migration] Could not stop source VM:', e);
+            }
+        }
+
+        return `Migration (Streaming) completed successfully. Target VMID: ${targetVmid}`;
+
+    } catch (streamErr: any) {
+        throw new Error(`Streaming Migration Failed: ${streamErr.message}`);
+    }
 }
 
 

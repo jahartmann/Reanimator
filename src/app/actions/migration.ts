@@ -189,7 +189,13 @@ export async function startVMMigration(
 
         // Execute asynchronously
         // We wrap the single VM in an array to reuse the loop logic in executeMigrationTask
-        setTimeout(() => executeMigrationTask(taskId, [{ vmid: vm.vmid, type: vm.type, name: vm.name }], migrationExecOptions), 100);
+        // Using unref() (if available in this env) ensures the process isn't kept alive solely by this timer if it were a script,
+        // but explicit Fire-and-Forget in Next.js actions should be robust enough for Node runtime.
+        setTimeout(() => {
+            // Catch any unhandled rejection in the background task to prevent crashing the process
+            executeMigrationTask(taskId, [{ vmid: vm.vmid, type: vm.type, name: vm.name }], migrationExecOptions)
+                .catch(err => console.error(`[Background Migration Job Error] Task ${taskId}:`, err));
+        }, 100);
 
         return { success: true, taskId: result.id };
 
