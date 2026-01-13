@@ -320,7 +320,7 @@ export async function migrateVM(
             // Construct Endpoint String
             // Note: We use the raw token.
             // Escape single quotes in the endpoint string just in case, though unlikely in token/host.
-            const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${cleanToken},fingerprint=${fingerprint}`;
+            const apiEndpoint = `host=${migrationHost},apitoken=${cleanToken},fingerprint=${fingerprint}`;
             const safeEndpoint = apiEndpoint.replace(/'/g, "'\\''");
 
             console.log(`[Migration] Constructed Remote Endpoint: host=${migrationHost}, fingerprint=${fingerprint}, token=...`);
