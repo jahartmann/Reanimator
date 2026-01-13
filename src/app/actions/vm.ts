@@ -255,6 +255,9 @@ export async function migrateVM(
             const tempUser = `mig-${tempTokenId}`;
             const tempUserFull = `${tempUser}@pve`;
 
+            // Generate random password for the temp user
+            tempTokenSecret = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+
             // Create user
             console.log(`[Migration] Creating temp user ${tempUserFull}...`);
             await targetSsh.exec(`pveum user add ${tempUserFull} --password ${tempTokenSecret}`);
