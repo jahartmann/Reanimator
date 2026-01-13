@@ -235,7 +235,7 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
 
     // 5. Native 'qm remote-migrate' Strategy
     // 5. Native 'qm remote-migrate' Strategy (Primary)
-    const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${cleanToken},fingerprint=${fingerprint}`;
+    const apiEndpoint = `host=${migrationHost},apitoken=${cleanToken},fingerprint=${fingerprint}`;
     const safeEndpoint = apiEndpoint.replace(/'/g, "'\\''");
 
     // Wrap in bash -c to ensure environment sanity
