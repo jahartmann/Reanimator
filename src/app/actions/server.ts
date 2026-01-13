@@ -11,8 +11,9 @@ export interface Server {
     ssh_host: string;
     ssh_port: number;
     ssh_user: string;
-    ssh_key?: string; // Correctly typed as optional/string
+    ssh_key?: string;
     group_name?: string;
+    auth_token?: string; // API Token for migrations (format: user@realm!tokenid=secret)
 }
 
 export async function getServers(): Promise<Server[]> {
@@ -27,7 +28,8 @@ export async function getServers(): Promise<Server[]> {
         ssh_port: row.ssh_port,
         ssh_user: row.ssh_user,
         ssh_key: row.ssh_key,
-        group_name: row.group_name
+        group_name: row.group_name,
+        auth_token: row.auth_token
     }));
 }
 
@@ -44,7 +46,7 @@ export async function getServer(id: number): Promise<Server | null> {
         ssh_port: row.ssh_port,
         ssh_user: row.ssh_user,
         ssh_key: row.ssh_key,
-        group_name: row.group_name
+        group_name: row.group_name,
+        auth_token: row.auth_token
     };
 }
-

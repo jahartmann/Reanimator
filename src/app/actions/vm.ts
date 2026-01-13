@@ -166,9 +166,6 @@ export async function migrateVM(
         ssh_key: target.ssh_key
     });
 
-    let tempTokenId = `mig${Date.now()}`;
-    let tempTokenSecret = '';
-
     try {
         // 1. Connect to both servers
         await Promise.all([sourceSsh.connect(), targetSsh.connect()]);
@@ -249,26 +246,19 @@ export async function migrateVM(
 
         } else {
             // ========== CROSS-CLUSTER / STANDALONE MIGRATION ==========
-            // Use temporary user + token strategy to avoid root@pam restrictions/issues
-            console.log(`[Migration] Using cross-cluster remote-migrate with temp user`);
+            // Use the pre-configured API token from the target server (stored during server setup)
+            console.log(`[Migration] Using cross-cluster remote-migrate with stored token`);
 
-            // 1. Generate temporary API Token on Target for root@pam
-            // We use root@pam because we have SSH access to it, and it prevents "user not found" races.
-            // privsep=0 ensures the token has full root privileges (needed for some migration ops).
+            // Validate that target server has an API token configured
+            if (!target.auth_token) {
+                return {
+                    success: false,
+                    message: 'Zielserver hat keinen API-Token konfiguriert. Bitte in den Server-Einstellungen einen Token hinterlegen.'
+                };
+            }
 
-            // First ensure cleanup of any old token with same ID
-            await targetSsh.exec(`pveum user token remove root@pam ${tempTokenId} 2>/dev/null || true`);
-
-            const tokenCmd = `pveum user token add root@pam ${tempTokenId} --privsep 0 --output-format json`;
-            const tokenJson = await targetSsh.exec(tokenCmd);
-            const tokenData = JSON.parse(tokenJson);
-            const tokenSecret = tokenData.value;
-
-            // Grant Administrator role to the token (Explicitly recommended by docs)
-            await targetSsh.exec(`pveum acl modify / -token 'root@pam!${tempTokenId}' -role Administrator`);
-
-            // Correct Token Format: user@realm!tokenid=secret
-            const apiToken = `root@pam!${tempTokenId}=${tokenSecret}`;
+            // Use the stored token directly (format: user@realm!tokenid=secret)
+            const apiToken = target.auth_token;
 
             // Get SSL Fingerprint
             const fpCmd = `openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`;
@@ -354,20 +344,25 @@ export async function migrateVM(
                     }
 
                     if (usedStorages.size > 0) {
-                        // Filter mappings: Only map if target has storage with same name
-                        const validMappings = Array.from(usedStorages)
-                            .filter(s => targetStorages.includes(s))
-                            .map(s => `${s}=${s}`);
-
-                        if (validMappings.length > 0) {
-                            storageParam = `--target-storage ${validMappings.join(',')}`;
-                            console.log(`[Migration] Auto-mapped storages: ${validMappings.join(',')}`);
-                        } else {
-                            console.warn(`[Migration] Warning: No matching storages found on target for ${Array.from(usedStorages).join(',')}`);
+                        // Prefer local-lvm as target (more reliable for remote-migrate)
+                        // Fallback hierarchy: local-lvm > local > first available
+                        let defaultStorage = 'local-lvm';
+                        if (!targetStorages.includes('local-lvm')) {
+                            if (targetStorages.includes('local')) {
+                                defaultStorage = 'local';
+                            } else if (targetStorages.length > 0) {
+                                defaultStorage = targetStorages[0];
+                            }
                         }
+
+                        // Map all source storages to the default target storage
+                        const mappings = Array.from(usedStorages).map(s => `${s}=${defaultStorage}`);
+                        storageParam = `--target-storage ${mappings.join(',')}`;
+                        console.log(`[Migration] Mapping all storages to ${defaultStorage}: ${mappings.join(',')}`);
                     }
                 } catch (mapErr) {
-                    console.warn('[Migration] Failed to detect storages', mapErr);
+                    console.warn('[Migration] Failed to detect storages, using local-lvm fallback', mapErr);
+                    storageParam = '--target-storage local-lvm';
                 }
             }
 
@@ -422,18 +417,6 @@ export async function migrateVM(
         console.error('[Migration] Failed:', e);
         return { success: false, message: String(e) };
     } finally {
-        // Wait a bit to ensure remote processes finish closing their connections
-        await new Promise(r => setTimeout(r, 2000));
-
-        if (tempTokenId) {
-            try {
-                // Remove root@pam token
-                await targetSsh.exec(`pveum user token remove root@pam ${tempTokenId}`);
-            } catch (e) {
-                console.warn('[Migration] Failed to cleanup temp token:', e);
-            }
-        }
-
         await sourceSsh.disconnect();
         await targetSsh.disconnect();
     }
