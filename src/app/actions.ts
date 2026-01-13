@@ -18,7 +18,40 @@ export async function addServer(formData: FormData) {
 
     // Group & SSL
     const group_name = formData.get('group_name') as string || null;
-    const ssl_fingerprint = formData.get('ssl_fingerprint') as string || null;
+    let ssl_fingerprint = formData.get('ssl_fingerprint') as string || null;
+
+    // Automatic Fingerprint Fetching
+    if (!ssl_fingerprint && (ssh_host || url) && (ssh_password || formData.get('ssh_key'))) {
+        try {
+            console.log('Fetching SSL fingerprint automatically via SSH...');
+            const { createSSHClient } = await import('@/lib/ssh');
+
+            // Construct a temporary server object to reuse createSSHClient logic
+            const tempServer = {
+                ssh_host: ssh_host || undefined,
+                ssh_port: ssh_port,
+                ssh_user: ssh_user,
+                ssh_key: (ssh_password || (formData.get('ssh_key') as string)) || undefined,
+                url: url
+            };
+
+            const client = createSSHClient(tempServer);
+            await client.connect();
+
+            const fpCmd = `openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`;
+            const fpResult = await client.exec(fpCmd);
+
+            if (fpResult && fpResult.trim().length > 10) {
+                ssl_fingerprint = fpResult.trim();
+                console.log('Successfully fetched fingerprint:', ssl_fingerprint);
+            }
+
+            await client.disconnect();
+        } catch (e) {
+            console.warn('Failed to auto-fetch SSL fingerprint:', e);
+            // Continue without fingerprint, user can add it later or migration will try dynamic fetch (less reliable)
+        }
+    }
 
     db.prepare(`
         INSERT INTO servers (name, type, url, auth_token, ssl_fingerprint, ssh_host, ssh_port, ssh_user, ssh_key, status, group_name) 

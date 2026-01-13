@@ -418,8 +418,10 @@ export async function migrateVM(
             }
 
             console.log('[Migration] Running:', cmd);
+            console.log('[Migration] Running:', cmd);
             // 30 minute timeout for large disk transfers (40GB+ can take a while)
-            output = await sourceSsh.exec(cmd, 1800 * 1000);
+            // Enabling PTY to prevent "broken pipe" with qmtunnel
+            output = await sourceSsh.exec(cmd, 1800 * 1000, { pty: true });
         }
 
         return { success: true, message: output };

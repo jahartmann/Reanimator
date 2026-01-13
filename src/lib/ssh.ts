@@ -92,7 +92,7 @@ export class SSHClient {
 
 
     // Execute a command
-    async exec(command: string, timeoutMs: number = 20000): Promise<string> {
+    async exec(command: string, timeoutMs: number = 20000, options: { pty?: boolean } = {}): Promise<string> {
         return new Promise((resolve, reject) => {
             let timeoutId: NodeJS.Timeout;
 
@@ -105,7 +105,7 @@ export class SSHClient {
 
             // Execution promise
             const execPromise = new Promise<string>((resolveExec, rejectExec) => {
-                this.client.exec(command, (err, stream) => {
+                this.client.exec(command, { pty: options.pty }, (err, stream) => {
                     if (err) return rejectExec(err);
 
                     let output = '';
