@@ -88,6 +88,28 @@ export default function NewMigrationPage() {
         loadVMs();
     }, [sourceId]);
 
+    const [targetResources, setTargetResources] = useState<{ storages: string[], bridges: string[] }>({ storages: [], bridges: [] });
+    const [loadingResources, setLoadingResources] = useState(false);
+
+    // Fetch target resources when targetId changes
+    useEffect(() => {
+        if (!targetId) return;
+        async function loadResources() {
+            setLoadingResources(true);
+            try {
+                const { getServerResources } = await import('@/app/actions/server');
+                const res = await getServerResources(parseInt(targetId));
+                setTargetResources(res);
+            } catch (e) {
+                console.error('Failed to load target resources', e);
+            } finally {
+                setLoadingResources(false);
+            }
+        }
+        loadResources();
+    }, [targetId]);
+
+
     const handleClone = async () => {
         setCloning(true);
         setCloneResult(null);
@@ -362,21 +384,39 @@ export default function NewMigrationPage() {
                                             <div className="space-y-4 border p-4 rounded-md">
                                                 <div className="grid gap-2">
                                                     <Label>Ziel Storage (Optional)</Label>
-                                                    <input
-                                                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
-                                                        placeholder="z.B. local-lvm (leer lassen für auto)"
-                                                        value={vmOptions.targetStorage}
-                                                        onChange={(e) => setVmOptions(o => ({ ...o, targetStorage: e.target.value }))}
-                                                    />
+                                                    {loadingResources ? (
+                                                        <div className="flex items-center text-sm text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin mr-2" /> Lade Storages...</div>
+                                                    ) : (
+                                                        <Select value={vmOptions.targetStorage} onValueChange={(v) => setVmOptions(o => ({ ...o, targetStorage: v === 'auto' ? '' : v }))}>
+                                                            <SelectTrigger>
+                                                                <SelectValue placeholder="Auto (Empfohlen)" />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="auto">Auto (Automatisch wählen)</SelectItem>
+                                                                {targetResources.storages.map(s => (
+                                                                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    )}
                                                 </div>
                                                 <div className="grid gap-2">
                                                     <Label>Ziel Bridge (Optional)</Label>
-                                                    <input
-                                                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
-                                                        placeholder="z.B. vmbr0"
-                                                        value={vmOptions.targetBridge}
-                                                        onChange={(e) => setVmOptions(o => ({ ...o, targetBridge: e.target.value }))}
-                                                    />
+                                                    {loadingResources ? (
+                                                        <div className="flex items-center text-sm text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin mr-2" /> Lade Bridges...</div>
+                                                    ) : (
+                                                        <Select value={vmOptions.targetBridge} onValueChange={(v) => setVmOptions(o => ({ ...o, targetBridge: v === 'auto' ? '' : v }))}>
+                                                            <SelectTrigger>
+                                                                <SelectValue placeholder="Auto (vmbr0)" />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="auto">Auto (vmbr0)</SelectItem>
+                                                                {targetResources.bridges.map(b => (
+                                                                    <SelectItem key={b} value={b}>{b}</SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    )}
                                                 </div>
                                                 <div className="flex items-center space-x-2 pt-2">
                                                     <Checkbox

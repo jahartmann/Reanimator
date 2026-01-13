@@ -136,10 +136,14 @@ export async function startVMMigration(
 
         // 1. Create Task Entry
         const stmt = db.prepare(`
-            INSERT INTO migration_tasks (source_server_id, target_server_id, status, current_step, total_steps, steps_json, log)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO migration_tasks (source_server_id, target_server_id, status, current_step, total_steps, steps_json, log, target_storage, target_bridge)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
         `);
+
+        // Use provided values or default to 'auto' to satisfy NOT NULL constraint
+        const tStorage = options.targetStorage || 'auto';
+        const tBridge = options.targetBridge || 'auto';
 
         // Define Steps
         const steps: MigrationStep[] = [];
@@ -156,7 +160,7 @@ export async function startVMMigration(
 
         const initialLog = `[${new Date().toLocaleTimeString()}] Single VM Migration Task started.\nSource: ${source.name}\nTarget: ${target.name}\nVM: ${vm.vmid} (${vm.name})\n`;
 
-        const result = stmt.get(sourceId, targetId, 'running', 0, 1, JSON.stringify(steps), initialLog) as { id: number };
+        const result = stmt.get(sourceId, targetId, 'running', 0, 1, JSON.stringify(steps), initialLog, tStorage, tBridge) as { id: number };
         const taskId = result.id;
 
         // 2. Trigger Background Processing

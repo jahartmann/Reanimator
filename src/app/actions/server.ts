@@ -53,3 +53,46 @@ export async function getServer(id: number): Promise<Server | null> {
         ssl_fingerprint: row.ssl_fingerprint
     };
 }
+    };
+}
+
+export async function getServerResources(serverId: number): Promise<{ storages: string[], bridges: string[] }> {
+    const server = await getServer(serverId);
+    if (!server) throw new Error('Server not found');
+
+    const { createSSHClient } = await import('@/lib/ssh');
+    const client = createSSHClient(server);
+
+    try {
+        await client.connect();
+
+        // Fetch Bridges
+        // List everything in /sys/class/net that starts with vmbr
+        const brCmd = `ls /sys/class/net/ | grep "^vmbr" || echo ""`;
+        const brOut = await client.exec(brCmd);
+        const bridges = brOut.split('\n').map(s => s.trim()).filter(Boolean);
+        if (bridges.length === 0) bridges.push('vmbr0'); // Default fallback
+
+        // Fetch Storages
+        // Use pvesh to get storage logic
+        const stCmd = `pvesh get /storage --output-format json 2>/dev/null || echo "[]"`;
+        const stOut = await client.exec(stCmd);
+        let storages: string[] = [];
+        try {
+            const json = JSON.parse(stOut);
+            if (Array.isArray(json)) {
+                storages = json.map((s: any) => s.storage).filter(Boolean);
+            }
+        } catch (e) {
+            console.warn('Failed to parse storage json', e);
+        }
+
+        return { storages, bridges };
+
+    } catch (e) {
+        console.error('Failed to fetch server resources:', e);
+        return { storages: [], bridges: [] };
+    } finally {
+        await client.disconnect();
+    }
+}
