@@ -325,7 +325,27 @@ export async function migrateVM(
 
             console.log(`[Migration] Final Target VMID: ${targetVmid}`); // Explicit log for user visibility
 
-            const apiEndpoint = `host=${target.ssh_host},apitoken=PVEAPIToken=${apiToken},fingerprint=${fingerprint}`;
+            // Sanitize Token: Remove "PVEAPIToken=" prefix if present to avoid double prefixing
+            let cleanToken = apiToken.trim();
+            if (cleanToken.startsWith('PVEAPIToken=')) {
+                cleanToken = cleanToken.replace('PVEAPIToken=', '');
+            }
+
+            // Ensure Host is valid (prefer SSH host, fallback to URL hostname)
+            let migrationHost = target.ssh_host;
+            if (!migrationHost && target.url) {
+                try {
+                    migrationHost = new URL(target.url).hostname;
+                } catch (e) {
+                    migrationHost = target.url;
+                }
+            }
+
+            // Construct Endpoint String
+            // Note: We use encodeURIComponent for the token to handle special chars like '=', '@', '!' safely in the comma-separated string
+            const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${encodeURIComponent(cleanToken)},fingerprint=${fingerprint}`;
+
+            console.log(`[Migration] Constructed Remote Endpoint: host=${migrationHost}, fingerprint=${fingerprint}, token=***`);
 
             let cmd = '';
 

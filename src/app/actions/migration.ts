@@ -114,6 +114,71 @@ export async function startServerMigration(
     }
 }
 
+
+// Start a single VM migration task
+export async function startVMMigration(
+    sourceId: number,
+    targetId: number,
+    vm: { vmid: string, type: 'qemu' | 'lxc', name: string },
+    options: {
+        targetStorage?: string;
+        targetBridge?: string;
+        targetVmid?: string;
+        autoVmid?: boolean;
+        online?: boolean;
+    }
+): Promise<{ success: boolean; taskId?: number; message?: string }> {
+    try {
+        const source = db.prepare('SELECT * FROM servers WHERE id = ?').get(sourceId) as any;
+        const target = db.prepare('SELECT * FROM servers WHERE id = ?').get(targetId) as any;
+
+        if (!source || !target) return { success: false, message: 'Source or Target server not found' };
+
+        // 1. Create Task Entry
+        const stmt = db.prepare(`
+            INSERT INTO migration_tasks (source_server_id, target_server_id, status, current_step, total_steps, steps_json, log)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
+        `);
+
+        // Define Steps
+        const steps: MigrationStep[] = [];
+
+        // Single VM Migration Step
+        steps.push({
+            type: vm.type === 'qemu' ? 'vm' : 'lxc',
+            name: `Migrate ${vm.type === 'qemu' ? 'VM' : 'LXC'} ${vm.vmid}`,
+            vmid: vm.vmid,
+            vmType: vm.type,
+            status: 'pending',
+            detail: `Migrating ${vm.name || vm.vmid} to ${target.name}`
+        });
+
+        const initialLog = `[${new Date().toLocaleTimeString()}] Single VM Migration Task started.\nSource: ${source.name}\nTarget: ${target.name}\nVM: ${vm.vmid} (${vm.name})\n`;
+
+        const result = stmt.get(sourceId, targetId, 'running', 0, 1, JSON.stringify(steps), initialLog) as { id: number };
+        const taskId = result.id;
+
+        // 2. Trigger Background Processing
+        // We reuse the executeMigrationTask but need to ensure it handles the single-step nicely
+        const migrationExecOptions = {
+            storage: options.targetStorage,
+            bridge: options.targetBridge,
+            autoVmid: options.autoVmid ?? true
+        };
+
+        // Execute asynchronously
+        // We wrap the single VM in an array to reuse the loop logic in executeMigrationTask
+        setTimeout(() => executeMigrationTask(taskId, [{ vmid: vm.vmid, type: vm.type, name: vm.name }], migrationExecOptions), 100);
+
+        return { success: true, taskId: result.id };
+
+    } catch (e) {
+        console.error('Failed to start VM migration:', e);
+        return { success: false, message: String(e) };
+    }
+}
+
 // Background Worker
 async function executeMigrationTask(taskId: number, vms: any[], options: { storage?: string, bridge?: string, autoVmid?: boolean }) {
     const log = (msg: string) => {
