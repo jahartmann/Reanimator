@@ -105,17 +105,18 @@ export async function syncTagsFromProxmox(serverId: number): Promise<{ success: 
         // pvesh get /cluster/options --output-format json
         const output = await ssh.exec('pvesh get /cluster/options --output-format json');
         const options = JSON.parse(output);
-        const tagStyle: string = options['tag-style'] || ''; // Explicit type
+        const tagStyle = options['tag-style'];
 
-        if (!tagStyle) {
-            console.log('No tag-style found in datacenter.cfg');
-            return { success: true, message: 'No tags to sync' };
+        // Handle case where tagStyle is not a string (could be undefined or object)
+        if (!tagStyle || typeof tagStyle !== 'string') {
+            console.log('No tag-style found or invalid format');
+            return { success: true, message: 'Keine Tags zum Synchronisieren gefunden' };
         }
 
         const colorMapMatch = tagStyle.match(/color-map=([^,]+)/);
         if (!colorMapMatch) {
             console.log('No color-map found in tag-style');
-            return { success: true, message: 'No color map to sync' };
+            return { success: true, message: 'Keine Farbzuordnung gefunden' };
         }
 
         const colorMap = colorMapMatch[1];

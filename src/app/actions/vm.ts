@@ -198,8 +198,39 @@ export async function migrateVM(
         if (sameCluster) {
             // ========== INTRA-CLUSTER MIGRATION ==========
             // Use standard qm/pct migrate (no need for API tokens)
-            // VMID stays the same within cluster - just move to different node
             console.log(`[Migration] Using intra-cluster migration to ${targetNode}`);
+
+            // Check if source and target are on the same node
+            if (sourceNode === targetNode) {
+                return {
+                    success: false,
+                    message: `VM befindet sich bereits auf Node ${targetNode}. Wählen Sie einen anderen Ziel-Server.`
+                };
+            }
+
+            // Check if VMID exists on another node in the cluster (shouldn't happen in proper cluster setup)
+            // But just in case, verify the VM is actually on sourceNode
+            try {
+                const checkLoc = await sourceSsh.exec(`pvesh get /cluster/resources --type vm --output-format json 2>/dev/null`);
+                const resources = JSON.parse(checkLoc);
+                const vmResource = resources.find((r: any) => r.vmid.toString() === vmid.toString());
+
+                if (!vmResource) {
+                    return {
+                        success: false,
+                        message: `VM ${vmid} nicht im Cluster gefunden.`
+                    };
+                }
+
+                if (vmResource.node !== sourceNode) {
+                    return {
+                        success: false,
+                        message: `VM ${vmid} befindet sich auf Node ${vmResource.node}, nicht auf ${sourceNode}. Migration vom falschen Node angefordert.`
+                    };
+                }
+            } catch (e) {
+                console.log('[Migration] Could not verify VM location, proceeding anyway...');
+            }
 
             // Build storage mapping if specified
             const storageFlag = options.targetStorage ? `--target-storage ${options.targetStorage}` : '';

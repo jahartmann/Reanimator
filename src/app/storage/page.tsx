@@ -3,17 +3,36 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { HardDrive, Loader2, Database, AlertCircle } from "lucide-react";
-import db from '@/lib/db'; // Wait, this is client component? No, I need server action or use 'use client' + fetch
-// Checking how other pages do it. ServersPage uses client component wrapper or direct db in server component.
-// Let's make this a Server Component if possible, or Client with fetch.
-// Given strict directory structure, let's look at `src/app/actions/storage.ts` if it exists.
+import { HardDrive, Loader2, Database, Server } from "lucide-react";
 
-// import { getStorageStatus } from '@/app/actions/storage'; // Removed unused import
+interface StorageItem {
+    name: string;
+    type: string;
+    total: number;
+    used: number;
+    available: number;
+    usagePercent: number;
+    active: boolean;
+    isShared: boolean;
+}
 
+interface ServerStorage {
+    serverId: number;
+    serverName: string;
+    serverType: string;
+    storages: StorageItem[];
+}
+
+function formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
 
 export default function StoragePage() {
-    const [storages, setStorages] = useState<any[]>([]);
+    const [serverStorages, setServerStorages] = useState<ServerStorage[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -22,13 +41,10 @@ export default function StoragePage() {
 
     async function fetchStorage() {
         try {
-            // We need an action to fetch storage from ALL servers? 
-            // Or just list configured servers and their storage?
-            // Let's assume we want a summary of all storages across all servers.
-            const res = await fetch('/api/storage'); // Using API route
+            const res = await fetch('/api/storage');
             if (res.ok) {
                 const data = await res.json();
-                setStorages(data);
+                setServerStorages(data);
             }
         } catch (e) {
             console.error(e);
@@ -36,6 +52,9 @@ export default function StoragePage() {
             setLoading(false);
         }
     }
+
+    // Flatten for total count
+    const totalStorages = serverStorages.reduce((sum, s) => sum + s.storages.length, 0);
 
     return (
         <div className="space-y-6">
@@ -48,7 +67,7 @@ export default function StoragePage() {
                 <div className="flex justify-center py-20">
                     <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
-            ) : storages.length === 0 ? (
+            ) : totalStorages === 0 ? (
                 <Card className="border-dashed">
                     <CardContent className="flex flex-col items-center justify-center py-12">
                         <HardDrive className="h-12 w-12 text-muted-foreground mb-4" />
@@ -59,53 +78,62 @@ export default function StoragePage() {
                     </CardContent>
                 </Card>
             ) : (
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                    {storages.map((storage, i) => (
-                        <Card key={i}>
-                            <CardHeader className="pb-2">
-                                <CardTitle className="text-lg flex items-center justify-between">
-                                    <span className="flex items-center gap-2">
-                                        <Database className="h-4 w-4 text-blue-500" />
-                                        {storage.name}
-                                    </span>
-                                    <span className="text-xs font-normal text-muted-foreground bg-muted px-2 py-1 rounded">
-                                        {storage.server}
-                                    </span>
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="space-y-4">
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-muted-foreground">Typ:</span>
-                                        <span className="font-medium">{storage.type}</span>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <div className="flex justify-between text-sm">
-                                            <span>Belegt</span>
-                                            <span className="text-muted-foreground">
-                                                {storage.used} / {storage.total}
-                                            </span>
-                                        </div>
-                                        <Progress value={storage.percent} className={
-                                            storage.percent > 90 ? "bg-red-100 [&>div]:bg-red-500" :
-                                                storage.percent > 75 ? "bg-amber-100 [&>div]:bg-amber-500" : ""
-                                        } />
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground pt-2 border-t">
-                                        <div>
-                                            <span className="block font-medium text-foreground">{storage.content}</span>
-                                            Content
-                                        </div>
-                                        <div className="text-right">
-                                            <span className={`block font-medium ${storage.active ? 'text-green-500' : 'text-red-500'}`}>
-                                                {storage.active ? 'Aktiv' : 'Inaktiv'}
-                                            </span>
-                                            Status
-                                        </div>
-                                    </div>
-                                </div>
-                            </CardContent>
-                        </Card>
+                <div className="space-y-8">
+                    {serverStorages.map((serverData) => (
+                        <div key={serverData.serverId}>
+                            <div className="flex items-center gap-2 mb-4">
+                                <Server className="h-5 w-5 text-primary" />
+                                <h2 className="text-xl font-semibold">{serverData.serverName}</h2>
+                                <span className="text-xs bg-muted px-2 py-1 rounded">{serverData.serverType.toUpperCase()}</span>
+                            </div>
+                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                                {serverData.storages.map((storage, i) => (
+                                    <Card key={i}>
+                                        <CardHeader className="pb-2">
+                                            <CardTitle className="text-base flex items-center justify-between">
+                                                <span className="flex items-center gap-2">
+                                                    <Database className={`h-4 w-4 ${storage.isShared ? 'text-purple-500' : 'text-blue-500'}`} />
+                                                    {storage.name}
+                                                </span>
+                                                <span className="text-xs font-normal text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                                                    {storage.type}
+                                                </span>
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent>
+                                            <div className="space-y-3">
+                                                <div className="space-y-1">
+                                                    <div className="flex justify-between text-sm">
+                                                        <span>Belegt</span>
+                                                        <span className="text-muted-foreground">
+                                                            {formatBytes(storage.used)} / {formatBytes(storage.total)}
+                                                        </span>
+                                                    </div>
+                                                    <Progress
+                                                        value={storage.usagePercent}
+                                                        className={
+                                                            storage.usagePercent > 90 ? "bg-red-100 [&>div]:bg-red-500" :
+                                                                storage.usagePercent > 75 ? "bg-amber-100 [&>div]:bg-amber-500" : ""
+                                                        }
+                                                    />
+                                                    <div className="text-right text-xs text-muted-foreground">
+                                                        {storage.usagePercent.toFixed(1)}%
+                                                    </div>
+                                                </div>
+                                                <div className="flex justify-between text-xs pt-2 border-t">
+                                                    <span className={storage.active ? 'text-green-500' : 'text-red-500'}>
+                                                        {storage.active ? '● Aktiv' : '○ Inaktiv'}
+                                                    </span>
+                                                    {storage.isShared && (
+                                                        <span className="text-purple-500">Shared</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                ))}
+                            </div>
+                        </div>
                     ))}
                 </div>
             )}
