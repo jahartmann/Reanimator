@@ -13,7 +13,8 @@ export interface Server {
     ssh_user: string;
     ssh_key?: string;
     group_name?: string;
-    auth_token?: string; // API Token for migrations (format: user@realm!tokenid=secret)
+    auth_token?: string; // API Token for migrations
+    ssl_fingerprint?: string; // SSL Fingerprint for migrations
 }
 
 export async function getServers(): Promise<Server[]> {
@@ -29,7 +30,8 @@ export async function getServers(): Promise<Server[]> {
         ssh_user: row.ssh_user,
         ssh_key: row.ssh_key,
         group_name: row.group_name,
-        auth_token: row.auth_token
+        auth_token: row.auth_token,
+        ssl_fingerprint: row.ssl_fingerprint
     }));
 }
 
@@ -47,6 +49,7 @@ export async function getServer(id: number): Promise<Server | null> {
         ssh_user: row.ssh_user,
         ssh_key: row.ssh_key,
         group_name: row.group_name,
-        auth_token: row.auth_token
+        auth_token: row.auth_token,
+        ssl_fingerprint: row.ssl_fingerprint
     };
 }

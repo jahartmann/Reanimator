@@ -262,9 +262,15 @@ export async function migrateVM(
             // Use the stored token directly (format: user@realm!tokenid=secret)
             const apiToken = target.auth_token;
 
-            // Get SSL Fingerprint
-            const fpCmd = `openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`;
-            const fingerprint = (await targetSsh.exec(fpCmd)).trim();
+            // Get SSL Fingerprint: Prefer stored fingerprint, fallback to dynamic fetch
+            let fingerprint = target.ssl_fingerprint;
+            if (!fingerprint) {
+                console.log('[Migration] No stored fingerprint found, fetching dynamically...');
+                const fpCmd = `openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`;
+                fingerprint = (await targetSsh.exec(fpCmd)).trim();
+            } else {
+                console.log('[Migration] Using stored SSL fingerprint.');
+            }
 
             // Determine target VMID based on options
             let targetVmid: string;

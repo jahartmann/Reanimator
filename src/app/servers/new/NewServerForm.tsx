@@ -202,6 +202,14 @@ export default function NewServerForm({ existingGroups }: NewServerFormProps) {
                             </p>
                         </div>
 
+                        <div className="grid gap-2">
+                            <label htmlFor="ssl_fingerprint" className="text-sm font-medium">SSL Fingerprint (SHA256)</label>
+                            <Input id="ssl_fingerprint" name="ssl_fingerprint" placeholder="AA:BB:CC..." />
+                            <p className="text-xs text-muted-foreground">
+                                Optional. Wird für Cross-Cluster Migration benötigt.
+                            </p>
+                        </div>
+
                         <hr className="my-4" />
 
                         <div className="space-y-4">

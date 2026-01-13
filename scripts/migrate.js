@@ -116,6 +116,12 @@ try {
 try {
   db.exec(`ALTER TABLE servers ADD COLUMN group_name TEXT DEFAULT NULL`);
 } catch (e) { /* Column exists */ }
+try {
+  db.exec(`ALTER TABLE servers ADD COLUMN auth_token TEXT`);
+} catch (e) { /* Column exists */ }
+try {
+  db.exec(`ALTER TABLE servers ADD COLUMN ssl_fingerprint TEXT`);
+} catch (e) { /* Column exists */ }
 
 // Migration tasks table for full server migrations
 db.exec(`
