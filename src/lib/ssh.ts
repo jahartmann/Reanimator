@@ -91,6 +91,16 @@ export class SSHClient {
 
 
 
+    // Get execution stream directly (for piping)
+    async getExecStream(command: string, options: { pty?: boolean } = {}): Promise<import('ssh2').ClientChannel> {
+        return new Promise((resolve, reject) => {
+            this.client.exec(command, { pty: options.pty }, (err, stream) => {
+                if (err) return reject(err);
+                resolve(stream);
+            });
+        });
+    }
+
     // Execute a command
     async exec(command: string, timeoutMs: number = 20000, options: { pty?: boolean } = {}): Promise<string> {
         return new Promise((resolve, reject) => {

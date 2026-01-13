@@ -263,11 +263,7 @@ export default function NewServerForm({ existingGroups }: NewServerFormProps) {
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="grid gap-2">
-                                    <Input id="ssh_port" name="ssh_port" type="number" defaultValue="22" />
-                                </div>
-                            </div>
+
 
                             {/* Detected Cluster Nodes Info */}
                             {detectedNodes.length > 1 && (
@@ -320,9 +316,21 @@ export default function NewServerForm({ existingGroups }: NewServerFormProps) {
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="grid gap-2">
+                                    <label htmlFor="ssh_host" className="text-sm font-medium">SSH Host (Optional)</label>
+                                    <Input id="ssh_host" name="ssh_host" placeholder="z.B. 192.168.1.100" />
+                                </div>
+                                <div className="grid gap-2">
+                                    <label htmlFor="ssh_port" className="text-sm font-medium">SSH Port</label>
+                                    <Input id="ssh_port" name="ssh_port" type="number" defaultValue="22" />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="grid gap-2">
                                     <label htmlFor="ssh_user" className="text-sm font-medium">SSH Benutzer</label>
                                     <Input id="ssh_user" name="ssh_user" defaultValue="root" />
                                 </div>
+
                                 <div className="grid gap-2">
                                     <label htmlFor="ssh_password" className="text-sm font-medium">SSH Passwort</label>
                                     <Input id="ssh_password" name="ssh_password" type="password" />
