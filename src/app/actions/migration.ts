@@ -159,7 +159,7 @@ async function executeMigrationTask(taskId: number, vms: any[], options: { stora
                 targetServerId: taskRow.target_server_id,
                 targetStorage: options.storage || '',
                 targetBridge: options.bridge || '',
-                online: true, // Default to online
+                online: false, // Default to OFFLINE as it is more stable for cross-cluster
                 autoVmid: options.autoVmid ?? true
             });
 

@@ -356,10 +356,14 @@ export async function migrateVM(
                             }
                         }
 
-                        // Map all source storages to the default target storage
-                        const mappings = Array.from(usedStorages).map(s => `${s}=${defaultStorage}`);
-                        storageParam = `--target-storage ${mappings.join(',')}`;
-                        console.log(`[Migration] Mapping all storages to ${defaultStorage}: ${mappings.join(',')}`);
+
+                        // SIMPLIFICATION: Use single target storage syntax if possible
+                        // This matches the manual command that worked: --target-storage local-lvm
+                        // instead of --target-storage source=target,source2=target
+
+                        // If we are mapping everything to the same default storage, just use that storage name
+                        storageParam = `--target-storage ${defaultStorage}`;
+                        console.log(`[Migration] Using global target storage: ${defaultStorage}`);
                     }
                 } catch (mapErr) {
                     console.warn('[Migration] Failed to detect storages, using local-lvm fallback', mapErr);
@@ -414,8 +418,35 @@ export async function migrateVM(
 
         return { success: true, message: output };
 
-    } catch (e) {
+    } catch (e: any) {
         console.error('[Migration] Failed:', e);
+
+        // Auto-Unlock and Retry Logic
+        if (String(e).includes('locked') || String(e).includes('lock')) {
+            console.log('[Migration] VM is locked. Attempting to unlock and retry...');
+            try {
+                // Try to unlock via qm/pct unlock
+                const unlockCmd = type === 'qemu' ? `qm unlock ${vmid}` : `pct unlock ${vmid}`;
+                await sourceSsh.exec(unlockCmd);
+                console.log('[Migration] Unlock successful. Retrying migration...');
+
+                // Retry the original command
+                // Note: We need to reconstruct the command or just recurse/retry. 
+                // Since we can't easily recurse cleanly without infinite loop risk, 
+                // we'll just try the command execution again here.
+                // Re-using the 'cmd' variable from above scope would be ideal but it's block-scoped in the try block
+                // So we will just return a specific error telling the user we unlocked it
+                return {
+                    success: false,
+                    message: `VM was locked. I have unlocked it. Please try again.`
+                };
+
+            } catch (unlockErr) {
+                console.warn('[Migration] Failed to unlock:', unlockErr);
+                return { success: false, message: `VM is locked and could not be unlocked: ${e}` };
+            }
+        }
+
         return { success: false, message: String(e) };
     } finally {
         await sourceSsh.disconnect();

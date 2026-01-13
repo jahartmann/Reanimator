@@ -24,7 +24,7 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
     const [targetServerId, setTargetServerId] = useState<string>('');
     const [targetStorage, setTargetStorage] = useState<string>('');
     const [targetBridge, setTargetBridge] = useState<string>('');
-    const [online, setOnline] = useState(true);
+    const [online, setOnline] = useState(false); // Default to offline as it's more stable
 
     // VMID options
     const [autoVmid, setAutoVmid] = useState(true);  // Default: auto-select next free
