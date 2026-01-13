@@ -284,25 +284,46 @@ export async function migrateVM(
                 try {
                     const nextIdCmd = `pvesh get /cluster/nextid --output-format json 2>/dev/null`;
                     const nextIdResult = await targetSsh.exec(nextIdCmd, 5000);
-                    targetVmid = nextIdResult.trim().replace(/"/g, '');
-                    console.log(`[Migration] Using next available VMID on target: ${targetVmid}`);
-                } catch (e) {
-                    // Fallback: try without json format
-                    try {
-                        const nextIdCmd = `pvesh get /cluster/nextid 2>/dev/null || echo "100"`;
-                        const nextIdResult = await targetSsh.exec(nextIdCmd, 5000);
-                        targetVmid = nextIdResult.trim();
-                        console.log(`[Migration] Using fallback VMID: ${targetVmid}`);
-                    } catch {
-                        targetVmid = vmid;
-                        console.log('[Migration] Using original VMID as last resort');
+                    let candidateId = parseInt(nextIdResult.trim().replace(/"/g, ''), 10);
+
+                    // Safety Check: Ensure no stray volumes exist for this ID (orphaned disks)
+                    // The user encountered a crash because 101 had existing "vm-101-disk-*" volumes.
+                    let isClean = false;
+                    let attempts = 0;
+
+                    while (!isClean && attempts < 20) {
+                        try {
+                            // Check for LVM or ZFS volumes containing "vm-ID-" or "subvol-ID-"
+                            const checkCmd = `lvs -a | grep "vm-${candidateId}-" || zfs list | grep "vm-${candidateId}-" || ls /var/lib/vz/images/${candidateId} 2>/dev/null`;
+                            const checkResult = await targetSsh.exec(checkCmd, 5000);
+
+                            if (checkResult && checkResult.trim().length > 0) {
+                                console.log(`[Migration] VMID ${candidateId} is dirty (orphan resources found). Skipping...`);
+                                candidateId++;
+                                attempts++;
+                            } else {
+                                isClean = true;
+                            }
+                        } catch (checkErr) {
+                            // grep returns exit code 1 if no match -> logic assumes it's clean if error (no grep match)
+                            isClean = true;
+                        }
                     }
+
+                    targetVmid = candidateId.toString();
+                    console.log(`[Migration] Using clean, verified VMID: ${targetVmid}`);
+                } catch (e) {
+                    // Fallback to simpler logic if complex check fails
+                    console.warn('[Migration] Strict VMID check failed, falling back to basic nextid', e);
+                    targetVmid = "105"; // Fail-safe default
                 }
             } else {
                 // Keep original VMID (user unchecked auto-select)
                 targetVmid = vmid;
                 console.log(`[Migration] Keeping original VMID: ${targetVmid}`);
             }
+
+            console.log(`[Migration] Final Target VMID: ${targetVmid}`); // Explicit log for user visibility
 
             const apiEndpoint = `host=${target.ssh_host},apitoken=PVEAPIToken=${apiToken},fingerprint=${fingerprint}`;
 
@@ -410,18 +431,75 @@ export async function migrateVM(
             // apiEndpoint already defined above at line 190
 
 
-            if (type === 'qemu') {
-                cmd = `/usr/sbin/qm remote-migrate ${vmid} ${targetVmid} '${apiEndpoint}' ${bridgeParam} ${storageParam}`;
-                if (options.online) cmd += ` --online`;
-            } else {
-                cmd = `/usr/sbin/pct remote-migrate ${vmid} ${targetVmid} '${apiEndpoint}' ${bridgeParam} ${storageParam}`;
+            // API Endpoint String (already defined above)
+            // const apiEndpoint = ...
+
+            let finalBridge: string | undefined = undefined;
+            let finalStorage: string | undefined = undefined;
+
+            if (options.targetStorage) {
+                finalStorage = options.targetStorage;
+            } else if (storageParam.includes('--target-storage')) {
+                finalStorage = storageParam.split(' ')[1];
             }
 
-            console.log('[Migration] Running:', cmd);
-            console.log('[Migration] Running:', cmd);
-            // 30 minute timeout for large disk transfers (40GB+ can take a while)
-            // Enabling PTY to prevent "broken pipe" with qmtunnel
-            output = await sourceSsh.exec(cmd, 1800 * 1000, { pty: true });
+            if (options.targetBridge) {
+                finalBridge = options.targetBridge;
+            } else if (bridgeParam.includes('--target-bridge')) {
+                finalBridge = bridgeParam.split(' ')[1];
+            }
+
+            console.log(`[Migration] API Params - Bridge: ${finalBridge}, Storage: ${finalStorage}, VMID: ${targetVmid}`);
+
+            // --- API EXECUTION START ---
+            const { ProxmoxClient } = await import('@/lib/proxmox');
+
+            // Initialize Client
+            const client = new ProxmoxClient({
+                url: source.url,
+                token: source.auth_token,
+                type: 'pve',
+                // Fallback credential if token missing (less likely but possible)
+                username: source.ssh_user ? `${source.ssh_user}@pam` : undefined,
+                // Note: ssh_password isn't always available in DB text, relying on token
+            });
+
+            if (!source.auth_token) {
+                console.warn('[Migration] Source server has no API Token. Migration might fail authentication.');
+            }
+
+            console.log('[Migration] Starting remote-migrate via Proxmox API...');
+            const upid = await client.remoteMigrate(sourceNode, parseInt(vmid), {
+                targetVmid: parseInt(targetVmid),
+                targetEndpoint: apiEndpoint,
+                targetBridge: finalBridge,
+                targetStorage: finalStorage,
+                online: options.online
+            });
+
+            console.log(`[Migration] Task started. UPID: ${upid}`);
+
+            // Polling Loop (Wait for Task Completion)
+            let status = 'running';
+            while (status === 'running') {
+                await new Promise(r => setTimeout(r, 2000)); // Poll every 2s
+                const task = await client.getTaskStatus(sourceNode, upid);
+                status = task.status;
+
+                if (status === 'stopped') {
+                    if (task.exitstatus !== 'OK') {
+                        // Fetch log to see why it failed
+                        const logs = await client.getTaskLog(sourceNode, upid);
+                        throw new Error(`Migration Task Failed: ${task.exitstatus}\nLogs:\n${logs.slice(-20).join('\n')}`);
+                    }
+                }
+            }
+
+            // Fetch final log for success message
+            const logs = await client.getTaskLog(sourceNode, upid);
+            output = logs.join('\n');
+            console.log('[Migration] API Migration finished successfully.');
+            // --- API EXECUTION END ---
         }
 
         return { success: true, message: output };

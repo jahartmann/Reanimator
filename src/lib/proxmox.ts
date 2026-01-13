@@ -305,6 +305,58 @@ export class ProxmoxClient {
             tags: vm.tags ? vm.tags.split(',').map(t => t.trim()).filter(Boolean) : []
         }));
     }
+
+    // Remote Migrate (QEMU)
+    async remoteMigrate(node: string, vmid: number, params: RemoteMigrateParams): Promise<string> {
+        if (this.config.type !== 'pve') throw new Error('Only PVE supports remote-migrate');
+
+        const headers = await this.getHeaders();
+        const url = `${this.config.url}/api2/json/nodes/${node}/qemu/${vmid}/remote_migrate`;
+
+        const body = new URLSearchParams({
+            'target-vmid': params.targetVmid.toString(),
+            'target-endpoint': params.targetEndpoint,
+            online: params.online ? '1' : '0'
+        });
+
+        if (params.targetBridge) body.append('target-bridge', params.targetBridge);
+        if (params.targetStorage) body.append('target-storage', params.targetStorage);
+
+        const res = await this.secureFetch(url, {
+            method: 'POST',
+            headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+        });
+
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(`Migration failed: ${res.status} - ${err}`);
+        }
+
+        const data = await res.json() as { data: string }; // Returns UPID
+        return data.data;
+    }
+
+    // Get Task Status
+    async getTaskStatus(node: string, upid: string): Promise<TaskStatus> {
+        const headers = await this.getHeaders();
+        // UPID must be encoded
+        const res = await this.secureFetch(`${this.config.url}/api2/json/nodes/${node}/tasks/${encodeURIComponent(upid)}/status`, { headers });
+
+        if (!res.ok) throw new Error('Failed to get task status');
+        const data = await res.json() as { data: TaskStatus };
+        return data.data;
+    }
+
+    // Get Task Log
+    async getTaskLog(node: string, upid: string): Promise<string[]> {
+        const headers = await this.getHeaders();
+        const res = await this.secureFetch(`${this.config.url}/api2/json/nodes/${node}/tasks/${encodeURIComponent(upid)}/log`, { headers });
+
+        if (!res.ok) throw new Error('Failed to get task log');
+        const data = await res.json() as { data: { t: string }[] };
+        return data.data.map(l => l.t);
+    }
 }
 
 // Type definitions
@@ -401,4 +453,23 @@ export interface VMInfo {
     disk: number;
     uptime: number;
     tags: string[];
+}
+
+export interface RemoteMigrateParams {
+    targetVmid: number;
+    targetEndpoint: string;
+    targetBridge?: string;
+    targetStorage?: string;
+    online?: boolean;
+}
+
+export interface TaskStatus {
+    status: 'running' | 'stopped';
+    exitstatus?: string;
+    id: string;
+    node: string;
+    starttime: number;
+    type: string;
+    upid: string;
+    user: string;
 }
