@@ -223,8 +223,234 @@ export async function migrateVM(
             debugCmd = cmd;
             // ...
         } else {
-            // ... (cross-cluster logic)
-            // ...
+            // ========== CROSS-CLUSTER / STANDALONE MIGRATION ==========
+            // Use the pre-configured API token from the target server (stored during server setup)
+            console.log(`[Migration] Using cross-cluster remote-migrate with stored token`);
+
+            // Validate that target server has an API token configured
+            if (!target.auth_token) {
+                return {
+                    success: false,
+                    message: 'Zielserver hat keinen API-Token konfiguriert. Bitte in den Server-Einstellungen einen Token hinterlegen.'
+                };
+            }
+
+            // Use the stored token directly (format: user@realm!tokenid=secret)
+            const apiToken = target.auth_token;
+
+            // Get SSL Fingerprint: Prefer stored fingerprint, fallback to dynamic fetch
+            let fingerprint = target.ssl_fingerprint;
+            if (!fingerprint) {
+                console.log('[Migration] No stored fingerprint found, fetching dynamically...');
+                const fpCmd = `openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`;
+                fingerprint = (await targetSsh.exec(fpCmd)).trim();
+            } else {
+                console.log('[Migration] Using stored SSL fingerprint.');
+            }
+
+            // Determine target VMID based on options
+            let targetVmid: string;
+
+            if (options.targetVmid) {
+                // User specified a custom VMID
+                targetVmid = options.targetVmid;
+                console.log(`[Migration] Using user-specified VMID: ${targetVmid}`);
+            } else if (options.autoVmid !== false) {
+                // Auto-select next available VMID (default behavior for cross-cluster)
+                try {
+                    const nextIdCmd = `pvesh get /cluster/nextid --output-format json 2>/dev/null`;
+                    const nextIdResult = await targetSsh.exec(nextIdCmd, 5000);
+                    let candidateId = parseInt(nextIdResult.trim().replace(/"/g, ''), 10);
+
+                    // Safety Check: Ensure no stray volumes exist for this ID (orphaned disks)
+                    // The user encountered a crash because 101 had existing "vm-101-disk-*" volumes.
+                    let isClean = false;
+                    let attempts = 0;
+
+                    while (!isClean && attempts < 20) {
+                        try {
+                            // Check for LVM or ZFS volumes containing "vm-ID-" or "subvol-ID-"
+                            const checkCmd = `lvs -a | grep "vm-${candidateId}-" || zfs list | grep "vm-${candidateId}-" || ls /var/lib/vz/images/${candidateId} 2>/dev/null`;
+                            const checkResult = await targetSsh.exec(checkCmd, 5000);
+
+                            if (checkResult && checkResult.trim().length > 0) {
+                                console.log(`[Migration] VMID ${candidateId} is dirty (orphan resources found). Skipping...`);
+                                candidateId++;
+                                attempts++;
+                            } else {
+                                isClean = true;
+                            }
+                        } catch (checkErr) {
+                            // grep returns exit code 1 if no match -> logic assumes it's clean if error (no grep match)
+                            isClean = true;
+                        }
+                    }
+
+                    targetVmid = candidateId.toString();
+                    console.log(`[Migration] Using clean, verified VMID: ${targetVmid}`);
+                } catch (e) {
+                    // Fallback to simpler logic if complex check fails
+                    console.warn('[Migration] Strict VMID check failed, falling back to basic nextid', e);
+                    targetVmid = "105"; // Fail-safe default
+                }
+            } else {
+                // Keep original VMID (user unchecked auto-select)
+                targetVmid = vmid;
+                console.log(`[Migration] Keeping original VMID: ${targetVmid}`);
+            }
+
+            console.log(`[Migration] Final Target VMID: ${targetVmid}`); // Explicit log for user visibility
+
+            // Sanitize Token: Remove "PVEAPIToken=" prefix if present to avoid double prefixing
+            let cleanToken = apiToken.trim();
+            if (cleanToken.startsWith('PVEAPIToken=')) {
+                cleanToken = cleanToken.replace('PVEAPIToken=', '');
+            }
+
+            // Ensure Host is valid (prefer SSH host, fallback to URL hostname)
+            let migrationHost = target.ssh_host;
+            if (!migrationHost && target.url) {
+                try {
+                    migrationHost = new URL(target.url).hostname;
+                } catch (e) {
+                    migrationHost = target.url;
+                }
+            }
+
+            // Construct Endpoint String
+            // Note: We use the raw token.
+            // Escape single quotes in the endpoint string just in case, though unlikely in token/host.
+            const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${cleanToken},fingerprint=${fingerprint}`;
+            const safeEndpoint = apiEndpoint.replace(/'/g, "'\\''");
+
+            console.log(`[Migration] Constructed Remote Endpoint: host=${migrationHost}, fingerprint=${fingerprint}, token=...`);
+
+            let cmd = '';
+
+            // Auto-Map Storage/Bridge if not specified (Same-Name Logic)
+            let storageParam = '';
+            let bridgeParam = '';
+
+
+            // 3. Fetch Target Resources for Validation/Fallback
+            let targetBridges: string[] = [];
+            let targetStorages: string[] = [];
+            try {
+                // Determine target bridges
+                const brOut = await targetSsh.exec(`ls /sys/class/net/ | grep "^vmbr" || echo "vmbr0"`);
+                targetBridges = brOut.split('\n').map(s => s.trim()).filter(Boolean);
+
+                // Determine target storages
+                const stOut = await targetSsh.exec(`pvesh get /storage --output-format json 2>/dev/null || echo "[]"`);
+                const stJson = JSON.parse(stOut);
+                targetStorages = stJson.map((s: any) => s.storage);
+            } catch (e) {
+                console.warn('[Migration] Failed to fetch target resources, assuming defaults', e);
+                targetBridges = ['vmbr0'];
+            }
+
+
+            if (options.targetStorage) {
+                storageParam = `--target-storage ${options.targetStorage}`;
+            } else {
+                try {
+                    const confCmd = type === 'qemu' ? `qm config ${vmid}` : `pct config ${vmid}`;
+                    const confOutput = await sourceSsh.exec(confCmd);
+                    const lines = confOutput.split('\n');
+
+                    const usedStorages = new Set<string>();
+                    for (const line of lines) {
+                        if (/^(scsi|ide|sata|virtio|rootfs|mp)\d*:/.test(line)) {
+                            const val = line.split(':')[1].trim();
+                            if (val.includes(':')) {
+                                const store = val.split(':')[0];
+                                usedStorages.add(store);
+                            }
+                        }
+                    }
+
+                    if (usedStorages.size > 0) {
+                        // Prefer local-lvm as target (more reliable for remote-migrate)
+                        // Fallback hierarchy: local-lvm > local > first available
+                        let defaultStorage = 'local-lvm';
+                        if (!targetStorages.includes('local-lvm')) {
+                            if (targetStorages.includes('local')) {
+                                defaultStorage = 'local';
+                            } else if (targetStorages.length > 0) {
+                                defaultStorage = targetStorages[0];
+                            }
+                        }
+
+
+                        // SIMPLIFICATION: Use single target storage syntax if possible
+                        // This matches the manual command that worked: --target-storage local-lvm
+                        // instead of --target-storage source=target,source2=target
+
+                        // If we are mapping everything to the same default storage, just use that storage name
+                        storageParam = `--target-storage ${defaultStorage}`;
+                        console.log(`[Migration] Using global target storage: ${defaultStorage}`);
+                    }
+                } catch (mapErr) {
+                    console.warn('[Migration] Failed to detect storages, using local-lvm fallback', mapErr);
+                    storageParam = '--target-storage local-lvm';
+                }
+            }
+
+            if (options.targetBridge) {
+                bridgeParam = `--target-bridge ${options.targetBridge}`;
+            } else {
+                try {
+                    const confCmd = type === 'qemu' ? `qm config ${vmid}` : `pct config ${vmid}`;
+                    const confOutput = await sourceSsh.exec(confCmd);
+                    const net0 = confOutput.split('\n').find(l => l.startsWith('net0:'));
+
+                    let desiredBridge = 'vmbr0';
+                    if (net0) {
+                        const match = net0.match(/bridge=([a-zA-Z0-9]+)/);
+                        if (match && match[1]) {
+                            desiredBridge = match[1];
+                        }
+                    }
+
+                    // Smart Fallback: Check if desired bridge exists on target
+                    if (targetBridges.includes(desiredBridge)) {
+                        bridgeParam = `--target-bridge ${desiredBridge}`;
+                        console.log(`[Migration] Using matched bridge: ${desiredBridge}`);
+                    } else {
+                        bridgeParam = `--target-bridge vmbr0`; // Required Fallback
+                        console.log(`[Migration] Bridge ${desiredBridge} missing on target. Falling back to vmbr0.`);
+                    }
+                } catch (e) {
+                    bridgeParam = '--target-bridge vmbr0';
+                }
+            }
+
+
+            // apiEndpoint already defined above at line 190
+
+
+            // API Endpoint String (already defined above)
+            // const apiEndpoint = ...
+
+            let finalBridge: string | undefined = undefined;
+            let finalStorage: string | undefined = undefined;
+
+            if (options.targetStorage) {
+                finalStorage = options.targetStorage;
+            } else if (storageParam.includes('--target-storage')) {
+                finalStorage = storageParam.split(' ')[1];
+            }
+
+            if (options.targetBridge) {
+                finalBridge = options.targetBridge;
+            } else if (bridgeParam.includes('--target-bridge')) {
+                finalBridge = bridgeParam.split(' ')[1];
+            }
+
+            console.log(`[Migration] API Params - Bridge: ${finalBridge}, Storage: ${finalStorage}, VMID: ${targetVmid}`);
+
+            console.log('[Migration] Starting remote-migrate via pvesh (SSH)...');
+
             // Construct pvesh command
             // CRITICAL: Use single quotes for target-endpoint to prevent shell expansion of '!' in the token
             let migrateCmd = `pvesh create /nodes/${sourceNode}/qemu/${vmid}/remote_migrate --target-vmid ${targetVmid} --target-endpoint '${safeEndpoint}' --online ${options.online ? 1 : 0}`;
