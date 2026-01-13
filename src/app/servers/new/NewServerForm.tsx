@@ -16,7 +16,7 @@ export default function NewServerForm({ existingGroups }: NewServerFormProps) {
     const [sshStatus, setSSHStatus] = useState<'none' | 'success' | 'error'>('none');
     const [sshMessage, setSSHMessage] = useState('');
     const [tokenStatus, setTokenStatus] = useState<'none' | 'success' | 'error'>('none');
-    const [tokenStatus, setTokenStatus] = useState<'none' | 'success' | 'error'>('none');
+
     const [tokenMessage, setTokenMessage] = useState('');
 
     // Cluster Import State
