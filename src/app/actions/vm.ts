@@ -324,7 +324,7 @@ export async function migrateVM(
                 }
             }
 
-            const apiEndpoint = `host=${target.ssh_host},apitoken=${apiToken},fingerprint=${fingerprint}`;
+            const apiEndpoint = `host=${target.ssh_host},apitoken=PVEAPIToken=${apiToken},fingerprint=${fingerprint}`;
 
             let cmd = '';
 
