@@ -104,7 +104,9 @@ async function migrateLocal(ctx: MigrationContext): Promise<string> {
     const migrateApiCmd = `pvesh create /nodes/${ctx.sourceNode}/${apiPath}/${vmid}/migrate --target ${targetNode} ${options.online ? '--online 1' : ''} ${options.targetStorage ? '--target-storage ' + options.targetStorage : ''}`;
 
     console.log('[Migration] Executing Intra-Cluster migration:', migrateApiCmd);
-    const upid = (await sourceSsh.exec(migrateApiCmd)).trim();
+    // Execute API call with PTY to properly handle output buffering/tunnel init
+    // The PTY is often required for 'pvesh' to correctly handle the websocket tunnel startup without hanging
+    const upid = (await sourceSsh.exec(migrateApiCmd, 60000, { pty: true })).trim();
     console.log(`[Migration] Started UPID: ${upid}`);
 
     await pollTaskStatus(sourceSsh, ctx.sourceNode, upid);
