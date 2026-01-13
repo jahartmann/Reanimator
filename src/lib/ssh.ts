@@ -48,8 +48,8 @@ export class SSHClient {
                 port: this.config.port,
                 username: this.config.username,
                 readyTimeout: 10000, // 10 seconds timeout for handshake
-                keepaliveInterval: 10000, // Send keepalive every 10s to prevent broken pipe
-                keepaliveCountMax: 3
+                keepaliveInterval: 30000, // 30s to avoid saturation drops
+                keepaliveCountMax: 10     // Higher tolerance
             };
 
             if (this.config.privateKey) {

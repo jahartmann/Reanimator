@@ -288,6 +288,22 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     } catch (nativeError: any) {
         log(`[Migration] Native strategy failed: ${nativeError.message}. Falling back to Streaming Backup/Restore...`);
 
+        // Force Reconnect: If native failed (broken pipe/exec undefined), our connection is likely dead.
+        // We MUST reconnect to attempt the fallback.
+        try {
+            log('[Migration] Re-establishing SSH connections for Fallback...');
+            // Attempt clean disconnect first (swallow errors)
+            try { await sourceSsh.disconnect(); } catch { }
+            try { await targetSsh.disconnect(); } catch { }
+
+            // Reconnect
+            await Promise.all([sourceSsh.connect(), targetSsh.connect()]);
+            log('[Migration] Connections restored.');
+        } catch (reconnErr) {
+            log('[Migration] Failed to reconnect for fallback: ' + String(reconnErr));
+            throw new Error(`Migration Failed. Native Error: ${nativeError.message}\nCould not recover connection for fallback.`);
+        }
+
         // --- FALLBACK STRATEGY: Streaming Backup/Restore ---
 
         // 1. Cleanup Target Again (Ensure slate is clear after failed native attempt)
