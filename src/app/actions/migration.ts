@@ -148,6 +148,14 @@ export async function startVMMigration(
         // Define Steps
         const steps: MigrationStep[] = [];
 
+        // Step 1: Preparation
+        steps.push({
+            type: 'config',
+            name: 'Prepare Migration',
+            status: 'pending',
+            detail: 'Checking prerequisites and connectivity'
+        });
+
         // Single VM Migration Step
         steps.push({
             type: vm.type === 'qemu' ? 'vm' : 'lxc',
@@ -158,9 +166,17 @@ export async function startVMMigration(
             detail: `Migrating ${vm.name || vm.vmid} to ${target.name}`
         });
 
+        // Step 3: Finalize
+        steps.push({
+            type: 'finalize',
+            name: 'Finalize',
+            status: 'pending',
+            detail: 'Cleaning up temporary tokens'
+        });
+
         const initialLog = `[${new Date().toLocaleTimeString()}] Single VM Migration Task started.\nSource: ${source.name}\nTarget: ${target.name}\nVM: ${vm.vmid} (${vm.name})\n`;
 
-        const result = stmt.get(sourceId, targetId, 'running', 0, 1, JSON.stringify(steps), initialLog, tStorage, tBridge) as { id: number };
+        const result = stmt.get(sourceId, targetId, 'running', 0, steps.length, JSON.stringify(steps), initialLog, tStorage, tBridge) as { id: number };
         const taskId = result.id;
 
         // 2. Trigger Background Processing
