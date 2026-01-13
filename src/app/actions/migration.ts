@@ -252,7 +252,7 @@ async function executeMigrationTask(taskId: number, vms: any[], options: { stora
                 targetBridge: options.bridge || '',
                 online: false, // Default to OFFLINE as it is more stable for cross-cluster
                 autoVmid: options.autoVmid ?? true
-            });
+            }, log);
 
             if (res.success) {
                 steps[currentStepIndex].status = 'completed';

@@ -38,6 +38,7 @@ interface MigrationContext {
     targetSsh: SSHClient;
     sourceNode: string;
     targetNode: string;
+    onLog?: (msg: string) => void;
 }
 
 // --- Helper: Get Server ---
@@ -90,7 +91,8 @@ async function pollTaskStatus(client: SSHClient, node: string, upid: string) {
 // --- Strategies ---
 
 async function migrateLocal(ctx: MigrationContext): Promise<string> {
-    const { sourceSsh, type, vmid, targetNode, options } = ctx;
+    const { sourceSsh, type, vmid, targetNode, options, onLog } = ctx;
+    const log = (msg: string) => { console.log(msg); if (onLog) onLog(msg); };
 
     // Check if moving to same node
     if (ctx.sourceNode === ctx.targetNode) {
@@ -103,18 +105,19 @@ async function migrateLocal(ctx: MigrationContext): Promise<string> {
     const apiPath = type === 'qemu' ? 'qemu' : 'lxc';
     const migrateApiCmd = `pvesh create /nodes/${ctx.sourceNode}/${apiPath}/${vmid}/migrate --target ${targetNode} ${options.online ? '--online 1' : ''} ${options.targetStorage ? '--target-storage ' + options.targetStorage : ''}`;
 
-    console.log('[Migration] Executing Intra-Cluster migration:', migrateApiCmd);
+    log(`[Migration] Executing Intra-Cluster migration: ${migrateApiCmd}`);
     // Execute API call with PTY to properly handle output buffering/tunnel init
     // The PTY is often required for 'pvesh' to correctly handle the websocket tunnel startup without hanging
     const upid = (await sourceSsh.exec(migrateApiCmd, 60000, { pty: true })).trim();
-    console.log(`[Migration] Started UPID: ${upid}`);
+    log(`[Migration] Started UPID: ${upid}`);
 
     await pollTaskStatus(sourceSsh, ctx.sourceNode, upid);
     return `Intra-cluster migration completed (UPID: ${upid})`;
 }
 
 async function migrateRemote(ctx: MigrationContext): Promise<string> {
-    const { sourceSsh, targetSsh, target, type, vmid, options } = ctx;
+    const { sourceSsh, targetSsh, target, type, vmid, options, onLog } = ctx;
+    const log = (msg: string) => { console.log(msg); if (onLog) onLog(msg); };
 
     // 1. Validate Token
     if (!target.auth_token) throw new Error('Zielserver hat keinen API-Token.');
@@ -243,15 +246,17 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     if (options.targetBridge) nativeCmd += ` --target-bridge ${options.targetBridge}`;
     if (options.online) nativeCmd += ` --online`;
 
-    console.log('[Migration] Attempting Primary Strategy: Native qm remote-migrate (Exact Syntax)');
-    console.log('[Migration] Command:', nativeCmd.replace(cleanToken, '***'));
+    log('[Migration] Attempting Primary Strategy: Native qm remote-migrate (Exact Syntax)');
+    log(`[Migration] Command: ${nativeCmd.replace(cleanToken, '***')}`);
+    // Also log the REAL command (with tokens) to the persistent log for the user to copy-paste!
+    log(`[DEBUG] Full Command for Manual Execution:\n${nativeCmd}`);
 
     try {
         // Execute directly with PTY (Pseudo-Terminal) to match manual shell execution
         const output = await sourceSsh.exec(nativeCmd, 3600000, { pty: true });
         return `Cross-cluster migration completed successfully (Native).\nLogs:\n${output}`;
     } catch (nativeError: any) {
-        console.warn(`[Migration] Native strategy failed: ${nativeError.message}. Falling back to Streaming Backup/Restore...`);
+        log(`[Migration] Native strategy failed: ${nativeError.message}. Falling back to Streaming Backup/Restore...`);
 
         // --- FALLBACK STRATEGY: Streaming Backup/Restore ---
 
@@ -269,15 +274,15 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         const dumpCmd = `/usr/sbin/vzdump ${vmid} --stdout --compress zstd --mode ${dumpMode}`;
 
         try {
-            console.log(`[Migration] Fallback Pipeline: ${dumpCmd} | SSH | ${restoreCmd}`);
+            log(`[Migration] Fallback Pipeline: ${dumpCmd} | SSH | ${restoreCmd}`);
             const targetStream = await targetSsh.getExecStream(restoreCmd);
             const sourceStream = await sourceSsh.getExecStream(dumpCmd);
 
             sourceStream.pipe(targetStream);
 
             // Log streams
-            sourceStream.stderr.on('data', (d) => { const l = d.toString().trim(); if (l) console.log(`[Source] ${l}`); });
-            targetStream.stderr.on('data', (d) => { const l = d.toString().trim(); if (l) console.log(`[Target] ${l}`); });
+            sourceStream.stderr.on('data', (d) => { const l = d.toString().trim(); if (l) log(`[Source] ${l}`); });
+            targetStream.stderr.on('data', (d) => { const l = d.toString().trim(); if (l) log(`[Target] ${l}`); });
 
             await new Promise<void>((resolve, reject) => {
                 targetStream.on('close', (code: number) => {
@@ -308,7 +313,8 @@ export async function migrateVM(
     sourceId: number,
     vmid: string,
     type: 'qemu' | 'lxc',
-    options: MigrationOptions
+    options: MigrationOptions,
+    onLog?: (msg: string) => void
 ) {
     const source = await getServer(sourceId);
     const target = await getServer(options.targetServerId);
@@ -334,7 +340,8 @@ export async function migrateVM(
             sourceId, vmid, type, options,
             source, target,
             sourceSsh, targetSsh,
-            sourceNode, targetNode
+            sourceNode, targetNode,
+            onLog
         };
 
         if (sameCluster) {
