@@ -120,12 +120,10 @@ export class SSHClient {
                     });
 
                     stream.on('close', (code: number) => {
-                        // Return stdout if we have any output, even with warnings on stderr
-                        // Only fail if there's no stdout AND we have a non-zero exit code with stderr
-                        if (output.trim()) {
-                            resolveExec(output);
-                        } else if (code !== 0 && errorOutput) {
-                            rejectExec(new Error(errorOutput));
+                        // Strict check: non-zero exit code means failure
+                        if (code !== 0) {
+                            const failMsg = errorOutput.trim() || output.trim() || 'Unknown error';
+                            rejectExec(new Error(`Command failed with exit code ${code}: ${failMsg}`));
                         } else {
                             resolveExec(output);
                         }

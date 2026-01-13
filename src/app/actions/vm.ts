@@ -438,6 +438,9 @@ export async function migrateVM(
         console.error('[Migration] Failed:', e);
         return { success: false, message: String(e) };
     } finally {
+        // Wait a bit to ensure remote processes finish closing their connections
+        await new Promise(r => setTimeout(r, 2000));
+
         // Clean up: Remove temp user and tokens
         // tempTokenId is only set for cross-cluster migrations
         if (tempTokenId) {

@@ -65,8 +65,8 @@ export function TaskManager() {
 
             setTasks(active);
 
-            // All recent tasks (last 10)
-            setAllTasks(mapped.slice(0, 10));
+            // All tasks for history view, sorted by ID desc
+            setAllTasks(mapped.sort((a: Task, b: Task) => b.id - a.id));
         } catch (e) {
             console.error('[TaskManager] Poll error:', e);
         }
