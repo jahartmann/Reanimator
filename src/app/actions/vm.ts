@@ -231,58 +231,35 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         // VM does not exist (normal case), proceed.
     }
 
-    console.log(`[Migration] Pipeline: ${dumpCmd} | SSH | ${restoreCmd}`);
+    // 5. Native 'qm remote-migrate' Strategy
+    console.log('[Migration] Starting Native qm remote-migrate...');
+
+    // Endpoint Construction
+    const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${cleanToken},fingerprint=${fingerprint}`;
+    const safeEndpoint = apiEndpoint.replace(/'/g, "'\\''");
+
+    let cmd = `qm remote-migrate ${vmid} ${targetVmid} '${safeEndpoint}'`;
+
+    // Add Options
+    if (options.targetStorage) cmd += ` --target-storage ${options.targetStorage}`;
+    if (options.targetBridge) cmd += ` --target-bridge ${options.targetBridge}`;
+    if (options.online) cmd += ` --online`;
+
+    // Note: We execute with PTY (pseudo-terminal) because 'mtunnel' (used internally by remote-migrate)
+    // acts differently/fails in non-interactive shells. This matches "manual" execution.
+
+    console.log('[Migration] Command:', cmd.replace(cleanToken, '***'));
 
     try {
-        const targetStream = await targetSsh.getExecStream(restoreCmd);
-        const sourceStream = await sourceSsh.getExecStream(dumpCmd);
+        // Execute with PTY and long timeout
+        // We use the 'exec' method which now supports PTY options thanks to our ssh.ts update
+        const output = await sourceSsh.exec(cmd, 3600000, { pty: true });
 
-        // Pipe Source STDOUT -> Target STDIN
-        sourceStream.pipe(targetStream);
+        return `Cross-cluster migration completed successfully.\nLogs:\n${output}`;
 
-        // Monitor logs
-        sourceStream.stderr.on('data', (data) => {
-            const log = data.toString().trim();
-            if (log) console.log(`[Source] ${log}`);
-        });
-
-        targetStream.stderr.on('data', (data) => {
-            const log = data.toString().trim();
-            if (log) console.log(`[Target] ${log}`);
-        });
-
-        // Wait for Target to finish (Consumer)
-        await new Promise<void>((resolve, reject) => {
-            targetStream.on('close', (code: number) => {
-                if (code === 0) {
-                    resolve();
-                } else {
-                    reject(new Error(`Restore process exited with code ${code}`));
-                }
-            });
-
-            targetStream.on('error', (err: any) => reject(new Error(`Target Stream Error: ${err.message}`)));
-            sourceStream.on('error', (err: any) => reject(new Error(`Source Stream Error: ${err.message}`)));
-        });
-
-        // Post-Migration: Stop Source VM if "online" migration intended to move it?
-        // Traditional migration moves the VM. Backup/Restore CLONES it.
-        // User expects migration (move).
-        // If success, we should stop source VM and maybe lock it / rename it?
-        // Safety: Just stop it.
-        if (options.online) {
-            console.log('[Migration] Success. Stopping source VM...');
-            try {
-                await sourceSsh.exec(`qm stop ${vmid} --timeout 30`);
-            } catch (e) {
-                console.warn('[Migration] Could not stop source VM:', e);
-            }
-        }
-
-        return `Migration (Streaming) completed successfully. Target VMID: ${targetVmid}`;
-
-    } catch (streamErr: any) {
-        throw new Error(`Streaming Migration Failed: ${streamErr.message}`);
+    } catch (e: any) {
+        console.error('[Migration] qm remote-migrate failed:', e);
+        throw new Error(`Migration Command Failed (Native): ${e.message || String(e)}`);
     }
 }
 
