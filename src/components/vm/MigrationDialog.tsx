@@ -108,6 +108,25 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
 
                 {!migrating && logs.length === 0 ? (
                     <div className="grid gap-6 py-4">
+                        {/* Source VM Info */}
+                        <div className="p-4 border rounded-lg bg-muted/30">
+                            <h4 className="font-medium text-sm mb-3">Aktuelle Konfiguration</h4>
+                            <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                    <span className="text-muted-foreground">Netzwerk:</span>
+                                    <div className="font-mono mt-1">
+                                        {vm.networks?.length ? vm.networks.join(', ') : <span className="text-muted-foreground">-</span>}
+                                    </div>
+                                </div>
+                                <div>
+                                    <span className="text-muted-foreground">Storage:</span>
+                                    <div className="font-mono mt-1">
+                                        {vm.storages?.length ? vm.storages.join(', ') : <span className="text-muted-foreground">-</span>}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div className="space-y-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
