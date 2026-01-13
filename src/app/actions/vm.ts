@@ -261,8 +261,8 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
                 }
             });
 
-            targetStream.on('error', (err) => reject(new Error(`Target Stream Error: ${err.message}`)));
-            sourceStream.on('error', (err) => reject(new Error(`Source Stream Error: ${err.message}`)));
+            targetStream.on('error', (err: any) => reject(new Error(`Target Stream Error: ${err.message}`)));
+            sourceStream.on('error', (err: any) => reject(new Error(`Source Stream Error: ${err.message}`)));
         });
 
         // Post-Migration: Stop Source VM if "online" migration intended to move it?
