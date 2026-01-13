@@ -251,7 +251,10 @@ export async function migrateVM(
             // Use qm remote-migrate with API token
             console.log(`[Migration] Using cross-cluster remote-migrate`);
 
-            // Generate temporary API Token on Target
+            // Generate temporary API Token on Target with proper privileges
+            // First ensure the token doesn't exist (cleanup from previous failed attempts)
+            await targetSsh.exec(`pveum user token remove root@pam ${tempTokenId} 2>/dev/null || true`);
+
             const tokenCmd = `pveum user token add root@pam ${tempTokenId} --privsep 0 --output-format json`;
             const tokenJson = await targetSsh.exec(tokenCmd);
             const tokenData = JSON.parse(tokenJson);
