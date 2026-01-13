@@ -342,10 +342,11 @@ export async function migrateVM(
             }
 
             // Construct Endpoint String
-            // Note: We use encodeURIComponent for the token to handle special chars like '=', '@', '!' safely in the comma-separated string
-            const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${encodeURIComponent(cleanToken)},fingerprint=${fingerprint}`;
+            // Note: We do NOT encodeURIComponent the token because pvesh/remote_migrate expects the raw token in the string.
+            // encoding it breaks the PVEAPIToken format (e.g. %40 instead of @).
+            const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${cleanToken},fingerprint=${fingerprint}`;
 
-            console.log(`[Migration] Constructed Remote Endpoint: host=${migrationHost}, fingerprint=${fingerprint}, token=***`);
+            console.log(`[Migration] Constructed Remote Endpoint: host=${migrationHost}, fingerprint=${fingerprint}, token=...`);
 
             let cmd = '';
 
