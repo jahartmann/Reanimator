@@ -198,8 +198,21 @@ export async function migrateVM(
         // let debugCmd assigned inside try, moving out
 
         if (sameCluster) {
-            // ... (intra-cluster logic)
-            // ...
+            // ========== INTRA-CLUSTER MIGRATION ==========
+            // Use standard qm/pct migrate (no need for API tokens)
+            console.log(`[Migration] Using intra-cluster migration to ${targetNode}`);
+
+            // Check if source and target are on the same node
+            if (sourceNode === targetNode) {
+                return {
+                    success: false,
+                    message: `VM befindet sich bereits auf Node ${targetNode}. Wählen Sie einen anderen Ziel-Server.`
+                };
+            }
+
+            // Build storage mapping if specified
+            const storageFlag = options.targetStorage ? `--target-storage ${options.targetStorage}` : '';
+
             if (type === 'qemu') {
                 cmd = `/usr/sbin/qm migrate ${vmid} ${targetNode} ${storageFlag}`;
                 if (options.online) cmd += ` --online`;
