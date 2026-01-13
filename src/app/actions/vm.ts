@@ -205,17 +205,27 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     if (options.online) extraParams += ` --online`;
 
     if (useCLI && type === 'qemu') {
-        console.log('[Migration] Using qm remote-migrate CLI');
-        // qm remote-migrate <vmid> [<target-vmid>] <target-endpoint> [OPTIONS]
-        // Note: Syntax is `qm remote-migrate <vmid> <target-vmid> <endpoint> ...`
-        const cmd = `qm remote-migrate ${vmid} ${targetVmid} '${safeEndpoint}' ${extraParams}`;
+        console.log('[Migration] Using qm remote-migrate CLI (Blocking, with PTY)');
 
-        // qm usually outputs to stdout. Does it return UPID? 
-        // Most proxmox CLI tools return UPID only if async. remote-migrate is sync by default in CLI? 
-        // Let's use `pvesh` as it always returns UPID, but ensuring we use the exact args from the guide.
+        const cmd = `qm remote-migrate ${vmid} ${targetVmid} '${safeEndpoint}' ${extraParams} --migration_network ${encodeURIComponent(migrationHost)}`;
+        // Note: migration_network is optional but good practice if checking network. 
+        // Actually, let's stick to exactly what worked manually for the user if known, or the standard syntax.
+        // Standard: qm remote-migrate <vmid> <target-vmid> <api-endpoint>
 
-        const pveShCmd = `pvesh create /nodes/${ctx.sourceNode}/qemu/${vmid}/remote_migrate --target-vmid ${targetVmid} --target-endpoint '${safeEndpoint}' ${extraParams}`;
-        upid = (await sourceSsh.exec(pveShCmd)).trim();
+        const runCmd = `qm remote-migrate ${vmid} ${targetVmid} '${safeEndpoint}' ${extraParams}`;
+
+        console.log('[Migration] Command:', runCmd.replace(cleanToken, '***'));
+
+        // Execute with high timeout (1 hour) and PTY (crucial for tunnel stability)
+        // processing is blocking here.
+        try {
+            const output = await sourceSsh.exec(runCmd, 3600000, { pty: true });
+            return `Cross-cluster migration completed successfully.\nLogs:\n${output}`;
+        } catch (e: any) {
+            console.error('[Migration] qm remote-migrate failed:', e);
+            throw new Error(`Migration Command Failed:\n${e.message || String(e)}`);
+        }
+
     } else if (type === 'lxc') {
         const pveShCmd = `pvesh create /nodes/${ctx.sourceNode}/lxc/${vmid}/remote_migrate --target-vmid ${targetVmid} --target-endpoint '${safeEndpoint}' ${extraParams} --restart 1`;
         upid = (await sourceSsh.exec(pveShCmd)).trim();
