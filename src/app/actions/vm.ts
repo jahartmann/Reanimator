@@ -263,19 +263,37 @@ export async function migrateVM(
             const fpCmd = `openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`;
             const fingerprint = (await targetSsh.exec(fpCmd)).trim();
 
-            // Check if VMID is free on target, if not, get next available VMID
+            // Check if VMID is free on target cluster, if not, get next available VMID
             let targetVmid = vmid;
             try {
-                const checkCmd = `pvesh get /cluster/resources --type vm 2>/dev/null | grep -q '"vmid":${vmid}' && echo "exists" || echo "free"`;
-                const checkResult = (await targetSsh.exec(checkCmd, 5000)).trim();
-                if (checkResult === 'exists') {
-                    // Get next free VMID
-                    const nextIdCmd = `pvesh get /cluster/nextid`;
-                    targetVmid = (await targetSsh.exec(nextIdCmd, 5000)).trim();
-                    console.log(`[Migration] VMID ${vmid} exists on target, using ${targetVmid} instead`);
+                // Get all VMs in target cluster and check if our VMID is taken
+                const checkCmd = `pvesh get /cluster/resources --type vm --output-format json 2>/dev/null || echo "[]"`;
+                const checkResult = await targetSsh.exec(checkCmd, 10000);
+                const clusterVms = JSON.parse(checkResult);
+
+                // Check if any VM has our VMID
+                const vmIdExists = clusterVms.some((vm: any) =>
+                    vm.vmid !== undefined && vm.vmid.toString() === vmid.toString()
+                );
+
+                if (vmIdExists) {
+                    // Get next free VMID from target cluster
+                    const nextIdCmd = `pvesh get /cluster/nextid 2>/dev/null || echo "100"`;
+                    const nextIdResult = await targetSsh.exec(nextIdCmd, 5000);
+                    targetVmid = nextIdResult.trim();
+                    console.log(`[Migration] VMID ${vmid} exists on target cluster, using ${targetVmid} instead`);
                 }
             } catch (e) {
-                console.log('[Migration] Could not check VMID availability, using same VMID');
+                console.log('[Migration] Could not check VMID availability:', e);
+                // As a fallback, try to get next available ID anyway
+                try {
+                    const nextIdCmd = `pvesh get /cluster/nextid 2>/dev/null || echo "100"`;
+                    const nextIdResult = await targetSsh.exec(nextIdCmd, 5000);
+                    targetVmid = nextIdResult.trim();
+                    console.log(`[Migration] Using fallback VMID: ${targetVmid}`);
+                } catch {
+                    console.log('[Migration] Using original VMID as last resort');
+                }
             }
 
             const apiEndpoint = `host=${target.ssh_host},apitoken=${apiToken},fingerprint=${fingerprint}`;
