@@ -232,34 +232,71 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     }
 
     // 5. Native 'qm remote-migrate' Strategy
-    console.log('[Migration] Starting Native qm remote-migrate...');
-
-    // Endpoint Construction
+    // 5. Native 'qm remote-migrate' Strategy (Primary)
     const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${cleanToken},fingerprint=${fingerprint}`;
     const safeEndpoint = apiEndpoint.replace(/'/g, "'\\''");
 
-    let cmd = `qm remote-migrate ${vmid} ${targetVmid} '${safeEndpoint}'`;
+    // Wrap in bash -c to ensure environment sanity
+    let nativeCmd = `qm remote-migrate ${vmid} ${targetVmid} '${safeEndpoint}'`;
+    if (options.targetStorage) nativeCmd += ` --target-storage ${options.targetStorage}`;
+    if (options.targetBridge) nativeCmd += ` --target-bridge ${options.targetBridge}`;
+    if (options.online) nativeCmd += ` --online`;
 
-    // Add Options
-    if (options.targetStorage) cmd += ` --target-storage ${options.targetStorage}`;
-    if (options.targetBridge) cmd += ` --target-bridge ${options.targetBridge}`;
-    if (options.online) cmd += ` --online`;
-
-    // Note: We execute with PTY (pseudo-terminal) because 'mtunnel' (used internally by remote-migrate)
-    // acts differently/fails in non-interactive shells. This matches "manual" execution.
-
-    console.log('[Migration] Command:', cmd.replace(cleanToken, '***'));
+    console.log('[Migration] Attempting Primary Strategy: Native qm remote-migrate');
+    console.log('[Migration] Command:', nativeCmd.replace(cleanToken, '***'));
 
     try {
-        // Execute with PTY and long timeout
-        // We use the 'exec' method which now supports PTY options thanks to our ssh.ts update
-        const output = await sourceSsh.exec(cmd, 3600000, { pty: true });
+        // Execute with PTY and bash wrap
+        const output = await sourceSsh.exec(`bash -c "${nativeCmd.replace(/"/g, '\\"')}"`, 3600000, { pty: true });
+        return `Cross-cluster migration completed successfully (Native).\nLogs:\n${output}`;
+    } catch (nativeError: any) {
+        console.warn(`[Migration] Native strategy failed: ${nativeError.message}. Falling back to Streaming Backup/Restore...`);
 
-        return `Cross-cluster migration completed successfully.\nLogs:\n${output}`;
+        // --- FALLBACK STRATEGY: Streaming Backup/Restore ---
 
-    } catch (e: any) {
-        console.error('[Migration] qm remote-migrate failed:', e);
-        throw new Error(`Migration Command Failed (Native): ${e.message || String(e)}`);
+        // 1. Cleanup Target Again (Ensure slate is clear after failed native attempt)
+        try {
+            await targetSsh.exec(`qm stop ${targetVmid} --timeout 10`);
+            await targetSsh.exec(`qm unlock ${targetVmid}`);
+            await targetSsh.exec(`qm destroy ${targetVmid} --purge`);
+        } catch { }
+
+        // 2. Prepare Streaming Pipeline
+        const restoreStorage = options.targetStorage || 'local-lvm';
+        const restoreCmd = `qmrestore - ${targetVmid} --storage ${restoreStorage} --force --unique`;
+        const dumpMode = options.online ? 'snapshot' : 'stop';
+        const dumpCmd = `/usr/sbin/vzdump ${vmid} --stdout --compress zstd --mode ${dumpMode}`;
+
+        try {
+            console.log(`[Migration] Fallback Pipeline: ${dumpCmd} | SSH | ${restoreCmd}`);
+            const targetStream = await targetSsh.getExecStream(restoreCmd);
+            const sourceStream = await sourceSsh.getExecStream(dumpCmd);
+
+            sourceStream.pipe(targetStream);
+
+            // Log streams
+            sourceStream.stderr.on('data', (d) => { const l = d.toString().trim(); if (l) console.log(`[Source] ${l}`); });
+            targetStream.stderr.on('data', (d) => { const l = d.toString().trim(); if (l) console.log(`[Target] ${l}`); });
+
+            await new Promise<void>((resolve, reject) => {
+                targetStream.on('close', (code: number) => {
+                    if (code === 0) resolve();
+                    else reject(new Error(`Restore exited with code ${code}`));
+                });
+                targetStream.on('error', (err: any) => reject(new Error(`Target Stream Error: ${err.message}`)));
+                sourceStream.on('error', (err: any) => reject(new Error(`Source Stream Error: ${err.message}`)));
+            });
+
+            // Stop source if online migration success
+            if (options.online) {
+                try { await sourceSsh.exec(`qm stop ${vmid} --timeout 30`); } catch { }
+            }
+
+            return `Migration completed successfully via Fallback (Streaming). Target VMID: ${targetVmid}`;
+
+        } catch (streamErr: any) {
+            throw new Error(`Migration Failed. Native Error: ${nativeError.message}. Fallback Error: ${streamErr.message}`);
+        }
     }
 }
 
