@@ -471,55 +471,54 @@ export async function migrateVM(
 
             console.log(`[Migration] API Params - Bridge: ${finalBridge}, Storage: ${finalStorage}, VMID: ${targetVmid}`);
 
-            // --- API EXECUTION START ---
-            const { ProxmoxClient } = await import('@/lib/proxmox');
+            // --- API EXECUTION REPLACED WITH PVESH (SSH) ---
+            // The ProxmoxClient requires a valid API Token for the SOURCE server, which might be missing.
+            // Since we have an SSH connection to the source, we can execute 'pvesh' directly.
 
-            // Initialize Client
-            const client = new ProxmoxClient({
-                url: source.url,
-                token: source.auth_token,
-                type: 'pve',
-                // Fallback credential if token missing (less likely but possible)
-                username: source.ssh_user ? `${source.ssh_user}@pam` : undefined,
-                // Note: ssh_password isn't always available in DB text, relying on token
-            });
+            console.log('[Migration] Starting remote-migrate via pvesh (SSH)...');
 
-            if (!source.auth_token) {
-                console.warn('[Migration] Source server has no API Token. Migration might fail authentication.');
-            }
+            // Construct pvesh command
+            let migrateCmd = `pvesh create /nodes/${sourceNode}/qemu/${vmid}/remote_migrate --target-vmid ${targetVmid} --target-endpoint "${apiEndpoint}" --online ${options.online ? 1 : 0}`;
 
-            console.log('[Migration] Starting remote-migrate via Proxmox API...');
-            const upid = await client.remoteMigrate(sourceNode, parseInt(vmid), {
-                targetVmid: parseInt(targetVmid),
-                targetEndpoint: apiEndpoint,
-                targetBridge: finalBridge,
-                targetStorage: finalStorage,
-                online: options.online
-            });
+            if (finalBridge) migrateCmd += ` --target-bridge ${finalBridge}`;
+            if (finalStorage) migrateCmd += ` --target-storage ${finalStorage}`;
+
+            // Execute migration command
+            console.log('[Migration] Executing:', migrateCmd);
+            const upid = (await sourceSsh.exec(migrateCmd)).trim(); // Returns UPID
 
             console.log(`[Migration] Task started. UPID: ${upid}`);
 
-            // Polling Loop (Wait for Task Completion)
+            // Polling Loop (Wait for Task Completion via SSH)
             let status = 'running';
             while (status === 'running') {
                 await new Promise(r => setTimeout(r, 2000)); // Poll every 2s
-                const task = await client.getTaskStatus(sourceNode, upid);
+
+                // Fetch status via pvesh
+                const statusCmd = `pvesh get /nodes/${sourceNode}/tasks/${upid}/status --output-format json`;
+                const statusJson = await sourceSsh.exec(statusCmd);
+                const task = JSON.parse(statusJson);
                 status = task.status;
 
                 if (status === 'stopped') {
                     if (task.exitstatus !== 'OK') {
-                        // Fetch log to see why it failed
-                        const logs = await client.getTaskLog(sourceNode, upid);
+                        // Fetch log via pvesh
+                        const logCmd = `pvesh get /nodes/${sourceNode}/tasks/${upid}/log --output-format json`;
+                        const logJson = await sourceSsh.exec(logCmd);
+                        const logs = JSON.parse(logJson).map((l: any) => l.t);
                         throw new Error(`Migration Task Failed: ${task.exitstatus}\nLogs:\n${logs.slice(-20).join('\n')}`);
                     }
                 }
             }
 
             // Fetch final log for success message
-            const logs = await client.getTaskLog(sourceNode, upid);
+            const logCmd = `pvesh get /nodes/${sourceNode}/tasks/${upid}/log --output-format json`;
+            const logJson = await sourceSsh.exec(logCmd);
+            const logs = JSON.parse(logJson).map((l: any) => l.t);
             output = logs.join('\n');
-            console.log('[Migration] API Migration finished successfully.');
-            // --- API EXECUTION END ---
+
+            console.log('[Migration] api migration finished successfully via SSH/pvesh.');
+            // --- PVESH EXECUTION END ---
         }
 
         return { success: true, message: output };
