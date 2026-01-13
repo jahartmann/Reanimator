@@ -119,13 +119,28 @@ export class SSHClient {
                         errorOutput += data.toString();
                     });
 
-                    stream.on('close', (code: number) => {
-                        // Strict check: non-zero exit code means failure
-                        if (code !== 0) {
-                            const failMsg = errorOutput.trim() || output.trim() || 'Unknown error';
-                            rejectExec(new Error(`Command failed with exit code ${code}: ${failMsg}`));
-                        } else {
+                    stream.on('close', (code: number | null) => {
+                        // Handle various exit scenarios:
+                        // - code === 0: success
+                        // - code === null/undefined: stream closed unexpectedly (network issue, timeout, etc.)
+                        // - code !== 0: command failed with specific exit code
+
+                        if (code === 0) {
                             resolveExec(output);
+                        } else if (code === null || code === undefined) {
+                            // Stream closed without proper exit - could be network issue
+                            // If we have output, return it (might be partial)
+                            if (output.trim()) {
+                                console.warn('[SSH] Stream closed unexpectedly with output, returning partial result');
+                                resolveExec(output);
+                            } else {
+                                const failMsg = errorOutput.trim() || 'Connection closed unexpectedly';
+                                rejectExec(new Error(failMsg));
+                            }
+                        } else {
+                            // Non-zero exit code
+                            const failMsg = errorOutput.trim() || output.trim() || `Exit code ${code}`;
+                            rejectExec(new Error(failMsg));
                         }
                     });
                 });

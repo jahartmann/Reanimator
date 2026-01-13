@@ -244,7 +244,8 @@ export async function migrateVM(
             }
 
             console.log('[Migration] Running:', cmd);
-            output = await sourceSsh.exec(cmd, 600 * 1000);
+            // 30 minute timeout for large disk transfers
+            output = await sourceSsh.exec(cmd, 1800 * 1000);
 
         } else {
             // ========== CROSS-CLUSTER / STANDALONE MIGRATION ==========
@@ -411,7 +412,8 @@ export async function migrateVM(
             }
 
             console.log('[Migration] Running:', cmd);
-            output = await sourceSsh.exec(cmd, 600 * 1000);
+            // 30 minute timeout for large disk transfers (40GB+ can take a while)
+            output = await sourceSsh.exec(cmd, 1800 * 1000);
         }
 
         return { success: true, message: output };
