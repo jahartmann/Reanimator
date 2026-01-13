@@ -241,20 +241,50 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${cleanToken},fingerprint=${fingerprint}`;
     const safeEndpoint = apiEndpoint.replace(/'/g, "'\\''");
 
-    let nativeCmd = `qm remote-migrate ${vmid} ${targetVmid} '${safeEndpoint}'`;
+    // Use full path to ensure we hit the binary
+    let nativeCmd = `/usr/sbin/qm remote-migrate ${vmid} ${targetVmid} '${safeEndpoint}'`;
     if (options.targetStorage) nativeCmd += ` --target-storage ${options.targetStorage}`;
     if (options.targetBridge) nativeCmd += ` --target-bridge ${options.targetBridge}`;
     if (options.online) nativeCmd += ` --online`;
 
     log('[Migration] Attempting Primary Strategy: Native qm remote-migrate (Exact Syntax)');
+    log(`[DEBUG] Executing on Source Node: ${sourceNode}`);
     log(`[Migration] Command: ${nativeCmd.replace(cleanToken, '***')}`);
     // Also log the REAL command (with tokens) to the persistent log for the user to copy-paste!
     log(`[DEBUG] Full Command for Manual Execution:\n${nativeCmd}`);
 
     try {
         // Execute directly with PTY (Pseudo-Terminal) to match manual shell execution
-        const output = await sourceSsh.exec(nativeCmd, 3600000, { pty: true });
-        return `Cross-cluster migration completed successfully (Native).\nLogs:\n${output}`;
+        // Use getExecStream to provide LIVE LOGGING
+        const stream = await sourceSsh.getExecStream(nativeCmd, { pty: true });
+
+        await new Promise<void>((resolve, reject) => {
+            let buffer = '';
+
+            // Helper to process chunks into lines for the logger
+            const processChunk = (chunk: Buffer) => {
+                buffer += chunk.toString();
+                if (buffer.includes('\n')) {
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+                    lines.forEach(line => {
+                        if (line.trim()) log(line.trim());
+                    });
+                }
+            };
+
+            stream.on('data', processChunk);
+            stream.stderr.on('data', processChunk);
+
+            stream.on('close', (code: number) => {
+                if (code === 0) resolve();
+                else reject(new Error(`Native command exited with code ${code}`));
+            });
+
+            stream.on('error', (err: any) => reject(err));
+        });
+
+        return `Cross-cluster migration completed successfully (Native).`;
     } catch (nativeError: any) {
         log(`[Migration] Native strategy failed: ${nativeError.message}. Falling back to Streaming Backup/Restore...`);
 
