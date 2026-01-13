@@ -253,7 +253,7 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
 
         // Wait for Target to finish (Consumer)
         await new Promise<void>((resolve, reject) => {
-            targetStream.on('close', (code) => {
+            targetStream.on('close', (code: number) => {
                 if (code === 0) {
                     resolve();
                 } else {
