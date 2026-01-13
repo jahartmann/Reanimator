@@ -155,8 +155,17 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
                 continue;
             }
 
-            // Check for stray volumes
-            const volCheck = await targetSsh.exec(`lvs -a | grep "vm-${candidateId}-" || zfs list | grep "vm-${candidateId}-" || ls /var/lib/vz/images/${candidateId} 2>/dev/null`);
+            // Check for stray volumes using a safe, non-throwing command sequence
+            // We use semicolons to run all checks, and 'true' to ensure exit code 0
+            // Stderr is redirected to null to avoid 'no datasets available' or 'command not found' errors
+            const volCmd = `
+                (lvs -a 2>/dev/null | grep "vm-${candidateId}-");
+                (zfs list 2>/dev/null | grep "vm-${candidateId}-");
+                (ls /var/lib/vz/images/${candidateId} 2>/dev/null);
+                true
+            `.replace(/\n/g, ' ');
+
+            const volCheck = await targetSsh.exec(volCmd);
             if (volCheck.trim().length > 0) {
                 console.log(`[Migration] ID ${candidateId} has stray volumes. Skipping.`);
                 candidateId++;
