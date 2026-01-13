@@ -256,10 +256,25 @@ export async function migrateVM(
             const tempUserFull = `${tempUser}@pve`;
 
             // Create user
-            await targetSsh.exec(`pveum user add ${tempUserFull} --password ${tempTokenSecret} 2>/dev/null || true`);
+            console.log(`[Migration] Creating temp user ${tempUserFull}...`);
+            await targetSsh.exec(`pveum user add ${tempUserFull} --password ${tempTokenSecret}`);
 
-            // Grant Administrator role (Global)
-            await targetSsh.exec(`pveum acl modify / -user '${tempUserFull}' -role Administrator`);
+            // Wait a moment for propagation
+            await new Promise(r => setTimeout(r, 1000));
+
+            // Grant Administrator role (Global) with retry
+            let retries = 3;
+            while (retries > 0) {
+                try {
+                    await targetSsh.exec(`pveum acl modify / -user '${tempUserFull}' -role Administrator`);
+                    break;
+                } catch (e: any) {
+                    console.warn(`[Migration] ACL grant failed (remaining retries: ${retries - 1}): ${e.message}`);
+                    retries--;
+                    if (retries === 0) throw e;
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+            }
 
             // 2. Create API Token for this user
             const tokenCmd = `pveum user token add ${tempUserFull} ${tempTokenId} --privsep 0 --output-format json`;
