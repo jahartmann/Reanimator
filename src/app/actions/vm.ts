@@ -233,22 +233,21 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         // VM does not exist (normal case), proceed.
     }
 
-    // 5. Native 'qm remote-migrate' Strategy
-    // 5. Native 'qm remote-migrate' Strategy (Primary)
-    const apiEndpoint = `host=${migrationHost},apitoken=${cleanToken},fingerprint=${fingerprint}`;
+    // 5. Native 'qm remote-migrate' Strategy (Primary) - Exact Manual Syntax
+    // User instruction: apitoken=PVEAPIToken=User@Realm!Token=Secret
+    const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${cleanToken},fingerprint=${fingerprint}`;
     const safeEndpoint = apiEndpoint.replace(/'/g, "'\\''");
 
-    // Wrap in bash -c to ensure environment sanity
     let nativeCmd = `qm remote-migrate ${vmid} ${targetVmid} '${safeEndpoint}'`;
     if (options.targetStorage) nativeCmd += ` --target-storage ${options.targetStorage}`;
     if (options.targetBridge) nativeCmd += ` --target-bridge ${options.targetBridge}`;
     if (options.online) nativeCmd += ` --online`;
 
-    console.log('[Migration] Attempting Primary Strategy: Native qm remote-migrate');
+    console.log('[Migration] Attempting Primary Strategy: Native qm remote-migrate (Exact Syntax)');
     console.log('[Migration] Command:', nativeCmd.replace(cleanToken, '***'));
 
     try {
-        // Execute directly (SSH2 spawns a shell)
+        // Execute directly with PTY (Pseudo-Terminal) to match manual shell execution
         const output = await sourceSsh.exec(nativeCmd, 3600000, { pty: true });
         return `Cross-cluster migration completed successfully (Native).\nLogs:\n${output}`;
     } catch (nativeError: any) {
@@ -294,10 +293,10 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
                 try { await sourceSsh.exec(`qm stop ${vmid} --timeout 30`); } catch { }
             }
 
-            return `Migration completed successfully via Fallback (Streaming). Target VMID: ${targetVmid}`;
+            return `Migration completed successfully via Fallback (Streaming). Target VMID: ${targetVmid}\n\n(Native Method Failed. Command was: ${nativeCmd})`;
 
         } catch (streamErr: any) {
-            throw new Error(`Migration Failed. Native Error: ${nativeError.message}. Fallback Error: ${streamErr.message}`);
+            throw new Error(`Migration Failed.\n\nNative Error: ${nativeError.message}\nNative Command: ${nativeCmd}\n\nFallback Error: ${streamErr.message}\n`);
         }
     }
 }
