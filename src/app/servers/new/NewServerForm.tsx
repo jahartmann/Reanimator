@@ -35,6 +35,14 @@ export default function NewServerForm({ existingGroups }: NewServerFormProps) {
 
         setSSHStatus(res.success ? 'success' : 'error');
         setSSHMessage(res.message);
+
+        if (res.success && res.fingerprint) {
+            const fpInput = document.getElementById('ssl_fingerprint') as HTMLInputElement;
+            if (fpInput) {
+                fpInput.value = res.fingerprint;
+                // Visual feedback could be enhanced here if needed
+            }
+        }
     }
 
     async function handleGenToken() {

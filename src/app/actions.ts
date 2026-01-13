@@ -91,32 +91,51 @@ export async function deleteJob(id: number) {
 
 export async function testSSHConnection(formData: FormData) {
     const host = formData.get('ssh_host') as string;
-    const port = parseInt(formData.get('ssh_port') as string);
-    const username = formData.get('ssh_user') as string;
+    const port = parseInt(formData.get('ssh_port') as string) || 22;
+    const username = formData.get('ssh_user') as string || 'root';
     const password = formData.get('ssh_password') as string;
+    // Note: ssh_key is not passed in test button usually, but we should try to support it if it were there, 
+    // but the form only sends what's in it. the form has ssh_password input. 
+    // If user uses key, they might not be able to test easily unless we handle key file upload or paste?
+    // The previous implementation used password from formData.
+
+    // We'll trust what's in formData.
 
     if (!host) return { success: false, message: 'Host required' };
 
     try {
-        const { Client } = await import('ssh2');
-        const conn = new Client();
+        const { createSSHClient } = await import('@/lib/ssh');
 
-        await new Promise<void>((resolve, reject) => {
-            conn.on('ready', () => {
-                conn.end();
-                resolve();
-            }).on('error', (err) => {
-                reject(err);
-            }).connect({
-                host,
-                port,
-                username,
-                password,
-                readyTimeout: 5000
-            });
-        });
+        const tempServer = {
+            ssh_host: host,
+            ssh_port: port,
+            ssh_user: username,
+            ssh_key: password, // The lib handles this as password if it's not a key
+            url: '' // Not needed for pure SSH test
+        };
 
-        return { success: true, message: 'SSH Verbindung erfolgreich' };
+        const client = createSSHClient(tempServer);
+        await client.connect();
+
+        // Fetch Fingerprint
+        const fpCmd = `openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`;
+        let fingerprint: string | undefined;
+        try {
+            const result = await client.exec(fpCmd);
+            if (result && result.trim().length > 10) {
+                fingerprint = result.trim();
+            }
+        } catch (e) {
+            console.warn('Could not fetch fingerprint during test:', e);
+        }
+
+        await client.disconnect();
+
+        return {
+            success: true,
+            message: fingerprint ? 'SSH Verbindung erfolgreich + Fingerprint geladen' : 'SSH Verbindung erfolgreich',
+            fingerprint
+        };
     } catch (err) {
         return { success: false, message: `SSH Fehler: ${err instanceof Error ? err.message : String(err)}` };
     }
