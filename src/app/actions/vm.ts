@@ -477,45 +477,47 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         await targetSsh.exec(`mkdir -p ${backupDir}`);
 
         // SCP from source to target (server-to-server transfer)
+        // SCP from source to target (server-to-server transfer)
+        const scpLog = `${backupDir}/scp_${vmid}.log`;
+        const scpRc = `${backupDir}/scp_${vmid}.rc`;
+        try { await sourceSsh.exec(`rm -f ${scpLog} ${scpRc}`); } catch { }
+
         const scpCmd = `scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${backupFile} root@${targetHost}:${backupDir}/`;
-        log(`[Step 2/4] Running: scp to ${targetHost}...`);
+        // We use sh -c to capture exit code of scp into a file
+        // echo \\$? escapes $? so the inner shell evaluates it, not the outer SSH shell
+        const scpCmdDetached = `/usr/bin/nohup sh -c "${scpCmd} > ${scpLog} 2>&1; echo \\$?>${scpRc}" >/dev/null 2>&1 & echo $!`;
 
-        const scpStream = await sourceSsh.getExecStream(scpCmd, { pty: true });
+        log(`[Step 2/4] Running detached: ${scpCmd}`);
+        const scpPid = (await sourceSsh.exec(scpCmdDetached)).trim();
+        log(`[scp] Started background process PID: ${scpPid}`);
 
-        await new Promise<void>((resolve, reject) => {
-            let exitCode: number | null = null;
-            let lastProgress = '';
+        // Poll Loop for SCP
+        let scpRunning = true;
+        while (scpRunning) {
+            await new Promise(r => setTimeout(r, 5000));
 
-            scpStream.on('data', (chunk: Buffer) => {
-                const text = chunk.toString();
-                // SCP progress looks like: "file   45%   12MB  3.2MB/s   00:02 ETA"
-                if (text.includes('%')) {
-                    const match = text.match(/(\d+)%/);
-                    if (match && match[1] !== lastProgress) {
-                        lastProgress = match[1];
-                        log(`[scp] Transfer progress: ${match[1]}%`);
+            // Check RC file
+            try {
+                const rc = await sourceSsh.exec(`cat ${scpRc}`);
+                if (rc.trim() !== '') {
+                    scpRunning = false;
+                    if (rc.trim() !== '0') {
+                        const logContent = await sourceSsh.exec(`cat ${scpLog}`);
+                        throw new Error(`SCP failed with exit code ${rc.trim()}. Log:\n${logContent.slice(-500)}`);
                     }
                 }
-            });
-
-            scpStream.stderr.on('data', (chunk: Buffer) => {
-                const text = chunk.toString().trim();
-                if (text && !text.includes('Warning')) {
-                    log(`[scp] ${text}`);
-                }
-            });
-
-            scpStream.on('exit', (code: number | null) => {
-                exitCode = code;
-                log(`[scp] Exit code: ${code}`);
-            });
-            scpStream.on('close', () => {
-                if (exitCode === 0) resolve();
-                else reject(new Error(`SCP transfer failed with exit code ${exitCode ?? 'unknown'}`));
-            });
-            scpStream.on('error', (err: Error) => reject(new Error(`SCP stream error: ${err.message}`)));
-        });
-
+            } catch {
+                // RC file not ready, check output for stats
+                try {
+                    const tail = await sourceSsh.exec(`tail -n 2 ${scpLog}`);
+                    if (tail.trim()) {
+                        tail.split('\n').forEach(l => {
+                            if (l.includes('%')) log(`[scp] ${l.trim()}`);
+                        });
+                    }
+                } catch { }
+            }
+        }
         log('[Step 2/4] ✓ Backup transferred successfully');
 
         // ========== STEP 3: Restore on target with qmrestore ==========
@@ -526,38 +528,39 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         const restoreStorage = options.targetStorage || 'local-lvm';
 
         const restoreCmd = `/usr/sbin/qmrestore ${targetBackupPath} ${targetVmid} --storage ${restoreStorage} --unique`;
-        log(`[Step 3/4] Running: qmrestore to VMID ${targetVmid} on storage ${restoreStorage}`);
 
-        const restoreStream = await targetSsh.getExecStream(restoreCmd, { pty: true });
+        const restoreLog = `${backupDir}/restore_${targetVmid}.log`;
+        const restoreRc = `${backupDir}/restore_${targetVmid}.rc`;
+        try { await targetSsh.exec(`rm -f ${restoreLog} ${restoreRc}`); } catch { }
 
-        await new Promise<void>((resolve, reject) => {
-            let exitCode: number | null = null;
+        const restoreCmdDetached = `/usr/bin/nohup sh -c "${restoreCmd} > ${restoreLog} 2>&1; echo \\$?>${restoreRc}" >/dev/null 2>&1 & echo $!`;
 
-            restoreStream.on('data', (chunk: Buffer) => {
-                const lines = chunk.toString().split('\n');
-                lines.forEach(line => {
-                    const trimmed = line.trim();
-                    if (trimmed) {
-                        log(`[qmrestore] ${trimmed}`);
+        log(`[Step 3/4] Running detached: ${restoreCmd}`);
+        const restorePid = (await targetSsh.exec(restoreCmdDetached)).trim();
+        log(`[qmrestore] Started background process PID: ${restorePid}`);
+
+        // Poll Loop for Restore
+        let restoreRunning = true;
+        while (restoreRunning) {
+            await new Promise(r => setTimeout(r, 3000));
+
+            try {
+                const rc = await targetSsh.exec(`cat ${restoreRc}`);
+                if (rc.trim() !== '') {
+                    restoreRunning = false;
+                    if (rc.trim() !== '0') {
+                        const fullLog = await targetSsh.exec(`cat ${restoreLog}`);
+                        throw new Error(`qmrestore failed with exit code ${rc.trim()}. Log:\n${fullLog}`);
                     }
-                });
-            });
-
-            restoreStream.stderr.on('data', (chunk: Buffer) => {
-                log(`[qmrestore] ${chunk.toString().trim()}`);
-            });
-
-            restoreStream.on('exit', (code: number | null) => {
-                exitCode = code;
-                log(`[qmrestore] Exit code: ${code}`);
-            });
-            restoreStream.on('close', () => {
-                if (exitCode === 0) resolve();
-                else reject(new Error(`qmrestore failed with exit code ${exitCode ?? 'unknown'}`));
-            });
-            restoreStream.on('error', (err: Error) => reject(new Error(`qmrestore stream error: ${err.message}`)));
-        });
-
+                }
+            } catch {
+                // Tail Log
+                try {
+                    const tail = await targetSsh.exec(`tail -n 2 ${restoreLog}`);
+                    if (tail.trim()) log(`[qmrestore] ${tail.trim()}`);
+                } catch { }
+            }
+        }
         log(`[Step 3/4] ✓ VM restored as VMID ${targetVmid}`);
 
         // ========== STEP 4: Cleanup ==========
