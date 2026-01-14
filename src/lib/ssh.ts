@@ -101,7 +101,7 @@ export class SSHClient {
             return await this._getExecStreamCore(command, options);
         } catch (e: any) {
             const msg = e.message || '';
-            if (msg.includes('Not connected') || msg.includes('Connection closed') || msg.includes('No response')) {
+            if (msg.includes('Not connected') || msg.includes('Connection closed') || msg.includes('No response') || msg.toLowerCase().includes('unable to exec')) {
                 console.log(`[SSH] Stream init failed (${msg}), reconnecting...`);
                 try {
                     await this.reconnect();
@@ -138,7 +138,7 @@ export class SSHClient {
             return await this._execCore(command, timeoutMs, options);
         } catch (e: any) {
             const msg = e.message || '';
-            if (msg.includes('Not connected') || msg.includes('Connection closed') || msg.includes('read ECONNRESET') || msg.includes('No response')) {
+            if (msg.includes('Not connected') || msg.includes('Connection closed') || msg.includes('read ECONNRESET') || msg.includes('No response') || msg.toLowerCase().includes('unable to exec')) {
                 console.log(`[SSH] Connection lost (${msg}), reconnecting...`);
                 try {
                     await this.reconnect();
