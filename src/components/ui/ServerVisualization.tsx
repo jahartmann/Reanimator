@@ -4,6 +4,15 @@
 
 // ... (interfaces)
 
+import { SystemInfo, NetworkInterface, DiskInfo, StoragePool } from '@/app/actions/monitoring';
+
+export interface ServerVisualizationProps {
+    system: SystemInfo;
+    networks: NetworkInterface[];
+    disks: DiskInfo[];
+    pools: StoragePool[];
+    serverType: 'pve' | 'pbs';
+}
 export function ServerVisualization({ system, networks, disks, pools, serverType }: ServerVisualizationProps) {
     const [hoveredComponent, setHoveredComponent] = useState<string | null>(null);
     const [detailData, setDetailData] = useState<any>(null); // For specific disk/net info
@@ -191,8 +200,8 @@ export function ServerVisualization({ system, networks, disks, pools, serverType
                                 <motion.div
                                     key={i}
                                     className={`h-10 rounded-sm flex flex-col items-center justify-center text-[9px] cursor-pointer ${disk.transport === 'nvme' ? 'bg-purple-500/20 border border-purple-500/40' :
-                                            disk.rotational === false ? 'bg-blue-500/20 border border-blue-500/40' :
-                                                'bg-zinc-700 border border-zinc-600'
+                                        disk.rotational === false ? 'bg-blue-500/20 border border-blue-500/40' :
+                                            'bg-zinc-700 border border-zinc-600'
                                         }`}
                                     onHoverStart={() => { setHoveredComponent('disk'); setDetailData(disk); }}
                                     onHoverEnd={() => { setHoveredComponent(null); setDetailData(null); }}
@@ -233,8 +242,8 @@ export function ServerVisualization({ system, networks, disks, pools, serverType
                                     <motion.div
                                         key={i}
                                         className={`h-6 rounded-sm flex items-center justify-center text-[8px] font-mono cursor-pointer border ${net.state === 'UP'
-                                                ? isBridge ? 'bg-purple-500/30 border-purple-500/50' : 'bg-green-500/30 border-green-500/50'
-                                                : 'bg-zinc-700/50 border-zinc-600'
+                                            ? isBridge ? 'bg-purple-500/30 border-purple-500/50' : 'bg-green-500/30 border-green-500/50'
+                                            : 'bg-zinc-700/50 border-zinc-600'
                                             }`}
                                         onHoverStart={() => { setHoveredComponent('net'); setDetailData(net); }}
                                         onHoverEnd={() => { setHoveredComponent(null); setDetailData(null); }}
