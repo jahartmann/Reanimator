@@ -161,44 +161,7 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
 
 // The parsePvesmContent function is no longer used with the new pvesh JSON output approach.
 // It can be removed if not used elsewhere.
-function parsePvesmContent(output: string, type: 'iso' | 'vztmpl', server: Server, storage: string, allItems: Record<string, LibraryItem>) {
-    const lines = output.split('\n');
-    if (lines.length < 2) return;
 
-    lines.slice(1).forEach(line => {
-        if (!line.trim()) return;
-        const parts = line.split(/\s+/);
-        if (parts.length < 4) return;
-
-        const volid = parts[0];
-        const format = parts[1];
-        const size = parseInt(parts[3] || '0');
-
-        // Extract filename from volid (storage:content/filename)
-        const namePart = volid.split('/')[1] || volid.split(':')[1];
-        if (!namePart) return;
-
-        if (!allItems[namePart]) {
-            allItems[namePart] = {
-                name: namePart,
-                type: type,
-                size: size,
-                format: format,
-                volid: volid, // Assuming the first volid found is the primary one for the top-level item
-                locations: []
-            };
-        }
-
-        allItems[namePart].locations.push({
-            serverId: server.id,
-            serverName: server.name,
-            storage: storage,
-            volid: volid,
-            size: size,
-            path: volid // Assuming volid is the path here
-        });
-    });
-}
 
 // --- Sync Capabilities ---
 
