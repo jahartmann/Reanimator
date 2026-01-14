@@ -116,243 +116,223 @@ async function migrateLocal(ctx: MigrationContext): Promise<string> {
 }
 
 async function migrateRemote(ctx: MigrationContext): Promise<string> {
-    const { sourceSsh, targetSsh, target, type, vmid, options, onLog, sourceNode } = ctx;
+    const { sourceSsh, targetSsh, source, target, type, vmid, options, onLog, sourceNode } = ctx;
     const log = (msg: string) => { console.log(msg); if (onLog) onLog(msg); };
 
-    // 1. Validate Token
-    if (!target.auth_token) throw new Error('Zielserver hat keinen API-Token.');
+    // ============================================================
+    // PDM-STYLE API-BASED MIGRATION
+    // Uses Proxmox REST API (via pvesh) instead of SSH stream commands
+    // This is more reliable and matches how PDM handles migrations
+    // ============================================================
 
-    // 2. Prepare Endpoint
-    let cleanToken = target.auth_token.trim().replace('PVEAPIToken=', '');
+    log('[Migration] Using API-based migration (PDM-Style)');
 
-    // Fetch Fingerprint
+    // 1. Validate Source has API Token
+    if (!source.auth_token) {
+        throw new Error('Quellserver hat keinen API-Token. Bitte in Server-Einstellungen hinzufügen.');
+    }
+
+    // 2. Validate Target has API Token
+    if (!target.auth_token) {
+        throw new Error('Zielserver hat keinen API-Token. Bitte in Server-Einstellungen hinzufügen.');
+    }
+
+    // 3. Prepare Target Endpoint String (for remote_migrate API)
+    let cleanTargetToken = target.auth_token.trim().replace('PVEAPIToken=', '');
+
+    // Get Target Host
+    let targetHost = target.ssh_host;
+    if (!targetHost && target.url) {
+        try { targetHost = new URL(target.url).hostname; } catch { targetHost = target.url; }
+    }
+    if (!targetHost) throw new Error('Zielserver hat keine Host-IP konfiguriert.');
+
+    // Get Target Fingerprint (required for secure connection)
     let fingerprint = target.ssl_fingerprint;
     if (!fingerprint) {
-        fingerprint = (await targetSsh.exec(`openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`)).trim();
+        log('[Migration] Fetching target SSL fingerprint...');
+        try {
+            fingerprint = (await targetSsh.exec(`openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`)).trim();
+            log(`[Migration] Fingerprint: ${fingerprint}`);
+        } catch (e) {
+            throw new Error('Konnte SSL-Fingerprint nicht ermitteln. Bitte manuell in Server-Einstellungen eintragen.');
+        }
     }
 
-    let migrationHost = target.ssh_host;
-    if (!migrationHost && target.url) {
-        try { migrationHost = new URL(target.url).hostname; } catch { migrationHost = target.url; }
-    }
-
-    // 3. Determine Target VMID (and check cleanliness)
+    // 4. Determine Target VMID
     let targetVmid = options.targetVmid;
-
     if (!targetVmid && options.autoVmid !== false) {
-        // Auto-select
-        const nextIdRaw = await targetSsh.exec(`pvesh get /cluster/nextid --output-format json 2>/dev/null || echo "100"`);
-        let candidateId = parseInt(nextIdRaw.replace(/"/g, '').trim(), 10);
-
-        // Loop to find clean ID
-        let isClean = false;
-        let attempts = 0;
-
-        while (!isClean && attempts < 20) {
-            // Check if ID is taken in cluster
-            const clusterResources = await targetSsh.exec(`pvesh get /cluster/resources --type vm --output-format json`);
-            const resources = JSON.parse(clusterResources);
-            const taken = resources.some((r: any) => r.vmid === candidateId);
-
-            if (taken) {
-                candidateId++;
-                attempts++;
-                continue;
-            }
-
-            // Check for stray volumes using a safe, non-throwing command sequence
-            // We use semicolons to run all checks, and 'true' to ensure exit code 0
-            // Stderr is redirected to null to avoid 'no datasets available' or 'command not found' errors
-            const volCmd = `
-                (lvs -a 2>/dev/null | grep "vm-${candidateId}-");
-                (zfs list 2>/dev/null | grep "vm-${candidateId}-");
-                (ls /var/lib/vz/images/${candidateId} 2>/dev/null);
-                true
-            `.replace(/\n/g, ' ');
-
-            const volCheck = await targetSsh.exec(volCmd);
-            if (volCheck.trim().length > 0) {
-                console.log(`[Migration] ID ${candidateId} has stray volumes. Skipping.`);
-                candidateId++;
-                attempts++;
-            } else {
-                isClean = true;
-            }
+        log('[Migration] Auto-selecting target VMID...');
+        try {
+            const nextIdRaw = await targetSsh.exec(`pvesh get /cluster/nextid --output-format json 2>/dev/null || echo "100"`);
+            targetVmid = nextIdRaw.replace(/"/g, '').trim();
+            log(`[Migration] Auto-selected VMID: ${targetVmid}`);
+        } catch {
+            targetVmid = vmid;
         }
-        targetVmid = candidateId.toString();
     } else if (!targetVmid) {
-        targetVmid = vmid; // Keep original
+        targetVmid = vmid;
     }
 
-    console.log(`[Migration] Target VMID selected: ${targetVmid}`);
-
-    // 4. Pre-Flight Token Check
-    const verifyCmd = `curl -k -s -o /dev/null -w "%{http_code}" --max-time 5 -H "Authorization: PVEAPIToken=${cleanToken}" https://${migrationHost}:8006/api2/json/version`;
-    const verifyStatus = (await sourceSsh.exec(verifyCmd)).trim();
-    if (verifyStatus === '401') throw new Error(`Target rejected API Token (401). Check credentials.`);
-
-    // 5. Streaming Backup & Restore Strategy
-    // This bypasses the unreliable 'qm remote-migrate' tunnel by streaming data directly via SSH
-    console.log('[Migration] Starting robust Streaming Backup/Restore migration...');
-
-    // 0. Unlock Source VM if needed
-    // The user reported "broken pipe" can happen if the VM is locked (backup/migrate/snapshot lock)
+    // 5. Pre-flight: Unlock source VM if locked
     try {
-        const conf = await sourceSsh.exec(`qm config ${vmid}`);
+        const conf = await sourceSsh.exec(`/usr/sbin/qm config ${vmid}`);
         if (conf.includes('lock:')) {
-            console.log('[Migration] Source VM is locked. Attempting to unlock...');
-            await sourceSsh.exec(`qm unlock ${vmid}`);
-            console.log('[Migration] Unlocked successfully.');
+            log('[Migration] Source VM is locked. Unlocking...');
+            await sourceSsh.exec(`/usr/sbin/qm unlock ${vmid}`);
+            log('[Migration] Unlocked successfully.');
         }
     } catch (e) {
-        console.warn('[Migration] Failed to check/unlock source VM, proceeding anyway...', e);
+        log('[Migration] Could not check/unlock source VM, proceeding anyway...');
     }
 
-    const restoreStorage = options.targetStorage || 'local-lvm';
-    // Ensure storage is valid? qmrestore checks it.
-
-    // Commands
-    // qmrestore reads from stdin (-)
-    // --force allows overwriting if we cleaned up (which we did) or if it exists
-    const restoreCmd = `qmrestore - ${targetVmid} --storage ${restoreStorage} --force --unique`;
-
-    // vzdump writes to stdout
-    // --mode: snapshot (minimal downtime) vs stop (consistent)
-    const dumpMode = options.online ? 'snapshot' : 'stop';
-    const dumpCmd = `/usr/sbin/vzdump ${vmid} --stdout --compress zstd --mode ${dumpMode}`;
-
-    // 0b. Clean up Target clean slate
-    // If the target VMID exists (e.g. from a failed previous attempt), it might be locked or partially created.
-    // 'qmrestore --force' usually handles overwrite, but 'qm destroy' is cleaner and ensures no lock conflicts.
+    // 6. Pre-flight: Clean up target if exists
     try {
-        await targetSsh.exec(`qm config ${targetVmid}`);
-        // If we get here, VM exists.
-        console.log(`[Migration] Target VM ${targetVmid} exists. Cleaning up (Unlock & Destroy)...`);
-        try { await targetSsh.exec(`qm stop ${targetVmid} --timeout 10`); } catch { }
-        try { await targetSsh.exec(`qm unlock ${targetVmid}`); } catch { }
-        try { await targetSsh.exec(`qm destroy ${targetVmid} --purge`); } catch { }
-        console.log('[Migration] Target cleanup complete.');
-    } catch (e) {
-        // VM does not exist (normal case), proceed.
+        await targetSsh.exec(`/usr/sbin/qm config ${targetVmid}`);
+        log(`[Migration] Target VM ${targetVmid} exists. Cleaning up...`);
+        try { await targetSsh.exec(`/usr/sbin/qm stop ${targetVmid} --timeout 10`); } catch { }
+        try { await targetSsh.exec(`/usr/sbin/qm unlock ${targetVmid}`); } catch { }
+        try { await targetSsh.exec(`/usr/sbin/qm destroy ${targetVmid} --purge`); } catch { }
+        log('[Migration] Target cleanup complete.');
+    } catch {
+        // VM doesn't exist - normal case
     }
 
-    // 5. Native 'qm remote-migrate' Strategy (Primary) - Exact Manual Syntax
-    // User instruction: apitoken=PVEAPIToken=User@Realm!Token=Secret
-    const apiEndpoint = `host=${migrationHost},apitoken=PVEAPIToken=${cleanToken},fingerprint=${fingerprint}`;
-    const safeEndpoint = apiEndpoint.replace(/'/g, "'\\''");
+    // 7. Build the target-endpoint string for API
+    const targetEndpoint = `host=${targetHost},apitoken=PVEAPIToken=${cleanTargetToken},fingerprint=${fingerprint}`;
 
-    // Use full path to ensure we hit the binary
-    let nativeCmd = `/usr/sbin/qm remote-migrate ${vmid} ${targetVmid} '${safeEndpoint}'`;
-    if (options.targetStorage) nativeCmd += ` --target-storage ${options.targetStorage}`;
-    if (options.targetBridge) nativeCmd += ` --target-bridge ${options.targetBridge}`;
-    if (options.online) nativeCmd += ` --online`;
+    log('[Migration] Starting API-based remote migration...');
+    log(`[Migration] Source Node: ${sourceNode}`);
+    log(`[Migration] Target Host: ${targetHost}`);
+    log(`[Migration] VMID: ${vmid} -> ${targetVmid}`);
+    log(`[Migration] Storage: ${options.targetStorage || 'default'}, Bridge: ${options.targetBridge || 'default'}`);
 
-    log('[Migration] Attempting Primary Strategy: Native qm remote-migrate (Exact Syntax)');
-    log(`[DEBUG] Executing on Source Node: ${sourceNode}`);
-    log(`[Migration] Command: ${nativeCmd.replace(cleanToken, '***')}`);
-    // Also log the REAL command (with tokens) to the persistent log for the user to copy-paste!
-    log(`[DEBUG] Full Command for Manual Execution:\n${nativeCmd}`);
+    // 8. Call the remote_migrate API endpoint via pvesh
+    const apiPath = type === 'qemu' ? 'qemu' : 'lxc';
+
+    // Build the API command - this matches what PDM does
+    let migrateCmd = `pvesh create /nodes/${sourceNode}/${apiPath}/${vmid}/remote_migrate`;
+    migrateCmd += ` --target-vmid ${targetVmid}`;
+    migrateCmd += ` --target-endpoint '${targetEndpoint}'`;
+    if (options.targetStorage) migrateCmd += ` --target-storage ${options.targetStorage}`;
+    if (options.targetBridge) migrateCmd += ` --target-bridge ${options.targetBridge}`;
+    if (options.online) migrateCmd += ` --online 1`;
+
+    log(`[Migration] Calling API: /nodes/${sourceNode}/${apiPath}/${vmid}/remote_migrate`);
+    log(`[DEBUG] Full command (token hidden):\n${migrateCmd.replace(cleanTargetToken, '***')}`);
 
     try {
-        // Execute directly with PTY (Pseudo-Terminal) to match manual shell execution
-        // Use getExecStream to provide LIVE LOGGING
-        const stream = await sourceSsh.getExecStream(nativeCmd, { pty: true });
-        log('[Migration] Native command stream started successfully');
+        // Execute the API call - this returns a UPID (task ID)
+        const upidRaw = await sourceSsh.exec(migrateCmd, 120000); // 2 min timeout for initial call
+        const upid = upidRaw.trim().replace(/"/g, '');
 
-        await new Promise<void>((resolve, reject) => {
-            let buffer = '';
+        if (!upid || !upid.startsWith('UPID:')) {
+            throw new Error(`Unexpected API response: ${upidRaw}`);
+        }
 
-            // Helper to process chunks into lines for the logger
-            const processChunk = (chunk: Buffer) => {
-                buffer += chunk.toString();
-                if (buffer.includes('\n')) {
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop() || '';
-                    lines.forEach(line => {
-                        if (line.trim()) log(`[Native] ${line.trim()}`);
+        log(`[Migration] Task started successfully!`);
+        log(`[Migration] UPID: ${upid}`);
+
+        // 9. Poll task status and stream logs (like PDM)
+        await pollMigrationTaskWithLogs(sourceSsh, sourceNode, upid, log);
+
+        log('[Migration] ✓ Migration completed successfully via API!');
+        return `Cross-cluster migration completed successfully (API). Target VMID: ${targetVmid}`;
+
+    } catch (apiError: any) {
+        log(`[Migration] API migration failed: ${apiError.message}`);
+
+        // NO FALLBACK - User explicitly wants API-only like PDM
+        throw new Error(`API Migration fehlgeschlagen:\n\n${apiError.message}\n\nBitte prüfen Sie:\n- API-Tokens auf beiden Servern sind korrekt\n- SSL-Fingerprint ist aktuell\n- Netzwerk-Konnektivität zwischen den Servern\n- Firewall erlaubt Port 8006`);
+    }
+}
+
+// --- Helper: Poll Migration Task with Live Logs (PDM-Style) ---
+
+async function pollMigrationTaskWithLogs(
+    client: SSHClient,
+    node: string,
+    upid: string,
+    log: (msg: string) => void
+): Promise<void> {
+    let status = 'running';
+    let exitStatus = '';
+    let lastLogLine = 0;
+    let pollCount = 0;
+    const maxPolls = 3600; // Max 2 hours (at 2s intervals)
+
+    log('[Migration] Polling task status and logs...');
+
+    while (status === 'running' && pollCount < maxPolls) {
+        await new Promise(r => setTimeout(r, 2000));
+        pollCount++;
+
+        try {
+            // Get task status via pvesh API
+            const encodedUpid = encodeURIComponent(upid);
+            const statusCmd = `pvesh get /nodes/${node}/tasks/${encodedUpid}/status --output-format json`;
+            const statusJson = await client.exec(statusCmd, 10000);
+            const statusData = JSON.parse(statusJson);
+
+            status = statusData.status;
+            exitStatus = statusData.exitstatus || '';
+
+            // Get new log lines
+            try {
+                const logCmd = `pvesh get /nodes/${node}/tasks/${encodedUpid}/log --start ${lastLogLine} --output-format json`;
+                const logJson = await client.exec(logCmd, 10000);
+                const logData = JSON.parse(logJson);
+
+                if (Array.isArray(logData) && logData.length > 0) {
+                    logData.forEach((entry: { n: number; t: string }) => {
+                        if (entry.n > lastLogLine) {
+                            log(`[Task] ${entry.t}`);
+                            lastLogLine = entry.n;
+                        }
                     });
                 }
-            };
-
-            stream.on('data', processChunk);
-            stream.stderr.on('data', processChunk);
-
-            stream.on('close', (code: number) => {
-                // Flush remaining buffer
-                if (buffer.trim()) log(`[Native] ${buffer.trim()}`);
-                if (code === 0) resolve();
-                else reject(new Error(`Native command exited with code ${code}`));
-            });
-
-            stream.on('error', (err: any) => reject(err));
-        });
-
-        return `Cross-cluster migration completed successfully (Native).`;
-    } catch (nativeError: any) {
-        log(`[Migration] Native strategy failed: ${nativeError.message}. Falling back to Streaming Backup/Restore...`);
-
-        // Force Reconnect: If native failed (broken pipe/exec undefined), our connection is likely dead.
-        // We MUST reconnect to attempt the fallback.
-        try {
-            log('[Migration] Re-establishing SSH connections for Fallback...');
-            // Attempt clean disconnect first (swallow errors)
-            try { await sourceSsh.disconnect(); } catch { }
-            try { await targetSsh.disconnect(); } catch { }
-
-            // Reconnect
-            await Promise.all([sourceSsh.connect(), targetSsh.connect()]);
-            log('[Migration] Connections restored.');
-        } catch (reconnErr) {
-            log('[Migration] Failed to reconnect for fallback: ' + String(reconnErr));
-            throw new Error(`Migration Failed. Native Error: ${nativeError.message}\nCould not recover connection for fallback.`);
-        }
-
-        // --- FALLBACK STRATEGY: Streaming Backup/Restore ---
-
-        // 1. Cleanup Target Again (Ensure slate is clear after failed native attempt)
-        try {
-            await targetSsh.exec(`qm stop ${targetVmid} --timeout 10`);
-            await targetSsh.exec(`qm unlock ${targetVmid}`);
-            await targetSsh.exec(`qm destroy ${targetVmid} --purge`);
-        } catch { }
-
-        // 2. Prepare Streaming Pipeline
-        const restoreStorage = options.targetStorage || 'local-lvm';
-        const restoreCmd = `qmrestore - ${targetVmid} --storage ${restoreStorage} --force --unique`;
-        const dumpMode = options.online ? 'snapshot' : 'stop';
-        const dumpCmd = `/usr/sbin/vzdump ${vmid} --stdout --compress zstd --mode ${dumpMode}`;
-
-        try {
-            log(`[Migration] Fallback Pipeline: ${dumpCmd} | SSH | ${restoreCmd}`);
-            const targetStream = await targetSsh.getExecStream(restoreCmd);
-            const sourceStream = await sourceSsh.getExecStream(dumpCmd);
-
-            sourceStream.pipe(targetStream);
-
-            // Log streams
-            sourceStream.stderr.on('data', (d) => { const l = d.toString().trim(); if (l) log(`[Source] ${l}`); });
-            targetStream.stderr.on('data', (d) => { const l = d.toString().trim(); if (l) log(`[Target] ${l}`); });
-
-            await new Promise<void>((resolve, reject) => {
-                targetStream.on('close', (code: number) => {
-                    if (code === 0) resolve();
-                    else reject(new Error(`Restore exited with code ${code}`));
-                });
-                targetStream.on('error', (err: any) => reject(new Error(`Target Stream Error: ${err.message}`)));
-                sourceStream.on('error', (err: any) => reject(new Error(`Source Stream Error: ${err.message}`)));
-            });
-
-            // Stop source if online migration success
-            if (options.online) {
-                try { await sourceSsh.exec(`qm stop ${vmid} --timeout 30`); } catch { }
+            } catch {
+                // Log fetch failed - continue polling status
             }
 
-            return `Migration completed successfully via Fallback (Streaming). Target VMID: ${targetVmid}\n\n(Native Method Failed. Command was: ${nativeCmd})`;
+            // Progress indicator every 30 seconds
+            if (pollCount % 15 === 0 && status === 'running') {
+                log(`[Migration] Still running... (${Math.floor(pollCount * 2 / 60)}m ${(pollCount * 2) % 60}s)`);
+            }
 
-        } catch (streamErr: any) {
-            throw new Error(`Migration Failed.\n\nNative Error: ${nativeError.message}\nNative Command: ${nativeCmd}\n\nFallback Error: ${streamErr.message}\n`);
+        } catch (pollError: any) {
+            // Transient error - log but continue
+            if (pollCount % 10 === 0) {
+                log(`[Migration] Poll warning: ${pollError.message}`);
+            }
         }
     }
+
+    // Validate final status
+    if (pollCount >= maxPolls) {
+        throw new Error('Migration timeout - Task ran longer than 2 hours');
+    }
+
+    if (status !== 'stopped') {
+        throw new Error(`Unexpected task status: ${status}`);
+    }
+
+    if (exitStatus !== 'OK') {
+        // Fetch final logs for error context
+        let errorDetails = '';
+        try {
+            const encodedUpid = encodeURIComponent(upid);
+            const logCmd = `pvesh get /nodes/${node}/tasks/${encodedUpid}/log --output-format json`;
+            const logJson = await client.exec(logCmd);
+            const logData = JSON.parse(logJson);
+            const lastLogs = logData.slice(-15).map((l: any) => l.t).join('\n');
+            errorDetails = `\n\nLetzte Log-Einträge:\n${lastLogs}`;
+        } catch { }
+
+        throw new Error(`Migration fehlgeschlagen mit Status: ${exitStatus}${errorDetails}`);
+    }
+
+    log('[Migration] Task completed with status: OK');
 }
 
 
