@@ -2,13 +2,12 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
     Loader2, CheckCircle2, AlertTriangle, ArrowRight,
-    Minimize2, Maximize2, ExternalLink, RefreshCw, ListTodo
+    ExternalLink, ListTodo
 } from 'lucide-react';
 
 interface Task {
@@ -27,7 +26,6 @@ interface Task {
 export function TaskManager() {
     const [tasks, setTasks] = useState<Task[]>([]);
     const [allTasks, setAllTasks] = useState<Task[]>([]);
-    const [minimized, setMinimized] = useState(false);
     const [showAll, setShowAll] = useState(false);
     const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
@@ -51,18 +49,8 @@ export function TaskManager() {
                 createdAt: t.created_at
             }));
 
-            // Active tasks for floating dock:
-            // - Running or Pending
-            // - Failed or Completed within the last 5 minutes
-            const fiveMinutesAgo = new Date(Date.now() - 5 * 60000).toISOString();
-
-            const active = mapped.filter((t: Task) => {
-                if (t.status === 'running' || t.status === 'pending') return true;
-                // Keep completed/failed visible for a while
-                if (t.createdAt && t.createdAt > fiveMinutesAgo) return true;
-                return false;
-            });
-
+            // Active tasks (Running or Pending)
+            const active = mapped.filter((t: Task) => t.status === 'running' || t.status === 'pending');
             setTasks(active);
 
             // All tasks for history view, sorted by ID desc
@@ -102,140 +90,110 @@ export function TaskManager() {
         }
     };
 
-    // Sidebar Trigger Button
-    const SidebarTrigger = () => (
-        <div className="relative">
-            {/* Popover Panels */}
-            {showAll && (
-                <div className="absolute left-full bottom-0 ml-4 w-96 z-50 animate-in fade-in slide-in-from-left-5">
-                    <Card className="shadow-2xl border bg-card/95 backdrop-blur-sm p-0 overflow-hidden flex flex-col max-h-[80vh]">
-                        <div className="p-3 border-b flex items-center justify-between bg-muted/50">
-                            <h3 className="font-semibold flex items-center gap-2 text-sm">
-                                <ListTodo className="h-4 w-4" />
-                                Alle Tasks
-                            </h3>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowAll(false)}>
-                                <Minimize2 className="h-3 w-3" />
-                            </Button>
-                        </div>
-                        <div className="overflow-y-auto p-2 space-y-2">
-                            {allTasks.length === 0 ? <div className="p-4 text-center text-xs text-muted-foreground">Keine Tasks</div> : (
-                                allTasks.map(task => (
-                                    <div key={task.id} className="text-xs border rounded p-2 hover:bg-muted/50 cursor-pointer" onClick={() => setSelectedTask(task)}>
-                                        <div className="flex justify-between mb-1">
-                                            <span className="font-medium">{task.type}</span>
-                                            <Badge variant="outline" className="text-[10px] h-4">{task.status}</Badge>
+    return (
+        <div className="mt-auto px-4 py-2 w-full">
+            {/* Full History Dialog */}
+            <Dialog open={showAll} onOpenChange={setShowAll}>
+                <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle>Alle Tasks</DialogTitle>
+                    </DialogHeader>
+                    <div className="overflow-y-auto space-y-2 flex-1">
+                        {allTasks.length === 0 ? <div className="text-center text-muted-foreground p-4">Keine Tasks</div> : (
+                            allTasks.map(task => (
+                                <div key={task.id} className="border rounded p-3 hover:bg-muted/50 cursor-pointer flex justify-between items-center" onClick={() => { setShowAll(false); setSelectedTask(task); }}>
+                                    <div>
+                                        <div className="font-medium flex items-center gap-2">
+                                            {task.type}
+                                            <Badge variant="outline" className={getStatusColor(task.status) + ' text-white border-0'}>{task.status}</Badge>
                                         </div>
-                                        <div className="text-muted-foreground truncate">{task.source} → {task.target}</div>
-                                        <Progress value={task.progress} className="h-1 mt-2" />
+                                        <div className="text-sm text-muted-foreground">{task.source} → {task.target}</div>
                                     </div>
-                                ))
-                            )}
-                        </div>
-                    </Card>
-                </div>
-            )}
-
-            {(tasks.length > 0 && !minimized) && (
-                <div className="absolute left-full bottom-0 ml-4 w-80 z-50 animate-in fade-in slide-in-from-left-5 mb-2">
-                    <Card className="shadow-2xl border bg-card/95 backdrop-blur-sm overflow-hidden">
-                        <div className="p-3 border-b flex items-center justify-between bg-primary/10">
-                            <div className="flex items-center gap-2 text-primary font-medium text-sm">
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                                {tasks.length} Laufend
-                            </div>
-                            <div className="flex gap-1">
-                                <Button size="icon" variant="ghost" className="h-6 w-6" title="Verlauf" onClick={() => { setShowAll(!showAll); setMinimized(true); }}>
-                                    <ListTodo className="h-3 w-3" />
-                                </Button>
-                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setMinimized(true)}>
-                                    <Minimize2 className="h-3 w-3" />
-                                </Button>
-                            </div>
-                        </div>
-                        <div className="max-h-64 overflow-y-auto">
-                            {tasks.map(task => (
-                                <div key={task.id} className="border-b last:border-0 p-3 hover:bg-muted/50 cursor-pointer" onClick={() => setSelectedTask(task)}>
-                                    <div className="flex justify-between items-start mb-2">
-                                        <div className="text-xs font-medium">{task.type}</div>
-                                        <div className="text-[10px] text-muted-foreground">{task.progress}%</div>
+                                    <div className="text-right">
+                                        <div className="text-sm font-medium">{task.progress}%</div>
+                                        <div className="text-xs text-muted-foreground">{new Date(task.createdAt || '').toLocaleTimeString()}</div>
                                     </div>
-                                    <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-                                        {task.source} <ArrowRight className="h-3 w-3" /> {task.target}
-                                    </div>
-                                    <Progress value={task.progress} className="h-1.5" />
                                 </div>
-                            ))}
-                        </div>
-                    </Card>
-                </div>
-            )}
+                            ))
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
 
-            <button
-                onClick={() => setMinimized(!minimized)}
-                className="flex items-center gap-3 px-4 py-3 rounded-md text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors w-full"
-            >
-                <div className="relative">
-                    <ListTodo className="h-4 w-4" />
-                    {tasks.length > 0 && (
-                        <span className="absolute -top-1.5 -right-1.5 bg-blue-500 text-white text-[9px] w-3.5 h-3.5 flex items-center justify-center rounded-full animate-pulse">
-                            {tasks.length}
-                        </span>
+            {/* Task Detail Dialog */}
+            <Dialog open={!!selectedTask} onOpenChange={(open) => !open && setSelectedTask(null)}>
+                <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            {selectedTask && getStatusIcon(selectedTask.status)}
+                            {selectedTask?.type}: {selectedTask?.source} → {selectedTask?.target}
+                        </DialogTitle>
+                    </DialogHeader>
+                    {selectedTask && (
+                        <div className="space-y-4 overflow-y-auto flex-1">
+                            <div className="flex items-center gap-4">
+                                <Progress value={selectedTask.progress} className="flex-1" />
+                                <span className="text-sm font-medium">{selectedTask.progress}%</span>
+                            </div>
+                            <div className="flex gap-2 text-sm">
+                                <Badge className={`${getStatusColor(selectedTask.status)} text-white`}>
+                                    {selectedTask.status}
+                                </Badge>
+                                <span className="text-muted-foreground">
+                                    Schritt {selectedTask.currentStep} / {selectedTask.totalSteps}
+                                </span>
+                            </div>
+                            {selectedTask.log && (
+                                <div className="bg-black/90 text-green-400 p-4 rounded-md font-mono text-xs max-h-[300px] overflow-y-auto whitespace-pre-wrap">
+                                    {selectedTask.log}
+                                </div>
+                            )}
+                            <div className="flex justify-end">
+                                <a href={`/migrations/${selectedTask.id}`}>
+                                    <Button variant="outline" size="sm">
+                                        <ExternalLink className="h-4 w-4 mr-2" />
+                                        Vollständige Details
+                                    </Button>
+                                </a>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
+            {/* Active Tasks Sidebar Summary */}
+            {tasks.length > 0 && (
+                <div className="space-y-2 mb-2">
+                    <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex justify-between items-center">
+                        <span>Aktive Prozesse ({tasks.length})</span>
+                        <Button variant="ghost" size="icon" className="h-4 w-4" onClick={() => setShowAll(true)}><ListTodo className="h-3 w-3" /></Button>
+                    </div>
+                    {tasks.slice(0, 3).map(task => (
+                        <div key={task.id} className="bg-card border rounded p-2 text-xs cursor-pointer hover:bg-muted" onClick={() => setSelectedTask(task)}>
+                            <div className="flex justify-between items-center mb-1">
+                                <span className="font-medium truncate">{task.type}</span>
+                                <span className={task.status === 'running' ? 'text-blue-500 animate-pulse' : ''}>{task.progress}%</span>
+                            </div>
+                            <Progress value={task.progress} className="h-1 mb-1" />
+                            <div className="text-muted-foreground truncate" title={`${task.source} -> ${task.target}`}>
+                                {task.source} → {task.target}
+                            </div>
+                        </div>
+                    ))}
+                    {tasks.length > 3 && (
+                        <Button variant="ghost" size="sm" className="w-full text-xs h-6" onClick={() => setShowAll(true)}>+ {tasks.length - 3} weitere</Button>
                     )}
                 </div>
-                Tasks
-            </button>
+            )}
+
+            {/* Default State if no tasks or button to show history */}
+            {tasks.length === 0 && (
+                <Button variant="ghost" className="w-full justify-start text-muted-foreground hover:text-foreground" onClick={() => setShowAll(true)}>
+                    <ListTodo className="h-4 w-4 mr-2" />
+                    Task Verlauf
+                </Button>
+            )}
         </div>
-    );
-
-    // Task Detail Dialog
-    const TaskDetailDialog = () => (
-        <Dialog open={!!selectedTask} onOpenChange={() => setSelectedTask(null)}>
-            <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
-                <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2">
-                        {selectedTask && getStatusIcon(selectedTask.status)}
-                        {selectedTask?.type}: {selectedTask?.source} → {selectedTask?.target}
-                    </DialogTitle>
-                </DialogHeader>
-                {selectedTask && (
-                    <div className="space-y-4 overflow-y-auto flex-1">
-                        <div className="flex items-center gap-4">
-                            <Progress value={selectedTask.progress} className="flex-1" />
-                            <span className="text-sm font-medium">{selectedTask.progress}%</span>
-                        </div>
-                        <div className="flex gap-2 text-sm">
-                            <Badge className={`${getStatusColor(selectedTask.status)} text-white`}>
-                                {selectedTask.status}
-                            </Badge>
-                            <span className="text-muted-foreground">
-                                Schritt {selectedTask.currentStep} / {selectedTask.totalSteps}
-                            </span>
-                        </div>
-                        {selectedTask.log && (
-                            <div className="bg-black/90 text-green-400 p-4 rounded-md font-mono text-xs max-h-[300px] overflow-y-auto whitespace-pre-wrap">
-                                {selectedTask.log}
-                            </div>
-                        )}
-                        <div className="flex justify-end">
-                            <a href={`/migrations/${selectedTask.id}`}>
-                                <Button variant="outline" size="sm">
-                                    <ExternalLink className="h-4 w-4 mr-2" />
-                                    Vollständige Details
-                                </Button>
-                            </a>
-                        </div>
-                    </div>
-                )}
-            </DialogContent>
-        </Dialog>
-    );
-
-    return (
-        <>
-            <SidebarTrigger />
-            <TaskDetailDialog />
-        </>
     );
 }
 

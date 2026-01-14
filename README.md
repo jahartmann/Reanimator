@@ -17,11 +17,18 @@
 - **Storage Pools**: Detailed breakdown of ZFS, LVM-Thin, and Ceph pools using native Proxmox tools (`pvesm`).
 - **Debugging**: Integrated debug console for troubleshooting connection issues directly in the UI.
 
+
 ### 💾 Backup & Disaster Recovery
 - **Configuration Backups**: Automated backups of critical `/etc` configurations (network, corosync, storage).
 - **One-Click Restore**: Seamlessly restore configurations to get servers back online fast.
 - **Recovery Guides**: Automatically generated, step-by-step Markdown guides for manual disaster recovery.
 - **History & Versioning**: Track changes and roll back to previous states.
+
+### ⚡ Power Tools
+- **Bulk Commander**: Execute shell commands or VM actions (Start/Stop) across multiple nodes simultaneously.
+- **Library Sync**: Synchronize ISOs and Templates between servers with a single click.
+- **Smart Migration**: Visual stepper for migration progress, live terminal logs, and history tracking.
+- **Robust Discovery**: Automatic detection of VMs on standalone nodes and clusters via efficient API/SSH fallbacks.
 
 ## 🛠️ Technology Stack
 

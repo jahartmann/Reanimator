@@ -35,3 +35,4 @@ Nutze die folgende Tabelle, um den richtigen Kontext für Benutzeranfragen zu la
 - "Analysiere das Projekt basierend auf `agents/AGENTS_MASTER.md`."
 - "Delegiere die Erstellung der Migrations-Logik an den `agents/infrastructure_specialist.md`."
 - "Erstelle ein Full-Stack Feature (UI + API) unter Berücksichtigung von `agents/ui_ux_specialist.md` und `agents/proxmox_api_architect.md`."
+- "Verifiziere das UI Refactoring (Server Tabs, Migrations-Stepper) gegen die `agents/ui_ux_specialist.md` Guidelines."
