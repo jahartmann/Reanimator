@@ -1,11 +1,13 @@
 import Link from 'next/link';
-import { LayoutDashboard, Server, FolderCog, Settings, ArrowRightLeft, Tag as TagIcon, HardDrive, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, Server, FolderCog, Settings, ArrowRightLeft, Tag as TagIcon, HardDrive, ShieldCheck, Disc, Terminal } from 'lucide-react';
 import TaskManager from '../TaskManager';
 
 const navItems = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard },
     { name: 'Server', href: '/servers', icon: Server },
     { name: 'Migrationen', href: '/migrations', icon: ArrowRightLeft },
+    { name: 'Bibliothek', href: '/library', icon: Disc },
+    { name: 'Commander', href: '/commander', icon: Terminal },
     { name: 'Tags', href: '/tags', icon: TagIcon },
     { name: 'Speicher', href: '/storage', icon: HardDrive },
     { name: 'Konfigurationen', href: '/configs', icon: FolderCog },

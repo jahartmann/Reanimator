@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Server, Network, HardDrive, Cpu, Wifi, WifiOff, Clock, Gauge, Activity, Database, Box, Settings, Tags, Folder } from "lucide-react";
 import { createSSHClient } from '@/lib/ssh';
-import { ServerVisualization } from '@/components/ui/ServerVisualization';
+import { ServerMonitor } from '@/components/server/ServerMonitor';
 import { getVMs } from '@/app/actions/vm';
 import { VirtualMachineList } from '@/components/vm/VirtualMachineList';
 import TagManagement from '@/components/ui/TagManagement';
@@ -121,12 +121,9 @@ export default async function ServerDetailPage({
                 <>
                     {/* Server Visualization */}
                     <div className="py-4">
-                        <ServerVisualization
-                            system={info.system}
-                            networks={info.networks}
-                            disks={info.disks}
-                            pools={info.pools as any}
-                            serverType={server.type}
+                        <ServerMonitor
+                            server={server}
+                            info={info as any}
                         />
                     </div>
 

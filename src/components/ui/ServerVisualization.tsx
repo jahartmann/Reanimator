@@ -20,7 +20,7 @@ const UsageBar = ({ usage, color, label }: { usage: number, color: string, label
     </div>
 );
 
-import { SystemInfo, NetworkInterface, DiskInfo, StoragePool } from '@/app/actions/monitoring';
+import { SystemInfo, NetworkInterface, DiskInfo, StoragePool, ServerHealth } from '@/app/actions/monitoring';
 
 export interface ServerVisualizationProps {
     system: SystemInfo;
@@ -28,8 +28,9 @@ export interface ServerVisualizationProps {
     disks: DiskInfo[];
     pools: StoragePool[];
     serverType: 'pve' | 'pbs';
+    health?: ServerHealth | null;
 }
-export function ServerVisualization({ system, networks, disks, pools, serverType }: ServerVisualizationProps) {
+export function ServerVisualization({ system, networks, disks, pools, serverType, health }: ServerVisualizationProps) {
     const [hoveredComponent, setHoveredComponent] = useState<string | null>(null);
     const [detailData, setDetailData] = useState<any>(null); // For specific disk/net info
 
@@ -81,8 +82,14 @@ export function ServerVisualization({ system, networks, disks, pools, serverType
         }
         if (hoveredComponent === 'disk' && detailData) {
             const disk = detailData as DiskInfo;
+            // Find SMART data
+            const smart = health?.smart?.find(s => s.device === disk.name);
+            const isFailed = smart?.health === 'FAILED';
+
             // Also find status led color
-            const ledColor = disk.transport === 'nvme' ? 'bg-purple-500' : disk.rotational === false ? 'bg-blue-500' : 'bg-zinc-500';
+            let ledColor = disk.transport === 'nvme' ? 'bg-purple-500' : disk.rotational === false ? 'bg-blue-500' : 'bg-zinc-500';
+            if (isFailed) ledColor = 'bg-red-500 animate-pulse';
+
             return (
                 <div className="flex flex-col justify-center h-full overflow-hidden">
                     <div className="flex items-center gap-2 mb-2">
@@ -93,8 +100,16 @@ export function ServerVisualization({ system, networks, disks, pools, serverType
                     <div className="space-y-1 text-xs">
                         <div className="flex justify-between"><span className="text-zinc-500">Size:</span> <span className="text-zinc-300">{disk.size}</span></div>
                         <div className="flex justify-between"><span className="text-zinc-500">Model:</span> <span className="text-zinc-300 truncate w-32 text-right">{disk.model || '-'}</span></div>
-                        <div className="flex justify-between"><span className="text-zinc-500">Serial:</span> <span className="text-zinc-300 truncate w-32 text-right">{disk.serial || '-'}</span></div>
-                        <div className="flex justify-between"><span className="text-zinc-500">Mount:</span> <span className="text-zinc-300 truncate w-32 text-right">{disk.mountpoint}</span></div>
+
+                        {smart ? (
+                            <>
+                                <div className="flex justify-between"><span className="text-zinc-500">Health:</span> <span className={isFailed ? 'text-red-500 font-bold' : 'text-green-500'}>{smart.health}</span></div>
+                                {smart.temperature && <div className="flex justify-between"><span className="text-zinc-500">Temp:</span> <span className="text-zinc-300">{smart.temperature}°C</span></div>}
+                                {smart.wearLevel !== undefined && <div className="flex justify-between"><span className="text-zinc-500">Wearout:</span> <span className={smart.wearLevel < 10 ? 'text-amber-500' : 'text-zinc-300'}>{100 - smart.wearLevel}% Used</span></div>}
+                            </>
+                        ) : (
+                            <div className="flex justify-between"><span className="text-zinc-500">Mount:</span> <span className="text-zinc-300 truncate w-32 text-right">{disk.mountpoint}</span></div>
+                        )}
                         <div className="flex justify-between"><span className="text-zinc-500">Transport:</span> <span className="text-zinc-300">{disk.transport || 'SATA'}</span></div>
                     </div>
                 </div>
@@ -212,20 +227,29 @@ export function ServerVisualization({ system, networks, disks, pools, serverType
 
                         {/* Interactive Disks Grid */}
                         <div className="grid grid-cols-4 gap-2">
-                            {physicalDisks.slice(0, 8).map((disk, i) => (
-                                <motion.div
-                                    key={i}
-                                    className={`h-10 rounded-sm flex flex-col items-center justify-center text-[9px] cursor-pointer ${disk.transport === 'nvme' ? 'bg-purple-500/20 border border-purple-500/40' :
-                                        disk.rotational === false ? 'bg-blue-500/20 border border-blue-500/40' :
-                                            'bg-zinc-700 border border-zinc-600'
-                                        }`}
-                                    onHoverStart={() => { setHoveredComponent('disk'); setDetailData(disk); }}
-                                    onHoverEnd={() => { setHoveredComponent(null); setDetailData(null); }}
-                                    whileHover={{ scale: 1.1, zIndex: 10, borderColor: '#fff' }}
-                                >
-                                    <span className="font-mono font-bold text-zinc-300">{disk.name}</span>
-                                </motion.div>
-                            ))}
+                            {physicalDisks.slice(0, 8).map((disk, i) => {
+                                const smart = health?.smart?.find(s => s.device === disk.name);
+                                const isFailed = smart?.health === 'FAILED';
+                                const isWarning = smart?.wearLevel !== undefined && smart.wearLevel < 10;
+                                let borderColor = '';
+                                if (isFailed) borderColor = '!border-red-500 !border-2 animate-pulse';
+                                else if (isWarning) borderColor = '!border-amber-500 !border-2';
+
+                                return (
+                                    <motion.div
+                                        key={i}
+                                        className={`h-10 rounded-sm flex flex-col items-center justify-center text-[9px] cursor-pointer ${disk.transport === 'nvme' ? 'bg-purple-500/20 border-purple-500/40' :
+                                            disk.rotational === false ? 'bg-blue-500/20 border-blue-500/40' :
+                                                'bg-zinc-700 border-zinc-600'
+                                            } ${borderColor}`}
+                                        onHoverStart={() => { setHoveredComponent('disk'); setDetailData(disk); }}
+                                        onHoverEnd={() => { setHoveredComponent(null); setDetailData(null); }}
+                                        whileHover={{ scale: 1.1, zIndex: 10, borderColor: '#fff' }}
+                                    >
+                                        <span className={`font-mono font-bold ${isFailed ? 'text-red-500' : 'text-zinc-300'}`}>{disk.name}</span>
+                                    </motion.div>
+                                )
+                            })}
                         </div>
 
                         {/* Interactive Pools */}

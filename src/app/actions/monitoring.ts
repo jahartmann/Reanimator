@@ -471,3 +471,170 @@ export async function getServerInfo(server: any): Promise<{
     }
 }
 
+
+export interface SmartInfo {
+    device: string;
+    health: 'PASSED' | 'FAILED' | 'UNKNOWN';
+    model: string;
+    serial: string;
+    temperature?: number;
+    powerOnHours?: number;
+    wearLevel?: number; // 0-100%
+    reallocatedSectors?: number;
+}
+
+export interface ZfsHealth {
+    pool: string;
+    health: string;
+    status: string;
+    errors: string;
+}
+
+export interface SystemEvent {
+    timestamp: string;
+    message: string;
+    type: 'OOM' | 'SERVICE' | 'OTHER';
+}
+
+export interface ServerHealth {
+    smart: SmartInfo[];
+    zfs: ZfsHealth[];
+    events: SystemEvent[];
+}
+
+async function getSmartStats(ssh: any, disks: DiskInfo[]): Promise<SmartInfo[]> {
+    const smartData: SmartInfo[] = [];
+
+    // Only check physical disks (sda, nvme0n1), skip partitions
+    const physicalDisks = disks.filter(d => d.type === 'disk');
+
+    await Promise.all(physicalDisks.map(async (disk) => {
+        try {
+            // Try JSON format first
+            const output = await ssh.exec(`smartctl -j -a /dev/${disk.name}`, 8000).catch(() => null);
+
+            if (output) {
+                try {
+                    const json = JSON.parse(output);
+                    const passed = json.smart_status?.passed;
+
+                    smartData.push({
+                        device: disk.name,
+                        health: passed ? 'PASSED' : 'FAILED',
+                        model: json.model_name || disk.model || '',
+                        serial: json.serial_number || disk.serial || '',
+                        temperature: json.temperature?.current,
+                        powerOnHours: json.power_on_time?.hours,
+                        wearLevel: json.ata_smart_attributes?.table?.find((a: any) => a.id === 177 || a.id === 233)?.raw?.value ?? undefined, // SSD Wear Indicators
+                        reallocatedSectors: json.ata_smart_attributes?.table?.find((a: any) => a.id === 5)?.raw?.value
+                    });
+                    return;
+                } catch {
+                    // Fallback if JSON parse fails
+                }
+            }
+
+            // Fallback to text parsing if JSON failed or not supported
+            // This is minimal fallback
+            const textOutput = await ssh.exec(`smartctl -H -A /dev/${disk.name}`, 5000);
+            const passed = textOutput.includes('PASSED');
+            smartData.push({
+                device: disk.name,
+                health: passed ? 'PASSED' : (textOutput.includes('FAILED') ? 'FAILED' : 'UNKNOWN'),
+                model: disk.model || '',
+                serial: disk.serial || ''
+            });
+
+        } catch (e) {
+            console.error(`SMART check failed for ${disk.name}`, e);
+            smartData.push({
+                device: disk.name,
+                health: 'UNKNOWN',
+                model: disk.model || '',
+                serial: disk.serial || ''
+            });
+        }
+    }));
+
+    return smartData;
+}
+
+async function getZfsStats(ssh: any): Promise<ZfsHealth[]> {
+    try {
+        const output = await ssh.exec('zpool list -H -o name,health', 5000);
+        if (!output) return [];
+
+        return output.split('\n').filter(Boolean).map((line: string) => {
+            const [name, health] = line.split(/\s+/);
+            return {
+                pool: name,
+                health: health,
+                status: health === 'ONLINE' ? 'OK' : 'DEGRADED',
+                errors: '-'
+            };
+        });
+    } catch {
+        return [];
+    }
+}
+
+async function getSystemEvents(ssh: any): Promise<SystemEvent[]> {
+    const events: SystemEvent[] = [];
+    try {
+        // Check OOM Kills in dmesg
+        const dmesg = await ssh.exec('dmesg -T | grep -i "Out of memory" | tail -n 5', 5000);
+        dmesg.split('\n').filter(Boolean).forEach((line: string) => {
+            events.push({
+                timestamp: line.substring(0, 27).trim(), // Extract dmesg timestamp
+                message: line.substring(27).trim(),
+                type: 'OOM'
+            });
+        });
+
+        // Could also check for failed systemd services
+        const failedServices = await ssh.exec('systemctl list-units --state=failed --no-legend --plain', 5000);
+        failedServices.split('\n').filter(Boolean).forEach((line: string) => {
+            events.push({
+                timestamp: 'Now',
+                message: line.trim(),
+                type: 'SERVICE'
+            });
+        });
+
+    } catch {
+        // Ignore
+    }
+    return events;
+}
+
+export async function getServerHealth(server: any): Promise<ServerHealth | null> {
+    if (!server.ssh_key) return null;
+
+    let ssh;
+    try {
+        ssh = createSSHClient({
+            ssh_host: server.ssh_host,
+            ssh_port: server.ssh_port,
+            ssh_user: server.ssh_user,
+            ssh_key: server.ssh_key
+        });
+        await ssh.connect();
+
+        // Need disks first to check SMART
+        // We reuse getDiskStats but suppress log output by passing dummy debug
+        const disks = await getDiskStats(ssh, []);
+
+        const [smart, zfs, events] = await Promise.all([
+            getSmartStats(ssh, disks),
+            getZfsStats(ssh),
+            getSystemEvents(ssh)
+        ]);
+
+        ssh.disconnect();
+        return { smart, zfs, events };
+    } catch (e) {
+        if (ssh) ssh.disconnect();
+        console.error('Health Check Failed:', e);
+        return null;
+    }
+}
