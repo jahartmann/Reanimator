@@ -396,7 +396,7 @@ async function runPreFlightChecks(
 
 
 async function migrateRemote(ctx: MigrationContext): Promise<string> {
-    const { sourceSsh, targetSsh, source, target, type, vmid, options, onLog, sourceNode } = ctx;
+    const { sourceId, sourceSsh, targetSsh, source, target, type, vmid, options, onLog, sourceNode } = ctx;
     const log = (msg: string) => { console.log(msg); if (onLog) onLog(msg); };
 
     // ============================================================
