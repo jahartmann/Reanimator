@@ -226,35 +226,97 @@ export default function NewMigrationPage() {
 
                             {/* STEP 0: Servers */}
                             {step === 0 && (
-                                <div className="space-y-6 animate-in fade-in">
+                                <div className="space-y-8 animate-in fade-in">
                                     <h2 className="text-xl font-semibold flex items-center gap-2"><ArrowRightLeft className="h-5 w-5" /> Welcher Weg?</h2>
+
+                                    {/* Server Selectors - Improved Visuals */}
                                     <div className="grid gap-6 md:grid-cols-2">
                                         <div className="space-y-2">
-                                            <Label>Quell-Server</Label>
+                                            <Label className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Quelle</Label>
                                             <Select value={sourceId} onValueChange={setSourceId}>
-                                                <SelectTrigger className="h-24 flex flex-col items-start gap-2 p-4">
-                                                    <span className="text-muted-foreground text-xs uppercase font-bold">Von</span>
-                                                    <div className="font-bold text-lg">{servers.find(s => s.id.toString() === sourceId)?.name || 'Wählen...'}</div>
+                                                <SelectTrigger className="h-28 flex flex-col items-start justify-center gap-2 p-6 border-2 hover:border-primary/50 transition-colors bg-card/50">
+                                                    <span className="text-muted-foreground text-xs font-bold flex items-center gap-2">
+                                                        <ServerIcon className="h-3 w-3" /> VON SERVER
+                                                    </span>
+                                                    {servers.length === 0 ? (
+                                                        <div className="text-muted-foreground text-sm flex items-center gap-2">
+                                                            <Loader2 className="h-4 w-4 animate-spin" /> Lade Server...
+                                                        </div>
+                                                    ) : (
+                                                        <div className="font-bold text-2xl truncate w-full text-left">
+                                                            {servers.find(s => s.id.toString() === sourceId)?.name || 'Bitte wählen...'}
+                                                        </div>
+                                                    )}
+                                                    {sourceId && <div className="text-xs text-muted-foreground">{servers.find(s => s.id.toString() === sourceId)?.host}</div>}
                                                 </SelectTrigger>
                                                 <SelectContent>
-                                                    {servers.map(s => <SelectItem key={s.id} value={s.id.toString()} disabled={s.id.toString() === targetId}>{s.name} ({s.host})</SelectItem>)}
+                                                    {servers.map(s => <SelectItem key={s.id} value={s.id.toString()} disabled={s.id.toString() === targetId} className="py-3">
+                                                        <div className="font-medium">{s.name}</div>
+                                                        <div className="text-xs text-muted-foreground">{s.host}</div>
+                                                    </SelectItem>)}
                                                 </SelectContent>
                                             </Select>
                                         </div>
+
                                         <div className="space-y-2">
-                                            <Label>Ziel-Server</Label>
+                                            <Label className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Ziel</Label>
                                             <Select value={targetId} onValueChange={setTargetId}>
-                                                <SelectTrigger className="h-24 flex flex-col items-start gap-2 p-4">
-                                                    <span className="text-muted-foreground text-xs uppercase font-bold">Nach</span>
-                                                    <div className="font-bold text-lg">{servers.find(s => s.id.toString() === targetId)?.name || 'Wählen...'}</div>
+                                                <SelectTrigger className="h-28 flex flex-col items-start justify-center gap-2 p-6 border-2 hover:border-primary/50 transition-colors bg-card/50">
+                                                    <span className="text-muted-foreground text-xs font-bold flex items-center gap-2">
+                                                        <ServerIcon className="h-3 w-3" /> NACH SERVER
+                                                    </span>
+                                                    <div className="font-bold text-2xl truncate w-full text-left">
+                                                        {servers.find(s => s.id.toString() === targetId)?.name || 'Bitte wählen...'}
+                                                    </div>
+                                                    {targetId && <div className="text-xs text-muted-foreground">{servers.find(s => s.id.toString() === targetId)?.host}</div>}
                                                 </SelectTrigger>
                                                 <SelectContent>
-                                                    {servers.map(s => <SelectItem key={s.id} value={s.id.toString()} disabled={s.id.toString() === sourceId}>{s.name} ({s.host})</SelectItem>)}
+                                                    {servers.map(s => <SelectItem key={s.id} value={s.id.toString()} disabled={s.id.toString() === sourceId} className="py-3">
+                                                        <div className="font-medium">{s.name}</div>
+                                                        <div className="text-xs text-muted-foreground">{s.host}</div>
+                                                    </SelectItem>)}
                                                 </SelectContent>
                                             </Select>
                                         </div>
                                     </div>
-                                    {loadingResources && <div className="text-sm text-muted-foreground animate-pulse">Lade Ziel-Ressourcen...</div>}
+
+                                    {/* Action Buttons for Step 0 */}
+                                    <div className="flex flex-col gap-4 pt-4 border-t">
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-sm text-muted-foreground">
+                                                {sourceId && targetId ? (
+                                                    loadingVms ? <span className="flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin" /> Lade Objekte...</span> : <span>{vms.length} Objekte gefunden.</span>
+                                                ) : <span>Wähle Server um fortzufahren.</span>}
+                                            </div>
+
+                                            <div className="flex gap-4">
+                                                {/* Full Migration Shortcut */}
+                                                <Button
+                                                    variant="secondary"
+                                                    className="gap-2"
+                                                    disabled={!sourceId || !targetId || loadingVms || vms.length === 0}
+                                                    onClick={() => {
+                                                        // Pre-select ALL and jump to mapping (Step 2) -> actually let's go to Step 2 so they see mapping
+                                                        setSelectedVmIds(vms.map(v => v.vmid));
+                                                        setStep(2);
+                                                    }}
+                                                >
+                                                    <Database className="h-4 w-4" />
+                                                    Alles Migrieren (Full)
+                                                </Button>
+
+                                                {/* Granular Selection */}
+                                                <Button
+                                                    disabled={!sourceId || !targetId || loadingVms}
+                                                    onClick={() => setStep(1)}
+                                                >
+                                                    Auswahl Treffen <ArrowRight className="ml-2 h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {loadingResources && <div className="text-sm text-muted-foreground animate-pulse text-center">Lade Ziel-Ressourcen...</div>}
                                 </div>
                             )}
 
@@ -263,19 +325,25 @@ export default function NewMigrationPage() {
                                 <div className="space-y-4 animate-in fade-in flex-1 flex flex-col">
                                     <div className="flex justify-between items-center">
                                         <h2 className="text-xl font-semibold">VMs Auswählen</h2>
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-2 bg-muted/50 p-1.5 rounded-md">
                                             <Checkbox id="selectAll" checked={selectedVmIds.length === vms.length && vms.length > 0} onCheckedChange={(c) => handleSelectAll(!!c)} />
-                                            <Label htmlFor="selectAll">Alle {vms.length} wählen</Label>
+                                            <Label htmlFor="selectAll" className="text-sm cursor-pointer whitespace-nowrap">Alle wählen</Label>
                                         </div>
                                     </div>
+
+                                    {vms.length === 0 && !loadingVms && (
+                                        <div className="text-center py-10 border-2 border-dashed rounded-lg text-muted-foreground">
+                                            Keine VMs oder Container auf dem Quellserver gefunden.
+                                        </div>
+                                    )}
 
                                     {loadingVms ? (
                                         <div className="flex items-center justify-center flex-1"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
                                     ) : (
                                         <div className="border rounded-md flex-1 overflow-y-auto max-h-[400px]">
                                             <table className="w-full text-sm">
-                                                <thead className="bg-muted sticky top-0 z-10">
-                                                    <tr className="text-left">
+                                                <thead className="bg-muted/90 backdrop-blur sticky top-0 z-10">
+                                                    <tr className="text-left border-b">
                                                         <th className="p-3 w-10"></th>
                                                         <th className="p-3">ID</th>
                                                         <th className="p-3">Name</th>
@@ -285,18 +353,18 @@ export default function NewMigrationPage() {
                                                 </thead>
                                                 <tbody className="divide-y">
                                                     {vms.map(vm => (
-                                                        <tr key={vm.vmid} className={`hover:bg-muted/50 cursor-pointer ${selectedVmIds.includes(vm.vmid) ? 'bg-blue-500/5' : ''}`} onClick={() => {
+                                                        <tr key={vm.vmid} className={`hover:bg-muted/50 cursor-pointer transition-colors ${selectedVmIds.includes(vm.vmid) ? 'bg-blue-500/10' : ''}`} onClick={() => {
                                                             if (selectedVmIds.includes(vm.vmid)) setSelectedVmIds(p => p.filter(id => id !== vm.vmid));
                                                             else setSelectedVmIds(p => [...p, vm.vmid]);
                                                         }}>
                                                             <td className="p-3">
                                                                 <Checkbox checked={selectedVmIds.includes(vm.vmid)} />
                                                             </td>
-                                                            <td className="p-3 font-mono">{vm.vmid}</td>
+                                                            <td className="p-3 font-mono text-xs">{vm.vmid}</td>
                                                             <td className="p-3 font-medium">{vm.name}</td>
                                                             <td className="p-3 text-muted-foreground uppercase text-xs">{vm.type}</td>
                                                             <td className="p-3">
-                                                                <Badge variant={vm.status === 'running' ? 'default' : 'secondary'} className="text-xs">
+                                                                <Badge variant={vm.status === 'running' ? 'default' : 'secondary'} className="text-[10px] h-5">
                                                                     {vm.status}
                                                                 </Badge>
                                                             </td>
@@ -306,7 +374,10 @@ export default function NewMigrationPage() {
                                             </table>
                                         </div>
                                     )}
-                                    <div className="text-right text-xs text-muted-foreground">{selectedVmIds.length} ausgewählt</div>
+                                    <div className="flex justify-between items-center text-xs text-muted-foreground border-t pt-2">
+                                        <span>{vms.length} Objekte total</span>
+                                        <span className="font-semibold text-primary">{selectedVmIds.length} für Migration markiert</span>
+                                    </div>
                                 </div>
                             )}
 
