@@ -22,6 +22,20 @@ import { Loader2, Plus, RefreshCw, Trash2, Tag as TagIcon, Server as ServerIcon,
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+
+function getContrastColor(hexColor: string) {
+    if (!hexColor) return 'black';
+    const hex = hexColor.replace('#', '');
+    // Handle short hex if necessary, but assuming full 6 hex for now or failing gracefully
+    if (hex.length !== 6) return 'black';
+
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+    return (yiq >= 128) ? 'black' : 'white';
+}
+
 export default function TagsPage() {
     const [tags, setTags] = useState<Tag[]>([]);
     const [loading, setLoading] = useState(true);
@@ -300,20 +314,8 @@ export default function TagsPage() {
                                                             <Checkbox checked={selectedVMs.has(key)} />
                                                             <div className="min-w-0">
                                                                 <div className="font-medium truncate">{vm.name} <span className="text-muted-foreground">({vm.vmid})</span></div>
-                                                                <div className="text-xs text-muted-foreground flex gap-1 mt-1">
-    // Helper for readable text color
-                                                                    function getContrastColor(hexColor: string) {
-        // Remove hash if present
-        const hex = hexColor.replace('#', '');
-                                                                    const r = parseInt(hex.substr(0, 2), 16);
-                                                                    const g = parseInt(hex.substr(2, 2), 16);
-                                                                    const b = parseInt(hex.substr(4, 2), 16);
-                                                                    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
-        return (yiq >= 128) ? 'black' : 'white';
-    }
 
-                                                                    // ... (inside render)
-                                                                    // Update Badge style: color: getContrastColor(tag.color)
+                                                                <div className="text-xs text-muted-foreground flex gap-1 mt-1">
 
                                                                     {vm.tags && vm.tags.map(t => {
                                                                         // Find color from tags list or use default
