@@ -11,8 +11,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ArrowRight, ArrowLeft, Loader2, CheckCircle2, AlertTriangle, Info, Server, Database, Box, HardDrive } from "lucide-react";
 import { getServers } from "@/app/actions/server";
 import { startServerMigration, startVMMigration } from "@/app/actions/migration";
-import { getVMs, VirtualMachine } from "@/app/actions/vm";
+import { getVMs, VirtualMachine, setupSSHTrust } from "@/app/actions/vm";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 export default function NewMigrationPage() {
     const router = useRouter();
@@ -56,6 +58,11 @@ export default function NewMigrationPage() {
 
     // Final
     const [starting, setStarting] = useState(false);
+
+    // SSH Trust Fix State
+    const [showSshFix, setShowSshFix] = useState(false);
+    const [sshPassword, setSshPassword] = useState('');
+    const [fixingSsh, setFixingSsh] = useState(false);
 
     useEffect(() => {
         async function load() {
@@ -124,6 +131,21 @@ export default function NewMigrationPage() {
         }
     };
 
+    const handleFixSsh = async () => {
+        if (!sshPassword) return;
+        setFixingSsh(true);
+        try {
+            await setupSSHTrust(parseInt(sourceId), parseInt(targetId), sshPassword);
+            alert('SSH Verbindung erfolgreich repariert!\nSie können die Migration jetzt erneut starten.');
+            setShowSshFix(false);
+            setSshPassword('');
+        } catch (e: any) {
+            alert('Fehler beim Reparieren: ' + (e.message || String(e)));
+        } finally {
+            setFixingSsh(false);
+        }
+    };
+
     const handleStart = async () => {
         setStarting(true);
         try {
@@ -156,11 +178,21 @@ export default function NewMigrationPage() {
             if (res.success && res.taskId) {
                 router.push(`/migrations/${res.taskId}`);
             } else {
-                alert('Error: ' + res.message);
+                // Check if it is an SSH error
+                if (res.message && (res.message.includes('SSH') || res.message.includes('ssh-copy-id') || res.message.includes('Permission denied'))) {
+                    setShowSshFix(true);
+                } else {
+                    alert('Error: ' + res.message);
+                }
                 setStarting(false);
             }
-        } catch (e) {
-            alert('Error: ' + e);
+        } catch (e: any) {
+            const msg = e.message || String(e);
+            if (msg.includes('SSH') || msg.includes('ssh-copy-id') || msg.includes('Permission denied')) {
+                setShowSshFix(true);
+            } else {
+                alert('Error: ' + msg);
+            }
             setStarting(false);
         }
     };
@@ -432,7 +464,7 @@ export default function NewMigrationPage() {
                                                         checked={vmOptions.online}
                                                         onCheckedChange={(c) => setVmOptions(o => ({ ...o, online: !!c }))}
                                                     />
-                                                    <Label htmlFor="online">Online Migration (Live)</Label>
+                                                    <Label htmlFor="online">Snapshot Mode (Online)</Label>
                                                 </div>
                                             </div>
 
@@ -517,6 +549,34 @@ export default function NewMigrationPage() {
                     </Card>
                 </div>
             </div>
+
+            <Dialog open={showSshFix} onOpenChange={setShowSshFix}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>SSH Verbindung Reparieren</DialogTitle>
+                        <DialogDescription>
+                            Der Quellserver kann nicht auf den Zielserver zugreifen.
+                            Bitte geben Sie das Root-Passwort des <strong>Zielservers</strong> ein, um keys auszutauschen.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="py-4">
+                        <Label>Root Passwort (Zielserver)</Label>
+                        <Input
+                            type="password"
+                            value={sshPassword}
+                            onChange={(e) => setSshPassword(e.target.value)}
+                            placeholder="Geheimes Passwort"
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowSshFix(false)}>Abbrechen</Button>
+                        <Button onClick={handleFixSsh} disabled={fixingSsh || !sshPassword}>
+                            {fixingSsh && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            SSH Trust Einrichten
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

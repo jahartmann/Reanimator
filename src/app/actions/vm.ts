@@ -115,7 +115,7 @@ async function migrateLocal(ctx: MigrationContext): Promise<string> {
     return `Intra-cluster migration completed (UPID: ${upid})`;
 }
 
-// --- Pre-Flight Checks (ProxMigrate-Style) ---
+// --- Pre-Flight Checks (Reanimator Script) ---
 
 async function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -164,16 +164,22 @@ async function prepareVMForMigration(
         throw new Error(`VM ${vmid} nicht gefunden oder nicht erreichbar`);
     }
 
-    // Handle paused state (CRITICAL - this was causing the error!)
-    if (status.includes('paused')) {
-        log('[VM Prep] ⚠ VM is paused. Resuming first...');
+    // Handle paused/prelaunch state
+    if (status.includes('paused') || status.includes('prelaunch')) {
+        log(`[VM Prep] ⚠ VM is ${status.trim()}. Attempting to resolve...`);
         try {
-            await ssh.exec(`/usr/sbin/${cmd} resume ${vmid}`);
+            // Retrieve config see if it is valid
+            await ssh.exec(`/usr/sbin/${cmd} config ${vmid}`);
+
+            // Try resume then stop to ensure clean state
+            try { await ssh.exec(`/usr/sbin/${cmd} resume ${vmid}`); } catch { }
             await sleep(2000);
+            await ssh.exec(`/usr/sbin/${cmd} stop ${vmid} --timeout 30`);
+
             status = await ssh.exec(`/usr/sbin/${cmd} status ${vmid}`);
-            log(`[VM Prep] ✓ Resumed. New status: ${status.trim()}`);
+            log(`[VM Prep] ✓ Resolved state. New status: ${status.trim()}`);
         } catch (e) {
-            throw new Error('Konnte VM nicht aus Pause-Zustand befreien. Bitte manuell "qm resume" ausführen.');
+            log(`[VM Prep] ⚠ Warning: Could not fully resolve VM state: ${e}`);
         }
     }
 
@@ -307,7 +313,7 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     const log = (msg: string) => { console.log(msg); if (onLog) onLog(msg); };
 
     // ============================================================
-    // PROXMIGRATE-STYLE MIGRATION (Robust 5-Step Process)
+    // REANIMATOR SCRIPT MIGRATION (Robust 5-Step Process)
     // Pre-Flight: Connectivity & VM state checks
     // Step 1: Stop VM and create vzdump backup on source
     // Step 2: Transfer backup via SCP (server-to-server)
@@ -316,7 +322,7 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     // ============================================================
 
     log('[Migration] ╔═══════════════════════════════════════════════════════════╗');
-    log('[Migration] ║     ProxMigrate-Style Cross-Cluster Migration             ║');
+    log('[Migration] ║     Reanimator Script: Cross-Cluster Migration            ║');
     log('[Migration] ╚═══════════════════════════════════════════════════════════╝');
     log('');
 
@@ -596,6 +602,46 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
 
         throw new Error(`Migration fehlgeschlagen:\n\n${error.message}\n\nBitte prüfen Sie:\n- SSH-Zugang zwischen den Servern (für SCP)\n- Genügend Speicherplatz für Backup in /tmp\n- Ziel-Storage ist erreichbar`);
     }
+}
+
+// --- SSH Trust Setup Helper ---
+
+export async function setupSSHTrust(sourceId: number, targetId: number, rootPassword: string): Promise<string> {
+    const source = await getServer(sourceId);
+    const target = await getServer(targetId);
+
+    // 1. Get/Generate Source Key
+    const sourceSsh = await createSSHClient(source);
+    let pubKey = '';
+    try {
+        pubKey = await sourceSsh.exec('cat ~/.ssh/id_rsa.pub');
+    } catch {
+        await sourceSsh.exec('ssh-keygen -t rsa -N "" -f ~/.ssh/id_rsa');
+        pubKey = await sourceSsh.exec('cat ~/.ssh/id_rsa.pub');
+    }
+
+    if (!pubKey) throw new Error('Konnte SSH Key auf Quellserver nicht lesen/erstellen');
+
+    // 2. Connect to Target with Password
+    // explicitly use password and remove key to force password auth
+    const targetSsh = await createSSHClient({
+        ...target,
+        username: 'root',
+        password: rootPassword,
+        privateKey: undefined
+    });
+
+    // 3. Install Key
+    await targetSsh.exec('mkdir -p ~/.ssh && chmod 700 ~/.ssh');
+
+    // Check if key already exists to avoid duplicates
+    const authKeys = await targetSsh.exec('cat ~/.ssh/authorized_keys 2>/dev/null || true');
+    if (!authKeys.includes(pubKey.trim())) {
+        await targetSsh.exec(`echo "${pubKey.trim()}" >> ~/.ssh/authorized_keys`);
+        await targetSsh.exec('chmod 600 ~/.ssh/authorized_keys');
+    }
+
+    return 'SSH Trust erfolgreich eingerichtet! Migration kann jetzt wiederholt werden.';
 }
 
 // --- Helper: Poll Migration Task with Live Logs (PDM-Style) ---
