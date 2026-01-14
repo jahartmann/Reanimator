@@ -1,7 +1,7 @@
 'use server';
 
 import db from '@/lib/db';
-import { createSSHClient } from '@/lib/ssh';
+import { createSSHClient, SSHClient } from '@/lib/ssh';
 
 export interface LibraryItem {
     name: string;
@@ -35,7 +35,7 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
     const results = await Promise.all(servers.map(async (server) => {
         if (!server.ssh_key) return [];
 
-        let client;
+        let client: SSHClient | null = null;
         try {
             client = createSSHClient({
                 ssh_host: server.ssh_host || new URL(server.url).hostname,
