@@ -14,6 +14,7 @@ export interface LibraryItem {
         storage: string;
         volid: string;
         size: number;
+        path: string;
     }[];
 }
 
