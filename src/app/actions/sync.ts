@@ -20,52 +20,73 @@ export async function syncServerVMs(serverId: number) {
     try {
         await ssh.connect();
 
-        // 1. Get Node Name (required for pvesh API calls)
-        const nodeName = (await ssh.exec('hostname', 5000)).trim();
-        console.log(`[Sync] Connected to ${server.name} (Node: ${nodeName})`);
+        // 1. Get Node Name (Robustly)
+        // cat /etc/hostname is safer than `hostname` as it usually matches the PVE internal node name (no FQDN)
+        const nodeName = (await ssh.exec('cat /etc/hostname', 5000)).trim();
+        console.log(`[Sync] Connected to ${server.name} (Determined Node Name: "${nodeName}")`);
 
-        // 2. Get VMs and CTs via API (JSON) - Much more robust than qm list parsing
-        // /nodes/{node}/qemu and /nodes/{node}/lxc
-
-        // QEMU
-        const qmJson = await ssh.exec(`pvesh get /nodes/${nodeName}/qemu --output-format json 2>/dev/null`, 10000);
-        const lxcJson = await ssh.exec(`pvesh get /nodes/${nodeName}/lxc --output-format json 2>/dev/null`, 10000);
-
-        await ssh.disconnect();
+        // 2. Try Cluster Resources API (Best Source)
+        let resources: any[] = [];
+        try {
+            const json = await ssh.exec('pvesh get /cluster/resources --output-format json 2>/dev/null', 10000);
+            resources = JSON.parse(json);
+        } catch (e) {
+            console.error('[Sync] Failed to fetch /cluster/resources, falling back to local files', e);
+        }
 
         const vms: any[] = [];
 
-        // Parse Qemu
-        try {
-            const qmList = JSON.parse(qmJson);
-            qmList.forEach((vm: any) => {
+        // Filter resources for this node
+        const nodeResources = resources.filter(r => r.node === nodeName && (r.type === 'qemu' || r.type === 'lxc'));
+
+        if (nodeResources.length > 0) {
+            console.log(`[Sync] Found ${nodeResources.length} VMs on node ${nodeName} via API`);
+            nodeResources.forEach(r => {
                 vms.push({
-                    vmid: vm.vmid,
-                    name: vm.name,
-                    status: vm.status,
-                    type: 'qemu'
+                    vmid: r.vmid,
+                    name: r.name || (r.type === 'qemu' ? `VM ${r.vmid}` : `CT ${r.vmid}`),
+                    status: r.status,
+                    type: r.type
                 });
             });
-        } catch (e) {
-            console.error('[Sync] Failed to parse QEMU JSON', e);
-        }
+        } else {
+            // FALLBACK: File System Check
+            // If the API thinks this node is empty (or we failed to match names), check config files.
+            // This ensures we at least show "Unknown" status VMs if they exist.
+            console.log('[Sync] No VMs found via API (or mismatched node name). Checking config files...');
 
-        // Parse LXC
-        try {
-            const lxcList = JSON.parse(lxcJson);
-            lxcList.forEach((ct: any) => {
-                vms.push({
-                    vmid: ct.vmid,
-                    name: ct.name,
-                    status: ct.status,
-                    type: 'lxc'
+            try {
+                // QEMU Configs
+                const qmFiles = await ssh.exec('ls /etc/pve/qemu-server/*.conf 2>/dev/null || echo ""', 5000);
+                qmFiles.split('\n').forEach(line => {
+                    const match = line.match(/\/(\d+)\.conf$/);
+                    if (match) {
+                        const vmid = parseInt(match[1]);
+                        // Check if we already have it (from API)
+                        if (!vms.find(v => v.vmid === vmid)) {
+                            vms.push({ vmid, name: `VM-${vmid} (Config Found)`, status: 'unknown', type: 'qemu' });
+                        }
+                    }
                 });
-            });
-        } catch (e) {
-            console.error('[Sync] Failed to parse LXC JSON', e);
+
+                // LXC Configs
+                const lxcFiles = await ssh.exec('ls /etc/pve/lxc/*.conf 2>/dev/null || echo ""', 5000);
+                lxcFiles.split('\n').forEach(line => {
+                    const match = line.match(/\/(\d+)\.conf$/);
+                    if (match) {
+                        const vmid = parseInt(match[1]);
+                        if (!vms.find(v => v.vmid === vmid)) {
+                            vms.push({ vmid, name: `CT-${vmid} (Config Found)`, status: 'unknown', type: 'lxc' });
+                        }
+                    }
+                });
+            } catch (err) {
+                console.error('[Sync] File fallback failed:', err);
+            }
         }
 
-        console.log(`[Sync] Found ${vms.length} VMs/CTs on ${server.name}`);
+        await ssh.disconnect();
+        console.log(`[Sync] Total VMs identified: ${vms.length}`);
 
         // Update DB
         const insert = db.prepare(`
