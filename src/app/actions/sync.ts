@@ -22,11 +22,11 @@ export async function syncServerVMs(serverId: number) {
 
         // 1. Get Qemu VMs
         const qmList = await ssh.exec('/usr/sbin/qm list --full 2>/dev/null || echo ""');
-        // Output: VMID NAME STATUS MEM(MB) BOOTDISK(GB) PID
+        console.log('[Sync] Raw QM List:', qmList);
 
         // 2. Get LXC Containers
         const lxcList = await ssh.exec('/usr/sbin/pct list 2>/dev/null || echo ""');
-        // Output: VMID Status Lock Name
+        console.log('[Sync] Raw LXC List:', lxcList);
 
         await ssh.disconnect();
 
@@ -34,12 +34,13 @@ export async function syncServerVMs(serverId: number) {
         const vms: any[] = [];
 
         // Parse Qemu
-        qmList.split('\n').forEach(line => {
+        qmList.split('\n').slice(1).forEach(line => {
             const parts = line.trim().split(/\s+/);
             if (parts.length < 3) return;
             const vmid = parseInt(parts[0]);
-            if (isNaN(vmid)) return; // Header
+            if (isNaN(vmid)) return;
 
+            // QM List: VMID NAME STATUS ...
             vms.push({
                 vmid: vmid,
                 name: parts[1],
@@ -49,16 +50,26 @@ export async function syncServerVMs(serverId: number) {
         });
 
         // Parse LXC
-        lxcList.split('\n').forEach(line => {
+        lxcList.split('\n').slice(1).forEach(line => {
             const parts = line.trim().split(/\s+/);
-            if (parts.length < 3) return;
+            if (parts.length < 2) return;
             const vmid = parseInt(parts[0]);
-            if (isNaN(vmid)) return; // Header
+            if (isNaN(vmid)) return;
+
+            // PCT List: VMID Status Lock Name
+            // Beware: Lock is optional.
+            // If 4 parts: VMID Status Lock Name
+            // If 3 parts: VMID Status Name
+
+            let status = parts[1];
+            let name = parts.length >= 4 ? parts[3] : parts[2];
+
+            if (!name) name = `CT-${vmid}`;
 
             vms.push({
                 vmid: vmid,
-                status: parts[1],
-                name: parts[3] || 'CT-' + vmid, // pct list format varies: VMID Status Lock Name
+                status: status,
+                name: name,
                 type: 'lxc'
             });
         });

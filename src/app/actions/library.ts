@@ -30,31 +30,34 @@ interface Server {
 
 export async function getLibraryContent(): Promise<LibraryItem[]> {
     const servers = db.prepare('SELECT * FROM servers WHERE type = ?').all('pve') as Server[];
-    const allItems: Record<string, LibraryItem> = {};
 
-    await Promise.all(servers.map(async (server) => {
-        if (!server.ssh_key) return;
+    // Parallelize server scanning
+    const results = await Promise.all(servers.map(async (server) => {
+        if (!server.ssh_key) return [];
 
-        let ssh;
+        let client;
         try {
-            ssh = createSSHClient({
+            client = createSSHClient({
                 ssh_host: server.ssh_host || new URL(server.url).hostname,
                 ssh_port: server.ssh_port || 22,
                 ssh_user: server.ssh_user || 'root',
                 ssh_key: server.ssh_key,
             });
-            await ssh.connect();
+            await client.connect();
 
             // Get active storages
             let statusOutput = '';
             try {
-                statusOutput = await ssh.exec('pvesm status', 5000);
+                // Reduced timeout to 5s to avoid hanging
+                statusOutput = await client.exec('pvesm status', 5000);
             } catch (e) {
                 console.error(`[Library] Failed to get storage status on ${server.name}`, e);
+                client.disconnect();
+                return [];
             }
 
-            const storages = statusOutput.split('\n')
-                .slice(1) // skip header
+            const activeStorages = statusOutput.split('\n')
+                .slice(1)
                 .filter(line => line.trim())
                 .map(line => {
                     const parts = line.split(/\s+/);
@@ -62,33 +65,102 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
                 })
                 .filter(s => s.status === 'active');
 
-            console.log(`[Library] Found ${storages.length} active storages on ${server.name}`);
+            const serverItems: LibraryItem[] = [];
 
-            // For each storage, try to list ISOs and Templates
-            for (const storage of storages) {
-                // We check ISOs
+            // Parallelize storage scanning within server
+            await Promise.all(activeStorages.map(async (storage) => {
+                // ISOs
                 try {
-                    const isoOutput = await ssh.exec(`pvesm list ${storage.name} --content iso`, 5000);
-                    parsePvesmContent(isoOutput, 'iso', server, storage.name, allItems);
-                } catch (e) { /* Storage likely doesn't support iso */ }
+                    const isoJson = await client.exec(`pvesm list ${storage.name} --content iso --output-format json 2>/dev/null`, 10000);
+                    const isos = JSON.parse(isoJson);
+                    isos.forEach((iso: any) => {
+                        serverItems.push({
+                            volid: iso.volid,
+                            name: iso.volid.split('/').pop() || iso.volid,
+                            format: iso.format,
+                            size: iso.size,
+                            type: 'iso',
+                            locations: [{ serverId: server.id, serverName: server.name, storage: storage.name, volid: iso.volid, size: iso.size, path: iso.volid }]
+                        });
+                    });
+                } catch (e) {
+                    try {
+                        // Fallback text parsing
+                        const txt = await client.exec(`pvesm list ${storage.name} --content iso 2>/dev/null`, 5000);
+                        txt.split('\n').slice(1).forEach(line => {
+                            const p = line.trim().split(/\s+/);
+                            if (p.length < 2) return;
+                            serverItems.push({
+                                volid: p[0],
+                                name: p[0].split('/').pop() || p[0],
+                                format: p[1],
+                                size: parseInt(p[2] || '0'),
+                                type: 'iso',
+                                locations: [{ serverId: server.id, serverName: server.name, storage: storage.name, volid: p[0], size: parseInt(p[2] || '0'), path: p[0] }]
+                            });
+                        });
+                    } catch (ex) { }
+                }
 
-                // We check Templates
+                // Templates
                 try {
-                    const tmplOutput = await ssh.exec(`pvesm list ${storage.name} --content vztmpl`, 5000);
-                    parsePvesmContent(tmplOutput, 'vztmpl', server, storage.name, allItems);
-                } catch (e) { /* Storage likely doesn't support vztmpl */ }
-            }
+                    const tplJson = await client.exec(`pvesm list ${storage.name} --content vztmpl --output-format json 2>/dev/null`, 10000);
+                    const tpls = JSON.parse(tplJson);
+                    tpls.forEach((tpl: any) => {
+                        serverItems.push({
+                            volid: tpl.volid,
+                            name: tpl.volid.split('/').pop() || tpl.volid,
+                            format: tpl.format,
+                            size: tpl.size,
+                            type: 'vztmpl',
+                            locations: [{ serverId: server.id, serverName: server.name, storage: storage.name, volid: tpl.volid, size: tpl.size, path: tpl.volid }]
+                        });
+                    });
+                } catch (e) {
+                    try {
+                        const txt = await client.exec(`pvesm list ${storage.name} --content vztmpl 2>/dev/null`, 5000);
+                        txt.split('\n').slice(1).forEach(line => {
+                            const p = line.trim().split(/\s+/);
+                            if (p.length < 2) return;
+                            serverItems.push({
+                                volid: p[0],
+                                name: p[0].split('/').pop() || p[0],
+                                format: p[1],
+                                size: parseInt(p[2] || '0'),
+                                type: 'vztmpl',
+                                locations: [{ serverId: server.id, serverName: server.name, storage: storage.name, volid: p[0], size: parseInt(p[2] || '0'), path: p[0] }]
+                            });
+                        });
+                    } catch (ex) { }
+                }
+            }));
 
-            ssh.disconnect();
+            client.disconnect();
+            return serverItems;
+
         } catch (e) {
-            console.error(`Failed to scan library on ${server.name}:`, e);
-            if (ssh) ssh.disconnect();
+            console.error(`[Library] Error scanning server ${server.name}:`, e);
+            if (client) client.disconnect();
+            return [];
         }
     }));
 
-    return Object.values(allItems).sort((a, b) => a.name.localeCompare(b.name));
+    // Aggregate results
+    const allItems: LibraryItem[] = [];
+    results.flat().forEach(item => {
+        const existing = allItems.find(i => i.name === item.name && i.type === item.type);
+        if (existing) {
+            existing.locations.push(...item.locations);
+        } else {
+            allItems.push(item);
+        }
+    });
+
+    return allItems.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// The parsePvesmContent function is no longer used with the new pvesh JSON output approach.
+// It can be removed if not used elsewhere.
 function parsePvesmContent(output: string, type: 'iso' | 'vztmpl', server: Server, storage: string, allItems: Record<string, LibraryItem>) {
     const lines = output.split('\n');
     if (lines.length < 2) return;
@@ -112,6 +184,7 @@ function parsePvesmContent(output: string, type: 'iso' | 'vztmpl', server: Serve
                 type: type,
                 size: size,
                 format: format,
+                volid: volid, // Assuming the first volid found is the primary one for the top-level item
                 locations: []
             };
         }
@@ -121,7 +194,8 @@ function parsePvesmContent(output: string, type: 'iso' | 'vztmpl', server: Serve
             serverName: server.name,
             storage: storage,
             volid: volid,
-            size: size
+            size: size,
+            path: volid // Assuming volid is the path here
         });
     });
 }

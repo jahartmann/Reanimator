@@ -11,7 +11,18 @@ export default async function CommanderPage() {
     // Map server name to VM for convenience
     const vmsWithServer = vms.map(vm => {
         const s = servers.find((srv: any) => srv.id === vm.server_id);
-        return { ...vm, serverName: s ? s.name : 'Unknown' };
+
+        // Parse tags if they are string
+        let parsedTags = [];
+        try {
+            parsedTags = typeof vm.tags === 'string' ? JSON.parse(vm.tags) : vm.tags;
+        } catch { parsedTags = []; }
+
+        return {
+            ...vm,
+            tags: Array.isArray(parsedTags) ? parsedTags : [],
+            serverName: s ? s.name : 'Unknown'
+        };
     });
 
     return (
