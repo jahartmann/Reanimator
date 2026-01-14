@@ -32,15 +32,20 @@ export async function setupSSHTrust(sourceId: number, targetId: number, rootPass
     if (!pubKey) throw new Error('Public Key empty');
 
     // 2. Target Install
-    // Construct config with password overlap
-    const targetWithPassword = {
-        ...target,
-        ssh_user: 'root', // Force root for SSH setup
-        password: rootPassword,
-        ssh_key: undefined // Force password auth
-    };
+    let targetSsh;
 
-    const targetSsh = createSSHClient(targetWithPassword);
+    if (rootPassword) {
+        // Override with provided root password
+        targetSsh = createSSHClient({
+            ...target,
+            ssh_user: 'root',
+            ssh_key: rootPassword
+        });
+    } else {
+        // Use stored credentials
+        // Note: This requires the stored user to have permissions to modify /root/.ssh or ~/.ssh depending on target user
+        targetSsh = createSSHClient(target);
+    }
 
     try {
         await targetSsh.connect();

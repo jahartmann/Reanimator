@@ -41,7 +41,7 @@ export default function TrustPage() {
     const clearTargets = () => setTargets([]);
 
     const handleExecute = async () => {
-        if (!password) return alert('Bitte Root-Passwort eingeben');
+        // if (!password) return alert('Bitte Root-Passwort eingeben'); // Removed to allow fallback
         if (sources.length === 0 || targets.length === 0) return alert('Bitte Quellen und Ziele wählen');
 
         setProcessing(true);
@@ -142,21 +142,21 @@ export default function TrustPage() {
 
                         {/* Password */}
                         <div className="space-y-3 pt-4 border-t">
-                            <Label>Root Passwort (für Ziel-Server)</Label>
+                            <Label>Root Passwort (Optional - überschreibt gespeicherte Credentials)</Label>
                             <div className="flex gap-2">
                                 <Input
                                     type="password"
-                                    placeholder="Gemeinsames Root Passwort..."
+                                    placeholder="Gemeinsames Root Passwort (leer lassen für gespeicherte)"
                                     value={password}
                                     onChange={e => setPassword(e.target.value)}
                                 />
-                                <Button onClick={handleExecute} disabled={processing || !password}>
+                                <Button onClick={handleExecute} disabled={processing}>
                                     {processing ? <Loader2 className="animate-spin mr-2" /> : <Key className="mr-2 h-4 w-4" />}
                                     Trust Einrichten
                                 </Button>
                             </div>
                             <p className="text-xs text-muted-foreground">
-                                Das Passwort wird nur temporär für die SSH-Verbindung genutzt und nicht gespeichert.
+                                Wenn leer, werden die gespeicherten Credentials (aus Server-Verwaltung) genutzt.
                             </p>
                         </div>
 
