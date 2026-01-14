@@ -180,7 +180,8 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     log(`[Migration] VMID: ${vmid} -> ${targetVmid}`);
     log(`[Migration] Storage: ${options.targetStorage || 'local-lvm'}`);
 
-    const backupDir = '/tmp/proxmigrate';
+    // Use standard Proxmox dump directory (more space than /tmp)
+    const backupDir = '/var/lib/vz/dump';
     let backupFile = '';
 
     try {
@@ -215,19 +216,41 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
 
         await new Promise<void>((resolve, reject) => {
             let exitCode: number | null = null;
+            let lastActivity = Date.now();
+            let sawError = false;
+            let sawComplete = false;
 
             dumpStream.on('data', (chunk: Buffer) => {
+                lastActivity = Date.now();
                 const lines = chunk.toString().split('\n');
                 lines.forEach(line => {
                     const trimmed = line.trim();
-                    if (trimmed && (trimmed.includes('%') || trimmed.includes('INFO') || trimmed.includes('creating'))) {
-                        log(`[vzdump] ${trimmed}`);
+                    if (trimmed) {
+                        // Log all vzdump output for debugging
+                        if (trimmed.includes('%') || trimmed.includes('INFO') || trimmed.includes('creating') || trimmed.includes('error') || trimmed.includes('finished')) {
+                            log(`[vzdump] ${trimmed}`);
+                        }
+                        // Check for completion indicators
+                        if (trimmed.includes('Finished Backup') || trimmed.includes('archive contains')) {
+                            sawComplete = true;
+                        }
+                        // Check for error indicators
+                        if (trimmed.toLowerCase().includes('error') && !trimmed.includes('error rate')) {
+                            sawError = true;
+                        }
                     }
                 });
             });
 
             dumpStream.stderr.on('data', (chunk: Buffer) => {
-                log(`[vzdump] ${chunk.toString().trim()}`);
+                lastActivity = Date.now();
+                const text = chunk.toString().trim();
+                if (text) {
+                    log(`[vzdump] ${text}`);
+                    if (text.toLowerCase().includes('error')) {
+                        sawError = true;
+                    }
+                }
             });
 
             dumpStream.on('exit', (code: number | null) => {
@@ -235,9 +258,12 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
                 log(`[vzdump] Exit code: ${code}`);
             });
             dumpStream.on('close', () => {
-                // Only accept explicit exit code 0 as success
-                if (exitCode === 0) resolve();
-                else reject(new Error(`vzdump failed with exit code ${exitCode ?? 'unknown'}`));
+                // Handle exit codes: 0 = success, null with sawComplete = likely success
+                if (exitCode === 0 || (exitCode === null && sawComplete && !sawError)) {
+                    resolve();
+                } else {
+                    reject(new Error(`vzdump failed with exit code ${exitCode ?? 'unknown'}${sawError ? ' (errors detected)' : ''}`));
+                }
             });
             dumpStream.on('error', (err: Error) => reject(new Error(`vzdump stream error: ${err.message}`)));
         });
