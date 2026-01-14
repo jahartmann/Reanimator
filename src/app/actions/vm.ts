@@ -200,6 +200,95 @@ async function prepareVMForMigration(
     return finalStatus.trim();
 }
 
+async function findBestStoragePath(
+    ssh: SSHClient,
+    requiredBytes: number,
+    log: (msg: string) => void,
+    context: 'Source' | 'Target'
+): Promise<string> {
+    log(`[Storage] Analyzing ${context} filesystems for optimal buffer path (> ${Math.round(requiredBytes / 1024 / 1024 / 1024)} GB)...`);
+    try {
+        let dfOut = '';
+        try {
+            // Filesystem Type 1-blocks Used Available Use% Mounted on
+            dfOut = await ssh.exec('df -P -T -B1');
+        } catch {
+            // Fallback: Filesystem 1-blocks Used Available Capacity Mounted on
+            dfOut = await ssh.exec('df -P -B1');
+        }
+
+        const lines = dfOut.trim().split('\n').slice(1);
+        let candidates: { path: string; avail: number }[] = [];
+
+        for (const line of lines) {
+            const parts = line.split(/\s+/);
+            // We need at least Available and Mounted on
+            if (parts.length < 5) continue;
+
+            const mount = parts[parts.length - 1];
+            const avail = parseInt(parts[parts.length - 3]); // Available is usually 3rd from end (Used, Avail, Cap%, Mount) or 4th
+
+            // Robust parsing based on header is hard, so we assume standard df output
+            // df -P -B1: Filesystem 1024-blocks Used Available Capacity Mounted on
+            // parts: [FS, Blocks, Used, Avail, Cap, Mount]
+            // With -T: [FS, Type, Blocks, Used, Avail, Cap, Mount]
+
+            // To be safe, look for the numeric values.
+            // Avail is the one before Capacity (which has %)
+            let availIndex = -1;
+            for (let i = parts.length - 1; i >= 0; i--) {
+                if (parts[i].includes('%')) {
+                    availIndex = i - 1;
+                    break;
+                }
+            }
+
+            if (availIndex < 0 || isNaN(parseInt(parts[availIndex]))) continue;
+
+            const realAvail = parseInt(parts[availIndex]);
+
+            // Filter unwanted paths
+            if (mount.startsWith('/proc') || mount.startsWith('/sys') || mount.startsWith('/dev') || mount.startsWith('/boot') || mount.startsWith('/run')) continue;
+
+            // Filter common read-only or small mounts by name if needed
+            // If we have type info (check if line has Type column):
+            // We skip explicit Type check logic for simplicity and rely on path + size
+
+            if (realAvail > requiredBytes) {
+                candidates.push({ path: mount, avail: realAvail });
+            }
+        }
+
+        // Sort by available space desc
+        candidates.sort((a, b) => b.avail - a.avail);
+
+        if (candidates.length === 0) {
+            throw new Error(`Kein Volume mit genügend Speicher gefunden.`);
+        }
+
+        // Prefer /var/lib/vz/dump if valid
+        const standard = candidates.find(c => c.path === '/var/lib/vz' || c.path === '/var/lib/vz/dump' || c.path === '/');
+        // If standard path has enough space (and is not root / if root is small?), we use it.
+        // Actually, users want us to use the LARGE disk. So we should pick the LARGEST.
+        const best = candidates[0];
+
+        // Setup path
+        let usePath = best.path === '/' ? '/var/lib/vz/dump' : `${best.path}/proxmox_migration_temp`;
+        // Remove trailing slash duplication
+        usePath = usePath.replace(/\/+/g, '/');
+
+        log(`[Storage] Selected ${context}: ${usePath} on ${best.path} (${Math.round(best.avail / 1e9)} GB free)`);
+
+        // Ensure dir exists
+        await ssh.exec(`mkdir -p ${usePath}`);
+        return usePath;
+
+    } catch (e: any) {
+        log(`[Storage] Warning: Auto-detection failed (${e.message}). Using fallback /var/lib/vz/dump`);
+        return '/var/lib/vz/dump';
+    }
+}
+
 async function testServerToServerSSH(
     sourceSsh: SSHClient,
     targetHost: string,
@@ -260,26 +349,9 @@ async function runPreFlightChecks(
     const vmStatus = await prepareVMForMigration(sourceSsh, vmid, type, log);
     log(`[Check 3/6] ✓ VM ready (${vmStatus})`);
 
-    // 4. Storage space check
-    log('[Check 4/6] Checking storage space...');
-    const backupDir = '/var/lib/vz/dump';
-    try {
-        const spaceOutput = await sourceSsh.exec(`df -B1 ${backupDir} 2>/dev/null | tail -1 | awk '{print $4}'`);
-        const availableBytes = parseInt(spaceOutput.trim()) || 0;
-        const vmSize = await getVMDiskSize(sourceSsh, vmid);
-        const requiredBytes = Math.ceil(vmSize * 1.2); // 20% buffer
+    // 4. Storage space check (Dynamic)
+    log('[Check 4/6] Storage check will be performed dynamically during migration initialization.');
 
-        const availableGB = Math.round(availableBytes / 1e9);
-        const requiredGB = Math.round(requiredBytes / 1e9);
-
-        if (availableBytes < requiredBytes) {
-            throw new Error(`Nicht genug Speicher in ${backupDir}!\nVerfügbar: ${availableGB}GB, Benötigt: ~${requiredGB}GB`);
-        }
-        log(`[Check 4/6] ✓ Storage OK (${availableGB}GB available, ~${requiredGB}GB needed)`);
-    } catch (e: any) {
-        if (e.message.includes('Nicht genug')) throw e;
-        log(`[Check 4/6] ⚠ Could not verify storage space: ${e.message}`);
-    }
 
     // 5. Target storage exists
     log('[Check 5/6] Verifying target storage...');
@@ -382,15 +454,22 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     log(`[Migration] VMID: ${vmid} -> ${targetVmid}`);
     log(`[Migration] Storage: ${options.targetStorage || 'local-lvm'}`);
 
-    // Use standard Proxmox dump directory (more space than /tmp)
-    const backupDir = '/var/lib/vz/dump';
+    // Dynamic Storage Path Detection
+    const vmSize = await getVMDiskSize(sourceSsh, vmid);
+    const requiredBuffer = Math.ceil(vmSize * 1.2);
+
+    const sourceBackupDir = await findBestStoragePath(sourceSsh, requiredBuffer, log, 'Source');
+    const targetBackupDir = await findBestStoragePath(targetSsh, requiredBuffer, log, 'Target');
+
+    log(`[Migration] Source Backup Dir: ${sourceBackupDir}`);
+    log(`[Migration] Target Temp Dir:   ${targetBackupDir}`);
     let backupFile = '';
 
     try {
         // ========== STEP 1: Create vzdump backup on source ==========
         log('[Step 1/4] Creating vzdump backup on source...');
 
-        await sourceSsh.exec(`mkdir -p ${backupDir}`);
+        await sourceSsh.exec(`mkdir -p ${sourceBackupDir}`);
 
         // Stop VM if not online migration (for consistent backup)
         const wasRunning = (await sourceSsh.exec(`/usr/sbin/qm status ${vmid}`)).includes('running');
@@ -409,13 +488,13 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
             vzdumpPath = whichResult.trim() || vzdumpPath;
         } catch { }
 
-        const logFile = `${backupDir}/migration_${vmid}.log`;
+        const logFile = `${sourceBackupDir}/migration_${vmid}.log`;
 
         // Clean up old log
         try { await sourceSsh.exec(`rm -f ${logFile}`); } catch { }
 
         // Command with nohup and logging (DETACHED MODE)
-        const dumpCmd = `/usr/bin/nohup ${vzdumpPath} ${vmid} --dumpdir ${backupDir} --compress zstd --mode ${dumpMode} > ${logFile} 2>&1 & echo $!`;
+        const dumpCmd = `/usr/bin/nohup ${vzdumpPath} ${vmid} --dumpdir ${sourceBackupDir} --compress zstd --mode ${dumpMode} > ${logFile} 2>&1 & echo $!`;
 
         log(`[Step 1/4] Running detached: ${dumpCmd}`);
 
@@ -460,7 +539,7 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
 
         log('[Step 1/4] ✓ Backup successful');
         // Find the created backup file
-        const filesOutput = await sourceSsh.exec(`ls -1t ${backupDir}/vzdump-${cmdType}-${vmid}-*.vma.zst 2>/dev/null | head -1`);
+        const filesOutput = await sourceSsh.exec(`ls -1t ${sourceBackupDir}/vzdump-${cmdType}-${vmid}-*.vma.zst 2>/dev/null | head -1`);
         backupFile = filesOutput.trim();
 
         if (!backupFile) {
@@ -474,15 +553,15 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         log('[Step 2/4] Transferring backup to target server via SCP...');
 
         // Ensure target directory exists
-        await targetSsh.exec(`mkdir -p ${backupDir}`);
+        await targetSsh.exec(`mkdir -p ${targetBackupDir}`);
 
         // SCP from source to target (server-to-server transfer)
         // SCP from source to target (server-to-server transfer)
-        const scpLog = `${backupDir}/scp_${vmid}.log`;
-        const scpRc = `${backupDir}/scp_${vmid}.rc`;
+        const scpLog = `${sourceBackupDir}/scp_${vmid}.log`;
+        const scpRc = `${sourceBackupDir}/scp_${vmid}.rc`;
         try { await sourceSsh.exec(`rm -f ${scpLog} ${scpRc}`); } catch { }
 
-        const scpCmd = `scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${backupFile} root@${targetHost}:${backupDir}/`;
+        const scpCmd = `scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${backupFile} root@${targetHost}:${targetBackupDir}/`;
         // We use sh -c to capture exit code of scp into a file
         // echo \\$? escapes $? so the inner shell evaluates it, not the outer SSH shell
         const scpCmdDetached = `/usr/bin/nohup sh -c "${scpCmd} > ${scpLog} 2>&1; echo \\$?>${scpRc}" >/dev/null 2>&1 & echo $!`;
@@ -524,13 +603,13 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         log('[Step 3/4] Restoring VM on target server...');
 
         const filename = backupFile.split('/').pop();
-        const targetBackupPath = `${backupDir}/${filename}`;
+        const targetBackupPath = `${targetBackupDir}/${filename}`;
         const restoreStorage = options.targetStorage || 'local-lvm';
 
         const restoreCmd = `/usr/sbin/qmrestore ${targetBackupPath} ${targetVmid} --storage ${restoreStorage} --unique`;
 
-        const restoreLog = `${backupDir}/restore_${targetVmid}.log`;
-        const restoreRc = `${backupDir}/restore_${targetVmid}.rc`;
+        const restoreLog = `${targetBackupDir}/restore_${targetVmid}.log`;
+        const restoreRc = `${targetBackupDir}/restore_${targetVmid}.rc`;
         try { await targetSsh.exec(`rm -f ${restoreLog} ${restoreRc}`); } catch { }
 
         const restoreCmdDetached = `/usr/bin/nohup sh -c "${restoreCmd} > ${restoreLog} 2>&1; echo \\$?>${restoreRc}" >/dev/null 2>&1 & echo $!`;
@@ -603,52 +682,14 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         // Cleanup on failure
         if (backupFile) {
             try { await sourceSsh.exec(`rm -f ${backupFile}`); } catch { }
-            try { await targetSsh.exec(`rm -f ${backupDir}/*`); } catch { }
+            try { await targetSsh.exec(`rm -f ${targetBackupDir}/*`); } catch { }
         }
 
         throw new Error(`Migration fehlgeschlagen:\n\n${error.message}\n\nBitte prüfen Sie:\n- SSH-Zugang zwischen den Servern (für SCP)\n- Genügend Speicherplatz für Backup in /tmp\n- Ziel-Storage ist erreichbar`);
     }
 }
 
-// --- SSH Trust Setup Helper ---
-
-export async function setupSSHTrust(sourceId: number, targetId: number, rootPassword: string): Promise<string> {
-    const source = await getServer(sourceId);
-    const target = await getServer(targetId);
-
-    // 1. Get/Generate Source Key
-    const sourceSsh = await createSSHClient(source);
-    let pubKey = '';
-    try {
-        pubKey = await sourceSsh.exec('cat ~/.ssh/id_rsa.pub');
-    } catch {
-        await sourceSsh.exec('ssh-keygen -t rsa -N "" -f ~/.ssh/id_rsa');
-        pubKey = await sourceSsh.exec('cat ~/.ssh/id_rsa.pub');
-    }
-
-    if (!pubKey) throw new Error('Konnte SSH Key auf Quellserver nicht lesen/erstellen');
-
-    // 2. Connect to Target with Password
-    // explicitly use password and remove key to force password auth
-    const targetSsh = await createSSHClient({
-        ...target,
-        username: 'root',
-        password: rootPassword,
-        privateKey: undefined
-    });
-
-    // 3. Install Key
-    await targetSsh.exec('mkdir -p ~/.ssh && chmod 700 ~/.ssh');
-
-    // Check if key already exists to avoid duplicates
-    const authKeys = await targetSsh.exec('cat ~/.ssh/authorized_keys 2>/dev/null || true');
-    if (!authKeys.includes(pubKey.trim())) {
-        await targetSsh.exec(`echo "${pubKey.trim()}" >> ~/.ssh/authorized_keys`);
-        await targetSsh.exec('chmod 600 ~/.ssh/authorized_keys');
-    }
-
-    return 'SSH Trust erfolgreich eingerichtet! Migration kann jetzt wiederholt werden.';
-}
+// --- SSH Trust Setup Moved to @/app/actions/trust.ts ---
 
 // --- Helper: Poll Migration Task with Live Logs (PDM-Style) ---
 

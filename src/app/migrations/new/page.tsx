@@ -8,10 +8,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { ArrowRight, ArrowLeft, Loader2, CheckCircle2, AlertTriangle, Info, Server, Database, Box, HardDrive } from "lucide-react";
-import { getServers } from "@/app/actions/server";
+import { ArrowRight, ArrowLeft, Loader2, CheckCircle2, AlertTriangle, Info, Server as ServerIcon, Database, Box, HardDrive } from "lucide-react";
+import { getServers, getServerResources, type Server } from '@/app/actions/server';
 import { startServerMigration, startVMMigration } from "@/app/actions/migration";
-import { getVMs, VirtualMachine, setupSSHTrust } from "@/app/actions/vm";
+import { getVMs, VirtualMachine } from "@/app/actions/vm";
+import { setupSSHTrust } from '@/app/actions/trust';
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -233,7 +234,7 @@ export default function NewMigrationPage() {
                                             className={`cursor-pointer p-6 border-2 rounded-lg hover:border-blue-500 transition-all ${mode === 'server' ? 'border-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'border-muted'}`}
                                             onClick={() => setMode('server')}
                                         >
-                                            <Server className="h-10 w-10 mb-4 text-blue-600" />
+                                            <ServerIcon className="h-10 w-10 mb-4 text-blue-600" />
                                             <h3 className="font-bold mb-2">Ganzen Server</h3>
                                             <p className="text-sm text-muted-foreground">Alle VMs, Container und Konfigurationen auf einen anderen Server übertragen.</p>
                                         </div>
@@ -389,7 +390,7 @@ export default function NewMigrationPage() {
                                                 </div>
 
                                                 <Button onClick={handleClone} disabled={cloning} className="w-full mt-4" variant="secondary">
-                                                    {cloning ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Server className="h-4 w-4 mr-2" />}
+                                                    {cloning ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ServerIcon className="h-4 w-4 mr-2" />}
                                                     Konfiguration Klonen
                                                 </Button>
                                                 {cloneResult && (

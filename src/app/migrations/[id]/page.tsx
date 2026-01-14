@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
     ArrowLeft, ArrowRightLeft, Server, CheckCircle, XCircle,
-    Loader2, Clock, AlertTriangle, StopCircle
+    Loader2, Clock, AlertTriangle, StopCircle, Trash2
 } from "lucide-react";
 import { MigrationTask, MigrationStep } from '@/app/actions/migration';
 
@@ -31,6 +31,9 @@ export default function MigrationDetailPage({ params }: { params: Promise<{ id: 
             if (res.ok) {
                 const data = await res.json();
                 setTask(data);
+            } else if (res.status === 404) {
+                // Stop polling if deleted
+                setTask(null);
             }
         } catch (e) {
             console.error(e);
@@ -40,11 +43,21 @@ export default function MigrationDetailPage({ params }: { params: Promise<{ id: 
     }
 
     async function handleCancel() {
-        if (!confirm('Migration wirklich abbrechen?')) return;
+        if (!confirm('Migration wirklich abbrechen und Task löschen?')) return;
 
         try {
             await fetch(`/api/migrations/${id}`, { method: 'DELETE' });
-            fetchTask();
+            router.push('/migrations');
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    async function handleDelete() {
+        if (!confirm('Diesen Eintrag unwiderruflich aus dem Verlauf löschen?')) return;
+        try {
+            await fetch(`/api/migrations/${id}`, { method: 'DELETE' });
+            router.push('/migrations');
         } catch (e) {
             console.error(e);
         }
@@ -80,8 +93,9 @@ export default function MigrationDetailPage({ params }: { params: Promise<{ id: 
         return (
             <div className="text-center py-20">
                 <h1 className="text-2xl font-bold">Migration nicht gefunden</h1>
+                <p className="text-muted-foreground mt-2">Der Eintrag wurde möglicherweise gelöscht.</p>
                 <Link href="/migrations">
-                    <Button className="mt-4">Zurück</Button>
+                    <Button className="mt-4">Zurück zur Übersicht</Button>
                 </Link>
             </div>
         );
@@ -112,10 +126,16 @@ export default function MigrationDetailPage({ params }: { params: Promise<{ id: 
                         <span className="font-medium">{task.target_name}</span>
                     </div>
                 </div>
-                {(task.status === 'pending' || task.status === 'running') && (
+                {/* Action Buttons */}
+                {(task.status === 'pending' || task.status === 'running') ? (
                     <Button variant="destructive" onClick={handleCancel} className="gap-2">
                         <StopCircle className="h-4 w-4" />
                         Abbrechen
+                    </Button>
+                ) : (
+                    <Button variant="outline" onClick={handleDelete} className="gap-2 text-red-500 hover:text-red-700 hover:bg-red-50 border-red-200">
+                        <Trash2 className="h-4 w-4" />
+                        Verlauf Löschen
                     </Button>
                 )}
             </div>

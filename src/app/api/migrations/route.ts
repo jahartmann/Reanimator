@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import db from '@/lib/db';
 import { getAllMigrationTasks, startServerMigration, startVMMigration } from '@/app/actions/migration';
 import { getVMs } from '@/app/actions/vm';
 
@@ -61,6 +62,20 @@ export async function POST(request: Request) {
         }
     } catch (e) {
         console.error('[API] Migration error:', e);
+        return NextResponse.json({ error: String(e) }, { status: 500 });
+    }
+}
+
+export async function DELETE(request: Request) {
+    try {
+        const { searchParams } = new URL(request.url);
+        if (searchParams.get('all') === 'true') {
+            const stmt = db.prepare("DELETE FROM migration_tasks WHERE status NOT IN ('running', 'pending')");
+            const info = stmt.run();
+            return NextResponse.json({ success: true, deleted: info.changes });
+        }
+        return NextResponse.json({ error: 'Invalid parameters' }, { status: 400 });
+    } catch (e: any) {
         return NextResponse.json({ error: String(e) }, { status: 500 });
     }
 }

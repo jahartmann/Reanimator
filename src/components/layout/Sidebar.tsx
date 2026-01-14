@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { LayoutDashboard, Server, FolderCog, Settings, ArrowRightLeft, Tag as TagIcon, HardDrive } from 'lucide-react';
+import { LayoutDashboard, Server, FolderCog, Settings, ArrowRightLeft, Tag as TagIcon, HardDrive, ShieldCheck } from 'lucide-react';
 import TaskManager from '../TaskManager';
 
 const navItems = [
@@ -9,6 +9,7 @@ const navItems = [
     { name: 'Tags', href: '/tags', icon: TagIcon },
     { name: 'Speicher', href: '/storage', icon: HardDrive },
     { name: 'Konfigurationen', href: '/configs', icon: FolderCog },
+    { name: 'Cluster Trust', href: '/settings/trust', icon: ShieldCheck },
     { name: 'Einstellungen', href: '/settings', icon: Settings },
 ];
 

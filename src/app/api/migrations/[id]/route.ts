@@ -1,33 +1,19 @@
+import db from '@/lib/db';
 import { NextResponse } from 'next/server';
-import { getMigrationTask, cancelMigration } from '@/app/actions/migration';
 
-export async function GET(
-    request: Request,
-    { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
     try {
         const { id } = await params;
-        const task = await getMigrationTask(parseInt(id));
+        const stmt = db.prepare('DELETE FROM migration_tasks WHERE id = ?');
+        const info = stmt.run(id);
 
-        if (!task) {
+        if (info.changes === 0) {
             return NextResponse.json({ error: 'Task not found' }, { status: 404 });
         }
 
-        return NextResponse.json(task);
-    } catch (e) {
-        return NextResponse.json({ error: String(e) }, { status: 500 });
-    }
-}
-
-export async function DELETE(
-    request: Request,
-    { params }: { params: Promise<{ id: string }> }
-) {
-    try {
-        const { id } = await params;
-        await cancelMigration(parseInt(id));
         return NextResponse.json({ success: true });
-    } catch (e) {
-        return NextResponse.json({ error: String(e) }, { status: 500 });
+    } catch (error: any) {
+        console.error('Delete migration failed:', error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }

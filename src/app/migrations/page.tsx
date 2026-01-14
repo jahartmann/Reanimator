@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowRightLeft, Plus, Server, Clock, CheckCircle, XCircle, Loader2, AlertTriangle } from "lucide-react";
+import { ArrowRightLeft, Plus, Server, Clock, CheckCircle, XCircle, Loader2, AlertTriangle, Trash2 } from "lucide-react";
 import { MigrationTask } from '@/app/actions/migration';
 
 export default function MigrationsPage() {
@@ -32,6 +32,14 @@ export default function MigrationsPage() {
         }
     }
 
+    async function handleClearHistory() {
+        if (!confirm('Möchten Sie den gesamten Verlauf (außer laufende Tasks) löschen?')) return;
+        try {
+            await fetch('/api/migrations?all=true', { method: 'DELETE' });
+            fetchTasks();
+        } catch (e) { console.error(e); }
+    }
+
     const statusConfig = {
         pending: { icon: Clock, color: 'bg-gray-500/10 text-gray-500', label: 'Wartend', animate: false },
         running: { icon: Loader2, color: 'bg-blue-500/10 text-blue-500', label: 'Läuft', animate: true },
@@ -47,12 +55,20 @@ export default function MigrationsPage() {
                     <h1 className="text-3xl font-bold">Server-Migrationen</h1>
                     <p className="text-muted-foreground">Vollständige Migrationen zwischen Servern</p>
                 </div>
-                <Link href="/migrations/new">
-                    <Button className="gap-2">
-                        <Plus className="h-4 w-4" />
-                        Neue Migration
-                    </Button>
-                </Link>
+                <div className="flex gap-2">
+                    {tasks.length > 0 && (
+                        <Button variant="outline" onClick={handleClearHistory} className="text-red-500 hover:text-red-700 hover:bg-red-50 border-red-200">
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Verlauf leeren
+                        </Button>
+                    )}
+                    <Link href="/migrations/new">
+                        <Button className="gap-2">
+                            <Plus className="h-4 w-4" />
+                            Neue Migration
+                        </Button>
+                    </Link>
+                </div>
             </div>
 
             {loading ? (
