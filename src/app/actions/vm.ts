@@ -198,9 +198,17 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
 
         const dumpMode = options.online ? 'snapshot' : 'stop';
         const cmdType = type === 'qemu' ? 'qemu' : 'lxc';
-        const dumpCmd = `/usr/sbin/vzdump ${vmid} --dumpdir ${backupDir} --compress zstd --mode ${dumpMode}`;
 
-        log(`[Step 1/4] Running: vzdump ${vmid} --mode ${dumpMode} --compress zstd`);
+        // Find vzdump binary (can be in /usr/bin or /usr/sbin depending on system)
+        let vzdumpPath = '/usr/bin/vzdump';
+        try {
+            const whichResult = await sourceSsh.exec('which vzdump');
+            vzdumpPath = whichResult.trim() || vzdumpPath;
+        } catch { }
+
+        const dumpCmd = `${vzdumpPath} ${vmid} --dumpdir ${backupDir} --compress zstd --mode ${dumpMode}`;
+
+        log(`[Step 1/4] Running: ${dumpCmd}`);
 
         // Execute vzdump with streaming output
         const dumpStream = await sourceSsh.getExecStream(dumpCmd, { pty: true });
@@ -222,12 +230,16 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
                 log(`[vzdump] ${chunk.toString().trim()}`);
             });
 
-            dumpStream.on('exit', (code: number | null) => { exitCode = code; });
-            dumpStream.on('close', () => {
-                if (exitCode === 0 || exitCode === null) resolve();
-                else reject(new Error(`vzdump failed with exit code ${exitCode}`));
+            dumpStream.on('exit', (code: number | null) => {
+                exitCode = code;
+                log(`[vzdump] Exit code: ${code}`);
             });
-            dumpStream.on('error', reject);
+            dumpStream.on('close', () => {
+                // Only accept explicit exit code 0 as success
+                if (exitCode === 0) resolve();
+                else reject(new Error(`vzdump failed with exit code ${exitCode ?? 'unknown'}`));
+            });
+            dumpStream.on('error', (err: Error) => reject(new Error(`vzdump stream error: ${err.message}`)));
         });
 
         // Find the created backup file
@@ -276,12 +288,15 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
                 }
             });
 
-            scpStream.on('exit', (code: number | null) => { exitCode = code; });
-            scpStream.on('close', () => {
-                if (exitCode === 0 || exitCode === null) resolve();
-                else reject(new Error(`SCP transfer failed with exit code ${exitCode}`));
+            scpStream.on('exit', (code: number | null) => {
+                exitCode = code;
+                log(`[scp] Exit code: ${code}`);
             });
-            scpStream.on('error', reject);
+            scpStream.on('close', () => {
+                if (exitCode === 0) resolve();
+                else reject(new Error(`SCP transfer failed with exit code ${exitCode ?? 'unknown'}`));
+            });
+            scpStream.on('error', (err: Error) => reject(new Error(`SCP stream error: ${err.message}`)));
         });
 
         log('[Step 2/4] ✓ Backup transferred successfully');
@@ -315,12 +330,15 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
                 log(`[qmrestore] ${chunk.toString().trim()}`);
             });
 
-            restoreStream.on('exit', (code: number | null) => { exitCode = code; });
-            restoreStream.on('close', () => {
-                if (exitCode === 0 || exitCode === null) resolve();
-                else reject(new Error(`qmrestore failed with exit code ${exitCode}`));
+            restoreStream.on('exit', (code: number | null) => {
+                exitCode = code;
+                log(`[qmrestore] Exit code: ${code}`);
             });
-            restoreStream.on('error', reject);
+            restoreStream.on('close', () => {
+                if (exitCode === 0) resolve();
+                else reject(new Error(`qmrestore failed with exit code ${exitCode ?? 'unknown'}`));
+            });
+            restoreStream.on('error', (err: Error) => reject(new Error(`qmrestore stream error: ${err.message}`)));
         });
 
         log(`[Step 3/4] ✓ VM restored as VMID ${targetVmid}`);
