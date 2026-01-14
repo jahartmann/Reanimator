@@ -79,7 +79,6 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
                     const isos = JSON.parse(isoJson);
                     isos.forEach((iso: any) => {
                         serverItems.push({
-                            volid: iso.volid,
                             name: iso.volid.split('/').pop() || iso.volid,
                             format: iso.format,
                             size: iso.size,
@@ -95,7 +94,6 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
                             const p = line.trim().split(/\s+/);
                             if (p.length < 2) return;
                             serverItems.push({
-                                volid: p[0],
                                 name: p[0].split('/').pop() || p[0],
                                 format: p[1],
                                 size: parseInt(p[2] || '0'),
@@ -112,7 +110,6 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
                     const tpls = JSON.parse(tplJson);
                     tpls.forEach((tpl: any) => {
                         serverItems.push({
-                            volid: tpl.volid,
                             name: tpl.volid.split('/').pop() || tpl.volid,
                             format: tpl.format,
                             size: tpl.size,
@@ -127,7 +124,6 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
                             const p = line.trim().split(/\s+/);
                             if (p.length < 2) return;
                             serverItems.push({
-                                volid: p[0],
                                 name: p[0].split('/').pop() || p[0],
                                 format: p[1],
                                 size: parseInt(p[2] || '0'),
