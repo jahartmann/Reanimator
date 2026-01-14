@@ -285,8 +285,22 @@ async function runPreFlightChecks(
     log('[Check 5/6] Verifying target storage...');
     const targetStorage = options.targetStorage || 'local-lvm';
     try {
-        const storageList = await targetSsh.exec('pvesm status --output-format json');
-        const storages = JSON.parse(storageList);
+        let storages: any[] = [];
+        try {
+            const storageList = await targetSsh.exec('pvesm status --output-format json');
+            storages = JSON.parse(storageList);
+        } catch {
+            // Fallback: Parse Plain Text for older PVE versions or if JSON fails
+            const raw = await targetSsh.exec('pvesm status');
+            storages = raw.split('\n')
+                .slice(1) // Skip header
+                .map(line => {
+                    const parts = line.trim().split(/\s+/);
+                    if (parts.length < 3) return null;
+                    return { storage: parts[0], type: parts[1], status: parts[2] };
+                })
+                .filter(s => s !== null);
+        }
         const found = storages.find((s: any) => s.storage === targetStorage);
         if (!found) {
             const available = storages.map((s: any) => s.storage).join(', ');
@@ -400,7 +414,8 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         log(`[Step 1/4] Running: ${dumpCmd}`);
 
         // Execute vzdump with streaming output
-        const dumpStream = await sourceSsh.getExecStream(dumpCmd, { pty: true });
+        // Use pty: false for better stream stability and to avoid premature close signals
+        const dumpStream = await sourceSsh.getExecStream(dumpCmd, { pty: false });
 
         await new Promise<void>((resolve, reject) => {
             let exitCode: number | null = null;
