@@ -409,68 +409,56 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
             vzdumpPath = whichResult.trim() || vzdumpPath;
         } catch { }
 
-        const dumpCmd = `${vzdumpPath} ${vmid} --dumpdir ${backupDir} --compress zstd --mode ${dumpMode}`;
+        const logFile = `${backupDir}/migration_${vmid}.log`;
 
-        log(`[Step 1/4] Running: ${dumpCmd}`);
+        // Clean up old log
+        try { await sourceSsh.exec(`rm -f ${logFile}`); } catch { }
 
-        // Execute vzdump with streaming output
-        // Use pty: false for better stream stability and to avoid premature close signals
-        const dumpStream = await sourceSsh.getExecStream(dumpCmd, { pty: false });
+        // Command with nohup and logging (DETACHED MODE)
+        const dumpCmd = `/usr/bin/nohup ${vzdumpPath} ${vmid} --dumpdir ${backupDir} --compress zstd --mode ${dumpMode} > ${logFile} 2>&1 & echo $!`;
 
-        await new Promise<void>((resolve, reject) => {
-            let exitCode: number | null = null;
-            let lastActivity = Date.now();
-            let sawError = false;
-            let sawComplete = false;
+        log(`[Step 1/4] Running detached: ${dumpCmd}`);
 
-            dumpStream.on('data', (chunk: Buffer) => {
-                lastActivity = Date.now();
-                const lines = chunk.toString().split('\n');
-                lines.forEach(line => {
-                    const trimmed = line.trim();
-                    if (trimmed) {
-                        // Log all vzdump output for debugging
-                        if (trimmed.includes('%') || trimmed.includes('INFO') || trimmed.includes('creating') || trimmed.includes('error') || trimmed.includes('finished')) {
-                            log(`[vzdump] ${trimmed}`);
-                        }
-                        // Check for completion indicators
-                        if (trimmed.includes('Finished Backup') || trimmed.includes('archive contains')) {
-                            sawComplete = true;
-                        }
-                        // Check for error indicators
-                        if (trimmed.toLowerCase().includes('error') && !trimmed.includes('error rate')) {
-                            sawError = true;
-                        }
+        const pidStr = await sourceSsh.exec(dumpCmd);
+        const pid = pidStr.trim();
+        log(`[vzdump] Started background process PID: ${pid}`);
+
+        // Polling loop
+        let running = true;
+
+        while (running) {
+            await new Promise(r => setTimeout(r, 3000)); // Sleep 3s
+
+            // Check if process still exists
+            try {
+                await sourceSsh.exec(`ps -p ${pid}`);
+            } catch {
+                running = false; // Process gone
+            }
+
+            // Read recent log lines for progress
+            if (running) {
+                try {
+                    const tail = await sourceSsh.exec(`tail -n 2 ${logFile}`);
+                    if (tail.trim()) {
+                        const lines = tail.split('\n');
+                        lines.forEach(l => {
+                            if (l.includes('%') || l.includes('INFO')) log(`[vzdump] ${l.trim()}`);
+                        });
                     }
-                });
-            });
+                } catch { }
+            }
+        }
 
-            dumpStream.stderr.on('data', (chunk: Buffer) => {
-                lastActivity = Date.now();
-                const text = chunk.toString().trim();
-                if (text) {
-                    log(`[vzdump] ${text}`);
-                    if (text.toLowerCase().includes('error')) {
-                        sawError = true;
-                    }
-                }
-            });
+        // Process finished. Verify success.
+        log('[vzdump] Process finished. Verifying log...');
+        const fullLog = await sourceSsh.exec(`cat ${logFile}`);
 
-            dumpStream.on('exit', (code: number | null) => {
-                exitCode = code;
-                log(`[vzdump] Exit code: ${code}`);
-            });
-            dumpStream.on('close', () => {
-                // Handle exit codes: 0 = success, null with sawComplete = likely success
-                if (exitCode === 0 || (exitCode === null && sawComplete && !sawError)) {
-                    resolve();
-                } else {
-                    reject(new Error(`vzdump failed with exit code ${exitCode ?? 'unknown'}${sawError ? ' (errors detected)' : ''}`));
-                }
-            });
-            dumpStream.on('error', (err: Error) => reject(new Error(`vzdump stream error: ${err.message}`)));
-        });
+        if (!fullLog.includes('Finished Backup') && !fullLog.includes('archive contains')) {
+            throw new Error(`vzdump failed. Last log lines:\n${fullLog.split('\n').slice(-10).join('\n')}`);
+        }
 
+        log('[Step 1/4] ✓ Backup successful');
         // Find the created backup file
         const filesOutput = await sourceSsh.exec(`ls -1t ${backupDir}/vzdump-${cmdType}-${vmid}-*.vma.zst 2>/dev/null | head -1`);
         backupFile = filesOutput.trim();
