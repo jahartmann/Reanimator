@@ -720,7 +720,7 @@ export async function getServerHealth(server: any): Promise<ServerHealth | null>
         // We reuse getDiskStats but suppress log output by passing dummy debug
         const disks = await getDiskStats(ssh, []);
 
-        const [smart, zfs, events] = await Promise.all([
+        const [smart, zfs, events, backups] = await Promise.all([
             getSmartStats(ssh, disks),
             getZfsStats(ssh),
             getSystemEvents(ssh),
