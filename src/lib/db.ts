@@ -23,6 +23,6 @@ db.pragma('busy_timeout = 3000'); // Wait up to 3s for locks
 
 export default db;
 export function getBackupDir() {
-  // Return absolute path for consumers that need it (like SSH uploads)
-  return path.resolve(BACKUP_DIR);
+  // Return relative path string to avoid Turbopack resolving it as a glob
+  return BACKUP_DIR;
 }
