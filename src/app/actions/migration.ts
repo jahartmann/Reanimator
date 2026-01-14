@@ -53,9 +53,13 @@ export async function startServerMigration(
         if (!source || !target) return { success: false, message: 'Source or Target server not found' };
 
         // 1. Create Task Entry
+        // We default global storage/bridge to 'mixed' if not explicit, as per-VM settings take precedence.
+        const tStorage = options?.targetStorage || 'mixed';
+        const tBridge = options?.targetBridge || 'mixed';
+
         const stmt = db.prepare(`
-            INSERT INTO migration_tasks (source_server_id, target_server_id, status, current_step, total_steps, steps_json, log)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO migration_tasks (source_server_id, target_server_id, status, current_step, total_steps, steps_json, log, target_storage, target_bridge)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
         `);
 
@@ -92,7 +96,7 @@ export async function startServerMigration(
 
         const initialLog = `[${new Date().toLocaleTimeString()}] Task started. Source: ${source.name}, Target: ${target.name}\n`;
 
-        const result = stmt.get(sourceId, targetId, 'running', 0, steps.length, JSON.stringify(steps), initialLog) as { id: number };
+        const result = stmt.get(sourceId, targetId, 'running', 0, steps.length, JSON.stringify(steps), initialLog, tStorage, tBridge) as { id: number };
         const taskId = result.id;
 
         // 2. Trigger Background Processing (Non-blocking)
