@@ -95,7 +95,27 @@ export class SSHClient {
 
 
     // Get execution stream directly (for piping)
+    // Get execution stream directly (for piping)
     async getExecStream(command: string, options: { pty?: boolean } = {}): Promise<import('ssh2').ClientChannel> {
+        try {
+            return await this._getExecStreamCore(command, options);
+        } catch (e: any) {
+            const msg = e.message || '';
+            if (msg.includes('Not connected') || msg.includes('Connection closed') || msg.includes('No response')) {
+                console.log(`[SSH] Stream init failed (${msg}), reconnecting...`);
+                try {
+                    await this.reconnect();
+                    return await this._getExecStreamCore(command, options);
+                } catch (reconnectErr) {
+                    console.error('[SSH] Reconnect for stream failed:', reconnectErr);
+                    throw e;
+                }
+            }
+            throw e;
+        }
+    }
+
+    private async _getExecStreamCore(command: string, options: { pty?: boolean } = {}): Promise<import('ssh2').ClientChannel> {
         return new Promise((resolve, reject) => {
             this.client.exec(command, { pty: options.pty }, (err, stream) => {
                 if (err) return reject(err);
@@ -105,7 +125,34 @@ export class SSHClient {
     }
 
     // Execute a command
+    // Reconnect helper
+    async reconnect(): Promise<void> {
+        try { this.client.end(); } catch { }
+        this.client = new Client();
+        await this.connect();
+    }
+
+    // Execute a command with auto-reconnect
     async exec(command: string, timeoutMs: number = 20000, options: { pty?: boolean } = {}): Promise<string> {
+        try {
+            return await this._execCore(command, timeoutMs, options);
+        } catch (e: any) {
+            const msg = e.message || '';
+            if (msg.includes('Not connected') || msg.includes('Connection closed') || msg.includes('read ECONNRESET') || msg.includes('No response')) {
+                console.log(`[SSH] Connection lost (${msg}), reconnecting...`);
+                try {
+                    await this.reconnect();
+                    return await this._execCore(command, timeoutMs, options);
+                } catch (reconnectErr) {
+                    console.error('[SSH] Reconnect failed:', reconnectErr);
+                    throw e; // Throw original error if reconnect fails
+                }
+            }
+            throw e;
+        }
+    }
+
+    private async _execCore(command: string, timeoutMs: number, options: { pty?: boolean }): Promise<string> {
         return new Promise((resolve, reject) => {
             let timeoutId: NodeJS.Timeout;
 
@@ -134,15 +181,10 @@ export class SSHClient {
 
                     stream.on('close', (code: number | null) => {
                         // Handle various exit scenarios:
-                        // - code === 0: success
-                        // - code === null/undefined: stream closed unexpectedly (network issue, timeout, etc.)
-                        // - code !== 0: command failed with specific exit code
-
                         if (code === 0) {
                             resolveExec(output);
                         } else if (code === null || code === undefined) {
                             // Stream closed without proper exit - could be network issue
-                            // If we have output, return it (might be partial)
                             if (output.trim()) {
                                 console.warn('[SSH] Stream closed unexpectedly with output, returning partial result');
                                 resolveExec(output);
