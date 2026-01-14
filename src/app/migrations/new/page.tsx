@@ -229,59 +229,83 @@ export default function NewMigrationPage() {
                                 <div className="space-y-8 animate-in fade-in">
                                     <h2 className="text-xl font-semibold flex items-center gap-2"><ArrowRightLeft className="h-5 w-5" /> Welcher Weg?</h2>
 
-                                    {/* Server Selectors - Improved Visuals */}
-                                    <div className="grid gap-6 md:grid-cols-2">
-                                        <div className="space-y-2">
-                                            <Label className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Quelle</Label>
-                                            <Select value={sourceId} onValueChange={setSourceId}>
-                                                <SelectTrigger className="h-28 flex flex-col items-start justify-center gap-2 p-6 border-2 hover:border-primary/50 transition-colors bg-card/50">
-                                                    <span className="text-muted-foreground text-xs font-bold flex items-center gap-2">
-                                                        <ServerIcon className="h-3 w-3" /> VON SERVER
-                                                    </span>
-                                                    {servers.length === 0 ? (
-                                                        <div className="text-muted-foreground text-sm flex items-center gap-2">
-                                                            <Loader2 className="h-4 w-4 animate-spin" /> Lade Server...
-                                                        </div>
-                                                    ) : (
-                                                        <div className="font-bold text-2xl truncate w-full text-left">
-                                                            {servers.find(s => s.id.toString() === sourceId)?.name || 'Bitte wählen...'}
-                                                        </div>
-                                                    )}
-                                                    {sourceId && <div className="text-xs text-muted-foreground">{servers.find(s => s.id.toString() === sourceId)?.host}</div>}
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    {servers.map(s => <SelectItem key={s.id} value={s.id.toString()} disabled={s.id.toString() === targetId} className="py-3">
-                                                        <div className="font-medium">{s.name}</div>
-                                                        <div className="text-xs text-muted-foreground">{s.host}</div>
-                                                    </SelectItem>)}
-                                                </SelectContent>
-                                            </Select>
+                                    {servers.length === 0 ? (
+                                        <div className="p-8 border-2 border-dashed rounded-lg text-center space-y-4">
+                                            <div className="flex justify-center"><ServerIcon className="h-10 w-10 text-muted-foreground/50" /></div>
+                                            <h3 className="font-semibold text-lg">Keine Server gefunden</h3>
+                                            <p className="text-muted-foreground">Bitte fügen Sie erst Proxmox Server hinzu.</p>
+                                            <Button variant="outline" onClick={() => router.push('/servers')}>Zu den Servern</Button>
                                         </div>
+                                    ) : (
+                                        <div className="grid gap-6 md:grid-cols-2">
+                                            <div className="space-y-3">
+                                                <Label className="text-base font-semibold">Quell-Server (VON)</Label>
+                                                <Card className={`cursor-pointer transition-all hover:border-primary/50 ${sourceId ? 'border-primary bg-primary/5' : ''}`}>
+                                                    <CardContent className="p-0">
+                                                        <Select value={sourceId} onValueChange={(v) => {
+                                                            setSourceId(v);
+                                                            // Auto-reset target if same
+                                                            if (v === targetId) setTargetId('');
+                                                        }}>
+                                                            <SelectTrigger className="w-full h-auto p-4 border-0 bg-transparent focus:ring-0">
+                                                                <div className="flex items-center gap-4 text-left">
+                                                                    <div className="bg-background p-2 rounded-full border shadow-sm">
+                                                                        <ServerIcon className="h-5 w-5 text-muted-foreground" />
+                                                                    </div>
+                                                                    <div className="flex-1">
+                                                                        <div className="font-bold text-lg">
+                                                                            {servers.find(s => s.id.toString() === sourceId)?.name || 'Bitte wählen...'}
+                                                                        </div>
+                                                                        {sourceId && <div className="text-xs text-muted-foreground">{servers.find(s => s.id.toString() === sourceId)?.host}</div>}
+                                                                    </div>
+                                                                </div>
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                {servers.map(s => (
+                                                                    <SelectItem key={s.id} value={s.id.toString()} disabled={s.id.toString() === targetId} className="cursor-pointer">
+                                                                        <span className="font-medium">{s.name}</span> <span className="text-muted-foreground text-xs ml-2">({s.host})</span>
+                                                                    </SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </CardContent>
+                                                </Card>
+                                            </div>
 
-                                        <div className="space-y-2">
-                                            <Label className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Ziel</Label>
-                                            <Select value={targetId} onValueChange={setTargetId}>
-                                                <SelectTrigger className="h-28 flex flex-col items-start justify-center gap-2 p-6 border-2 hover:border-primary/50 transition-colors bg-card/50">
-                                                    <span className="text-muted-foreground text-xs font-bold flex items-center gap-2">
-                                                        <ServerIcon className="h-3 w-3" /> NACH SERVER
-                                                    </span>
-                                                    <div className="font-bold text-2xl truncate w-full text-left">
-                                                        {servers.find(s => s.id.toString() === targetId)?.name || 'Bitte wählen...'}
-                                                    </div>
-                                                    {targetId && <div className="text-xs text-muted-foreground">{servers.find(s => s.id.toString() === targetId)?.host}</div>}
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    {servers.map(s => <SelectItem key={s.id} value={s.id.toString()} disabled={s.id.toString() === sourceId} className="py-3">
-                                                        <div className="font-medium">{s.name}</div>
-                                                        <div className="text-xs text-muted-foreground">{s.host}</div>
-                                                    </SelectItem>)}
-                                                </SelectContent>
-                                            </Select>
+                                            <div className="space-y-3">
+                                                <Label className="text-base font-semibold">Ziel-Server (NACH)</Label>
+                                                <Card className={`cursor-pointer transition-all hover:border-primary/50 ${targetId ? 'border-primary bg-primary/5' : ''}`}>
+                                                    <CardContent className="p-0">
+                                                        <Select value={targetId} onValueChange={setTargetId}>
+                                                            <SelectTrigger className="w-full h-auto p-4 border-0 bg-transparent focus:ring-0">
+                                                                <div className="flex items-center gap-4 text-left">
+                                                                    <div className="bg-background p-2 rounded-full border shadow-sm">
+                                                                        <ServerIcon className="h-5 w-5 text-muted-foreground" />
+                                                                    </div>
+                                                                    <div className="flex-1">
+                                                                        <div className="font-bold text-lg">
+                                                                            {servers.find(s => s.id.toString() === targetId)?.name || 'Bitte wählen...'}
+                                                                        </div>
+                                                                        {targetId && <div className="text-xs text-muted-foreground">{servers.find(s => s.id.toString() === targetId)?.host}</div>}
+                                                                    </div>
+                                                                </div>
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                {servers.map(s => (
+                                                                    <SelectItem key={s.id} value={s.id.toString()} disabled={s.id.toString() === sourceId} className="cursor-pointer">
+                                                                        <span className="font-medium">{s.name}</span> <span className="text-muted-foreground text-xs ml-2">({s.host})</span>
+                                                                    </SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </CardContent>
+                                                </Card>
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
 
                                     {/* Action Buttons for Step 0 */}
-                                    <div className="flex flex-col gap-4 pt-4 border-t">
+                                    <div className="flex flex-col gap-4 pt-6 mt-4 border-t">
                                         <div className="flex items-center justify-between">
                                             <div className="text-sm text-muted-foreground">
                                                 {sourceId && targetId ? (
@@ -290,22 +314,19 @@ export default function NewMigrationPage() {
                                             </div>
 
                                             <div className="flex gap-4">
-                                                {/* Full Migration Shortcut */}
                                                 <Button
                                                     variant="secondary"
                                                     className="gap-2"
                                                     disabled={!sourceId || !targetId || loadingVms || vms.length === 0}
                                                     onClick={() => {
-                                                        // Pre-select ALL and jump to mapping (Step 2) -> actually let's go to Step 2 so they see mapping
                                                         setSelectedVmIds(vms.map(v => v.vmid));
                                                         setStep(2);
                                                     }}
                                                 >
                                                     <Database className="h-4 w-4" />
-                                                    Alles Migrieren (Full)
+                                                    Alles Migrieren
                                                 </Button>
 
-                                                {/* Granular Selection */}
                                                 <Button
                                                     disabled={!sourceId || !targetId || loadingVms}
                                                     onClick={() => setStep(1)}
