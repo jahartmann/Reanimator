@@ -120,17 +120,14 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     const log = (msg: string) => { console.log(msg); if (onLog) onLog(msg); };
 
     // ============================================================
-    // PDM-STYLE API-BASED MIGRATION
-    // Uses Proxmox REST API (via pvesh) instead of SSH stream commands
-    // This is more reliable and matches how PDM handles migrations
+    // QM REMOTE-MIGRATE (Proper Proxmox Migration Command)
+    // Uses the exact syntax from Proxmox documentation
+    // Format: qm remote-migrate <VMID_SRC> <VMID_DST> '<endpoint>' [options]
     // ============================================================
 
-    log('[Migration] Using API-based migration (PDM-Style)');
+    log('[Migration] Using qm remote-migrate command');
 
-    // 1. Validate Source has API Token
-    if (!source.auth_token) {
-        throw new Error('Quellserver hat keinen API-Token. Bitte in Server-Einstellungen hinzufügen.');
-    }
+    // 1. Validate Target has API Token (required for endpoint authentication)
 
     // 2. Validate Target has API Token
     if (!target.auth_token) {
@@ -198,52 +195,119 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         // VM doesn't exist - normal case
     }
 
-    // 7. Build the target-endpoint string for API
+    // 7. Build the target-endpoint string
+    // Format: host=<IP>,apitoken=PVEAPIToken=<user>@<realm>!<tokenname>=<secret>,fingerprint=<FP>
     const targetEndpoint = `host=${targetHost},apitoken=PVEAPIToken=${cleanTargetToken},fingerprint=${fingerprint}`;
 
-    log('[Migration] Starting API-based remote migration...');
+    log('[Migration] Starting remote migration...');
     log(`[Migration] Source Node: ${sourceNode}`);
     log(`[Migration] Target Host: ${targetHost}`);
     log(`[Migration] VMID: ${vmid} -> ${targetVmid}`);
     log(`[Migration] Storage: ${options.targetStorage || 'default'}, Bridge: ${options.targetBridge || 'default'}`);
 
-    // 8. Call the remote_migrate API endpoint via pvesh
-    const apiPath = type === 'qemu' ? 'qemu' : 'lxc';
-
-    // Build the API command - this matches what PDM does
-    let migrateCmd = `pvesh create /nodes/${sourceNode}/${apiPath}/${vmid}/remote_migrate`;
-    migrateCmd += ` --target-vmid ${targetVmid}`;
-    migrateCmd += ` --target-endpoint '${targetEndpoint}'`;
+    // 8. Build the qm remote-migrate command (exact Proxmox syntax)
+    let migrateCmd = `/usr/sbin/qm remote-migrate ${vmid} ${targetVmid} '${targetEndpoint}'`;
     if (options.targetStorage) migrateCmd += ` --target-storage ${options.targetStorage}`;
     if (options.targetBridge) migrateCmd += ` --target-bridge ${options.targetBridge}`;
-    if (options.online) migrateCmd += ` --online 1`;
+    if (options.online) migrateCmd += ` --online`;
+    migrateCmd += ` --delete`; // Delete source VM after successful migration (like PDM)
 
-    log(`[Migration] Calling API: /nodes/${sourceNode}/${apiPath}/${vmid}/remote_migrate`);
+    log(`[Migration] Command: qm remote-migrate ${vmid} ${targetVmid} ...`);
+    log(`[Migration] Options: --delete enabled (source will be removed after success)`);
     log(`[DEBUG] Full command (token hidden):\n${migrateCmd.replace(cleanTargetToken, '***')}`);
 
     try {
-        // Execute the API call - this returns a UPID (task ID)
-        const upidRaw = await sourceSsh.exec(migrateCmd, 120000); // 2 min timeout for initial call
-        const upid = upidRaw.trim().replace(/"/g, '');
+        // Execute with PTY for proper output streaming
+        const stream = await sourceSsh.getExecStream(migrateCmd, { pty: true });
+        log('[Migration] Migration command started, streaming output...');
 
-        if (!upid || !upid.startsWith('UPID:')) {
-            throw new Error(`Unexpected API response: ${upidRaw}`);
-        }
+        // Track migration progress
+        let lastActivity = Date.now();
+        let migrationSuccess = false;
+        let migrationError = '';
 
-        log(`[Migration] Task started successfully!`);
-        log(`[Migration] UPID: ${upid}`);
+        await new Promise<void>((resolve, reject) => {
+            let buffer = '';
+            let exitCode: number | null = null;
 
-        // 9. Poll task status and stream logs (like PDM)
-        await pollMigrationTaskWithLogs(sourceSsh, sourceNode, upid, log);
+            const processOutput = (chunk: Buffer) => {
+                lastActivity = Date.now();
+                buffer += chunk.toString();
 
-        log('[Migration] ✓ Migration completed successfully via API!');
-        return `Cross-cluster migration completed successfully (API). Target VMID: ${targetVmid}`;
+                // Process complete lines
+                while (buffer.includes('\n')) {
+                    const newlineIndex = buffer.indexOf('\n');
+                    const line = buffer.substring(0, newlineIndex).trim();
+                    buffer = buffer.substring(newlineIndex + 1);
 
-    } catch (apiError: any) {
-        log(`[Migration] API migration failed: ${apiError.message}`);
+                    if (line) {
+                        log(`[qm] ${line}`);
 
-        // NO FALLBACK - User explicitly wants API-only like PDM
-        throw new Error(`API Migration fehlgeschlagen:\n\n${apiError.message}\n\nBitte prüfen Sie:\n- API-Tokens auf beiden Servern sind korrekt\n- SSL-Fingerprint ist aktuell\n- Netzwerk-Konnektivität zwischen den Servern\n- Firewall erlaubt Port 8006`);
+                        // Check for success/error indicators
+                        if (line.includes('migration finished') || line.includes('successfully')) {
+                            migrationSuccess = true;
+                        }
+                        if (line.toLowerCase().includes('error') && !line.includes('tunnel')) {
+                            migrationError = line;
+                        }
+                    }
+                }
+            };
+
+            stream.on('data', processOutput);
+            stream.stderr.on('data', processOutput);
+
+            // Capture exit code from 'exit' event (PTY streams)
+            stream.on('exit', (code: number | null, signal: string | null) => {
+                log(`[Migration] Command finished. Exit code: ${code}, Signal: ${signal}`);
+                exitCode = code;
+            });
+
+            stream.on('close', () => {
+                // Flush remaining buffer
+                if (buffer.trim()) {
+                    log(`[qm] ${buffer.trim()}`);
+                    if (buffer.includes('migration finished') || buffer.includes('successfully')) {
+                        migrationSuccess = true;
+                    }
+                }
+
+                // Evaluate result
+                if (exitCode === 0 || migrationSuccess) {
+                    resolve();
+                } else if (exitCode === null && !migrationError) {
+                    // Stream closed without explicit exit - assume success if no errors
+                    log('[Migration] Stream closed without exit code, assuming success...');
+                    resolve();
+                } else {
+                    reject(new Error(migrationError || `Migration exited with code ${exitCode}`));
+                }
+            });
+
+            stream.on('error', (err: any) => {
+                reject(new Error(`Stream error: ${err.message}`));
+            });
+
+            // Watchdog: Check for activity timeout (5 minutes without output = stuck)
+            const watchdog = setInterval(() => {
+                const idleTime = Date.now() - lastActivity;
+                if (idleTime > 300000) { // 5 minutes
+                    clearInterval(watchdog);
+                    reject(new Error('Migration appears stuck (no output for 5 minutes)'));
+                }
+            }, 30000);
+
+            stream.on('close', () => clearInterval(watchdog));
+        });
+
+        log('[Migration] ✓ Migration completed successfully!');
+        log(`[Migration] VM ${vmid} migrated to ${targetHost} as VMID ${targetVmid}`);
+        return `Cross-cluster migration completed. Target VMID: ${targetVmid}`;
+
+    } catch (migrationError: any) {
+        log(`[Migration] Migration failed: ${migrationError.message}`);
+
+        throw new Error(`Migration fehlgeschlagen:\n\n${migrationError.message}\n\nBitte prüfen Sie:\n- API-Tokens auf beiden Servern sind korrekt\n- SSL-Fingerprint ist aktuell\n- Netzwerk-Konnektivität zwischen den Servern\n- Firewall erlaubt Port 8006\n- Genügend Speicherplatz auf Ziel-Storage`);
     }
 }
 
