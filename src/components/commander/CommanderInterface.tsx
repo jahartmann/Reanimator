@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Server, Monitor, Play, AlertTriangle, CheckCircle2, XCircle, ChevronDown, ChevronRight, Terminal } from "lucide-react";
 import { runBulkNodeCommand, runBulkVMCommand, CommandResult } from '@/app/actions/commander';
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "sonner";
 
 interface CommanderInterfaceProps {
     servers: any[];
@@ -24,7 +24,6 @@ export function CommanderInterface({ servers, vms }: CommanderInterfaceProps) {
     const [executing, setExecuting] = useState(false);
     const [results, setResults] = useState<CommandResult[]>([]);
     const [expandedResult, setExpandedResult] = useState<number | null>(null);
-    const { toast } = useToast();
 
     const isDestructive = command.includes('rm -rf') || command.includes('dd ') || command.includes('mkfs');
 
@@ -61,9 +60,9 @@ export function CommanderInterface({ servers, vms }: CommanderInterfaceProps) {
                 res = await runBulkVMCommand(selectedVMs, command);
             }
             setResults(res);
-            toast({ title: "Befehl ausgeführt", description: `${res.length} Targets bearbeitet.` });
+            toast.success("Befehl ausgeführt", { description: `${res.length} Targets bearbeitet.` });
         } catch (e: any) {
-            toast({ title: "Fehler", description: e.message, variant: "destructive" });
+            toast.error("Fehler", { description: e.message });
         } finally {
             setExecuting(false);
         }

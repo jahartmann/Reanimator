@@ -500,6 +500,14 @@ export interface ServerHealth {
     smart: SmartInfo[];
     zfs: ZfsHealth[];
     events: SystemEvent[];
+    backups: BackupInfo[];
+}
+
+export interface BackupInfo {
+    vmid: string;
+    vmName: string;
+    lastBackup: string; // ISO Date or 'Never'
+    status: 'OK' | 'WARNING' | 'CRITICAL'; // Critical > 7 days, Warning > 3 days
 }
 
 async function getSmartStats(ssh: any, disks: DiskInfo[]): Promise<SmartInfo[]> {
@@ -607,6 +615,95 @@ async function getSystemEvents(ssh: any): Promise<SystemEvent[]> {
     return events;
 }
 
+return events;
+}
+
+async function getBackupStats(ssh: any): Promise<BackupInfo[]> {
+    const backups: BackupInfo[] = [];
+    try {
+        // 1. Get List of VMs running on this node
+        const vmListRaw = await ssh.exec(`pvesh get /nodes/$(hostname)/qemu --output-format json 2>/dev/null || echo "[]"`);
+        const vms = JSON.parse(vmListRaw);
+
+        // 2. Find All Backups (optimized: simple find in common dump dirs)
+        // Adjust paths if you use specific storages, but /var/lib/vz/dump is default + others usually mount somewhere
+        // Better: use pvesm list to find actual backups
+
+        // Get enabled storages that support backup
+        const storageRaw = await ssh.exec(`pvesm status -content backup -enabled 1 --output-format json 2>/dev/null`);
+        const storages = JSON.parse(storageRaw);
+
+        const backupMap = new Map<string, Date>();
+
+        for (const st of storages) {
+            try {
+                // List volume, size, format, vmid
+                const filesRaw = await ssh.exec(`pvesm list ${st.storage} --content backup --output-format json 2>/dev/null`);
+                const files = JSON.parse(filesRaw);
+
+                for (const f of files) {
+                    // volid: local:backup/vzdump-qemu-100-2025_01_01-12_00_00.vma.zst
+                    // Extract VMID and Date
+                    const match = f.volid.match(/vzdump-(?:qemu|lxc)-(\d+)-(\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2})/);
+                    if (match) {
+                        const vmid = match[1];
+                        const dateStr = match[2].replace('_', '-').replace('_', '-').replace('-', 'T').replace('_', ':').replace('_', ':');
+                        // 2025-01-01T12:00:00
+                        // Fix format: YYYY_MM_DD-HH_mm_ss -> YYYY-MM-DDTHH:mm:ss
+                        const cleanDateStr = match[2].substring(0, 10).replace(/_/g, '-') + 'T' + match[2].substring(11).replace(/_/g, ':');
+
+                        const date = new Date(cleanDateStr);
+                        if (!isNaN(date.getTime())) {
+                            const currentBest = backupMap.get(vmid);
+                            if (!currentBest || date > currentBest) {
+                                backupMap.set(vmid, date);
+                            }
+                        }
+                    }
+                }
+            } catch { }
+        }
+
+        // 3. Compare
+        const now = new Date();
+        const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
+        const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+
+        for (const vm of vms) {
+            const last = backupMap.get(vm.vmid.toString());
+            if (!last) {
+                // No backup found? We might ignore it or mark as Critical if we assume everything needs backup
+                // Let's mark as WARNING 'Never'
+                backups.push({
+                    vmid: vm.vmid.toString(),
+                    vmName: vm.name,
+                    lastBackup: 'Never',
+                    status: 'WARNING'
+                });
+            } else {
+                const diff = now.getTime() - last.getTime();
+                let status: 'OK' | 'WARNING' | 'CRITICAL' = 'OK';
+
+                if (diff > SEVEN_DAYS) status = 'CRITICAL';
+                else if (diff > THREE_DAYS) status = 'WARNING';
+
+                if (status !== 'OK') {
+                    backups.push({
+                        vmid: vm.vmid.toString(),
+                        vmName: vm.name,
+                        lastBackup: last.toISOString().split('T')[0],
+                        status
+                    });
+                }
+            }
+        }
+
+    } catch (e) {
+        console.error('Backup check failed:', e);
+    }
+    return backups;
+}
+
 export async function getServerHealth(server: any): Promise<ServerHealth | null> {
     if (!server.ssh_key) return null;
 
@@ -627,11 +724,12 @@ export async function getServerHealth(server: any): Promise<ServerHealth | null>
         const [smart, zfs, events] = await Promise.all([
             getSmartStats(ssh, disks),
             getZfsStats(ssh),
-            getSystemEvents(ssh)
+            getSystemEvents(ssh),
+            getBackupStats(ssh)
         ]);
 
         ssh.disconnect();
-        return { smart, zfs, events };
+        return { smart, zfs, events, backups };
     } catch (e) {
         if (ssh) ssh.disconnect();
         console.error('Health Check Failed:', e);

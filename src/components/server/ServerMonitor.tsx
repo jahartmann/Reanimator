@@ -6,19 +6,17 @@ import { getServerHealth, ServerHealth } from '@/app/actions/monitoring';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle, AlertTriangle, CheckCircle2, Database, Activity } from 'lucide-react';
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 interface ServerMonitorProps {
-    serverId: any; // We pass the server object itself to getServerHealth usually, check action signature
-    // serverId is number, getServerHealth takes `server: any` (needs ssh keys). 
-    // Ah, getServerHealth takes the `server` object with SSH keys. 
-    // I should pass the `server` object from the page.
+    serverId: any;
     server: any;
     info: {
         system: any;
         networks: any[];
         disks: any[];
         pools: any[];
-        filesystems: any[]; // Changed from pools to pools+filesystems
+        filesystems: any[];
     };
 }
 
@@ -80,13 +78,25 @@ export function ServerMonitor({ server, info }: ServerMonitorProps) {
             }
         });
 
-        // OOM Checks
         if (health.events?.some(e => e.type === 'OOM')) {
             alerts.push({
                 title: 'OOM Killer Detected',
                 msg: 'System has killed processes due to memory shortage recently. Check logs.',
                 type: 'critical'
             });
+        }
+
+        // Backup Checks
+        if (health.backups) {
+            const stale = health.backups.filter(b => b.status !== 'OK');
+            if (stale.length > 0) {
+                const criticalCount = stale.filter(b => b.status === 'CRITICAL').length;
+                alerts.push({
+                    title: 'Backup Warning',
+                    msg: `${stale.length} VMs have outdated or missing backups (${criticalCount} Critical).`,
+                    type: criticalCount > 0 ? 'critical' : 'warning'
+                });
+            }
         }
     }
 
@@ -115,7 +125,6 @@ export function ServerMonitor({ server, info }: ServerMonitorProps) {
                     disks={info.disks}
                     pools={info.pools}
                     serverType={server.type}
-                // We will add health prop to Visualization later
                 // health={health}
                 />
 
@@ -161,6 +170,34 @@ export function ServerMonitor({ server, info }: ServerMonitorProps) {
                                         <div key={i} className="text-xs text-muted-foreground flex gap-2">
                                             <span className="text-zinc-500 font-mono shrink-0">{e.timestamp}</span>
                                             <span className={e.type === 'OOM' ? 'text-red-400' : 'text-zinc-300'}>{e.message}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
+
+                    {/* Backups Mini Card */}
+                    {health.backups?.some(b => b.status !== 'OK') && (
+                        <Card className="bg-muted/5 border-none md:col-span-2">
+                            <CardContent className="p-4 pt-4">
+                                <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
+                                    <Database className="h-4 w-4" /> Stale Backups
+                                </h3>
+                                <div className="space-y-1">
+                                    {health.backups.filter(b => b.status !== 'OK').sort((a, b) => a.status === 'CRITICAL' ? -1 : 1).map((b) => (
+                                        <div key={b.vmid} className="flex justify-between text-xs items-center p-1 hover:bg-white/5 rounded">
+                                            <div className="flex gap-2 items-center">
+                                                <AlertTriangle className={`h-3 w-3 ${b.status === 'CRITICAL' ? 'text-red-500' : 'text-amber-500'}`} />
+                                                <span className="font-mono">{b.vmid}</span>
+                                                <span className="text-muted-foreground">{b.vmName}</span>
+                                            </div>
+                                            <div className="flex items-center gap-4">
+                                                <span className="text-muted-foreground">Last: {b.lastBackup}</span>
+                                                <Badge variant="outline" className={`${b.status === 'CRITICAL' ? 'text-red-500 border-red-500/20 bg-red-500/10' : 'text-amber-500 border-amber-500/20 bg-amber-500/10'}`}>
+                                                    {b.status}
+                                                </Badge>
+                                            </div>
                                         </div>
                                     ))}
                                 </div>

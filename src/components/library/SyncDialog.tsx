@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Loader2, Copy } from "lucide-react";
 import { LibraryItem, syncLibraryItem, getEligibleStorages } from '@/app/actions/library';
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "sonner";
 
 interface ServerOption {
     id: number;
@@ -27,7 +27,6 @@ export function SyncDialog({ item, servers, onSuccess }: SyncDialogProps) {
     const [storages, setStorages] = useState<string[]>([]);
     const [loadingStorages, setLoadingStorages] = useState(false);
     const [syncing, setSyncing] = useState(false);
-    const { toast } = useToast();
 
     // Source is implicitly the first location?
     // User might want to pick *closest* source if multiple exist.
@@ -43,7 +42,7 @@ export function SyncDialog({ item, servers, onSuccess }: SyncDialogProps) {
             setStorages(avail);
             if (avail.length > 0) setTargetStorage(avail[0]);
         } catch (error) {
-            toast({ title: "Fehler beim Laden der Storages", variant: "destructive" });
+            toast.error("Fehler beim Laden der Storages");
         } finally {
             setLoadingStorages(false);
         }
@@ -60,11 +59,11 @@ export function SyncDialog({ item, servers, onSuccess }: SyncDialogProps) {
                 targetStorage,
                 item.type
             );
-            toast({ title: "Synchronisation erfolgreich", description: `${item.name} wurde kopiert.` });
+            toast.success("Synchronisation erfolgreich", { description: `${item.name} wurde kopiert.` });
             setOpen(false);
             if (onSuccess) onSuccess();
         } catch (error: any) {
-            toast({ title: "Synchronisation fehlgeschlagen", description: error.message, variant: "destructive" });
+            toast.error("Synchronisation fehlgeschlagen", { description: error.message });
         } finally {
             setSyncing(false);
         }
