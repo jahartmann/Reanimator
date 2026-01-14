@@ -120,43 +120,23 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     const log = (msg: string) => { console.log(msg); if (onLog) onLog(msg); };
 
     // ============================================================
-    // QM REMOTE-MIGRATE (Proper Proxmox Migration Command)
-    // Uses the exact syntax from Proxmox documentation
-    // Format: qm remote-migrate <VMID_SRC> <VMID_DST> '<endpoint>' [options]
+    // PROXMIGRATE-STYLE MIGRATION (Robust 4-Step Process)
+    // Step 1: Create vzdump backup on source
+    // Step 2: Transfer backup via SCP (server-to-server)
+    // Step 3: Restore on target with qmrestore
+    // Step 4: Cleanup backup files and optionally delete source
     // ============================================================
 
-    log('[Migration] Using qm remote-migrate command');
+    log('[Migration] Using ProxMigrate-style migration (vzdump → SCP → qmrestore)');
 
-    // 1. Validate Target has API Token (required for endpoint authentication)
-
-    // 2. Validate Target has API Token
-    if (!target.auth_token) {
-        throw new Error('Zielserver hat keinen API-Token. Bitte in Server-Einstellungen hinzufügen.');
-    }
-
-    // 3. Prepare Target Endpoint String (for remote_migrate API)
-    let cleanTargetToken = target.auth_token.trim().replace('PVEAPIToken=', '');
-
-    // Get Target Host
+    // Get Target Host for SCP
     let targetHost = target.ssh_host;
     if (!targetHost && target.url) {
         try { targetHost = new URL(target.url).hostname; } catch { targetHost = target.url; }
     }
     if (!targetHost) throw new Error('Zielserver hat keine Host-IP konfiguriert.');
 
-    // Get Target Fingerprint (required for secure connection)
-    let fingerprint = target.ssl_fingerprint;
-    if (!fingerprint) {
-        log('[Migration] Fetching target SSL fingerprint...');
-        try {
-            fingerprint = (await targetSsh.exec(`openssl x509 -noout -fingerprint -sha256 -in /etc/pve/local/pve-ssl.pem | cut -d= -f2`)).trim();
-            log(`[Migration] Fingerprint: ${fingerprint}`);
-        } catch (e) {
-            throw new Error('Konnte SSL-Fingerprint nicht ermitteln. Bitte manuell in Server-Einstellungen eintragen.');
-        }
-    }
-
-    // 4. Determine Target VMID
+    // Determine Target VMID
     let targetVmid = options.targetVmid;
     if (!targetVmid && options.autoVmid !== false) {
         log('[Migration] Auto-selecting target VMID...');
@@ -171,7 +151,7 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         targetVmid = vmid;
     }
 
-    // 5. Pre-flight: Unlock source VM if locked
+    // Pre-flight: Unlock source VM if locked
     try {
         const conf = await sourceSsh.exec(`/usr/sbin/qm config ${vmid}`);
         if (conf.includes('lock:')) {
@@ -183,7 +163,7 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         log('[Migration] Could not check/unlock source VM, proceeding anyway...');
     }
 
-    // 6. Pre-flight: Clean up target if exists
+    // Pre-flight: Clean up target if exists
     try {
         await targetSsh.exec(`/usr/sbin/qm config ${targetVmid}`);
         log(`[Migration] Target VM ${targetVmid} exists. Cleaning up...`);
@@ -195,119 +175,200 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         // VM doesn't exist - normal case
     }
 
-    // 7. Build the target-endpoint string
-    // Format: host=<IP>,apitoken=PVEAPIToken=<user>@<realm>!<tokenname>=<secret>,fingerprint=<FP>
-    const targetEndpoint = `host=${targetHost},apitoken=PVEAPIToken=${cleanTargetToken},fingerprint=${fingerprint}`;
-
-    log('[Migration] Starting remote migration...');
     log(`[Migration] Source Node: ${sourceNode}`);
     log(`[Migration] Target Host: ${targetHost}`);
     log(`[Migration] VMID: ${vmid} -> ${targetVmid}`);
-    log(`[Migration] Storage: ${options.targetStorage || 'default'}, Bridge: ${options.targetBridge || 'default'}`);
+    log(`[Migration] Storage: ${options.targetStorage || 'local-lvm'}`);
 
-    // 8. Build the qm remote-migrate command (exact Proxmox syntax)
-    let migrateCmd = `/usr/sbin/qm remote-migrate ${vmid} ${targetVmid} '${targetEndpoint}'`;
-    if (options.targetStorage) migrateCmd += ` --target-storage ${options.targetStorage}`;
-    if (options.targetBridge) migrateCmd += ` --target-bridge ${options.targetBridge}`;
-    if (options.online) migrateCmd += ` --online`;
-    migrateCmd += ` --delete`; // Delete source VM after successful migration (like PDM)
-
-    log(`[Migration] Command: qm remote-migrate ${vmid} ${targetVmid} ...`);
-    log(`[Migration] Options: --delete enabled (source will be removed after success)`);
-    log(`[DEBUG] Full command (token hidden):\n${migrateCmd.replace(cleanTargetToken, '***')}`);
+    const backupDir = '/tmp/proxmigrate';
+    let backupFile = '';
 
     try {
-        // Execute with PTY for proper output streaming
-        const stream = await sourceSsh.getExecStream(migrateCmd, { pty: true });
-        log('[Migration] Migration command started, streaming output...');
+        // ========== STEP 1: Create vzdump backup on source ==========
+        log('[Step 1/4] Creating vzdump backup on source...');
 
-        // Track migration progress
-        let lastActivity = Date.now();
-        let migrationSuccess = false;
-        let migrationError = '';
+        await sourceSsh.exec(`mkdir -p ${backupDir}`);
+
+        // Stop VM if not online migration (for consistent backup)
+        const wasRunning = (await sourceSsh.exec(`/usr/sbin/qm status ${vmid}`)).includes('running');
+        if (!options.online && wasRunning) {
+            log('[Step 1/4] Stopping VM for consistent backup...');
+            await sourceSsh.exec(`/usr/sbin/qm stop ${vmid} --timeout 60`);
+        }
+
+        const dumpMode = options.online ? 'snapshot' : 'stop';
+        const cmdType = type === 'qemu' ? 'qemu' : 'lxc';
+        const dumpCmd = `/usr/sbin/vzdump ${vmid} --dumpdir ${backupDir} --compress zstd --mode ${dumpMode}`;
+
+        log(`[Step 1/4] Running: vzdump ${vmid} --mode ${dumpMode} --compress zstd`);
+
+        // Execute vzdump with streaming output
+        const dumpStream = await sourceSsh.getExecStream(dumpCmd, { pty: true });
 
         await new Promise<void>((resolve, reject) => {
-            let buffer = '';
             let exitCode: number | null = null;
 
-            const processOutput = (chunk: Buffer) => {
-                lastActivity = Date.now();
-                buffer += chunk.toString();
-
-                // Process complete lines
-                while (buffer.includes('\n')) {
-                    const newlineIndex = buffer.indexOf('\n');
-                    const line = buffer.substring(0, newlineIndex).trim();
-                    buffer = buffer.substring(newlineIndex + 1);
-
-                    if (line) {
-                        log(`[qm] ${line}`);
-
-                        // Check for success/error indicators
-                        if (line.includes('migration finished') || line.includes('successfully')) {
-                            migrationSuccess = true;
-                        }
-                        if (line.toLowerCase().includes('error') && !line.includes('tunnel')) {
-                            migrationError = line;
-                        }
+            dumpStream.on('data', (chunk: Buffer) => {
+                const lines = chunk.toString().split('\n');
+                lines.forEach(line => {
+                    const trimmed = line.trim();
+                    if (trimmed && (trimmed.includes('%') || trimmed.includes('INFO') || trimmed.includes('creating'))) {
+                        log(`[vzdump] ${trimmed}`);
                     }
-                }
-            };
-
-            stream.on('data', processOutput);
-            stream.stderr.on('data', processOutput);
-
-            // Capture exit code from 'exit' event (PTY streams)
-            stream.on('exit', (code: number | null, signal: string | null) => {
-                log(`[Migration] Command finished. Exit code: ${code}, Signal: ${signal}`);
-                exitCode = code;
+                });
             });
 
-            stream.on('close', () => {
-                // Flush remaining buffer
-                if (buffer.trim()) {
-                    log(`[qm] ${buffer.trim()}`);
-                    if (buffer.includes('migration finished') || buffer.includes('successfully')) {
-                        migrationSuccess = true;
-                    }
-                }
-
-                // Evaluate result
-                if (exitCode === 0 || migrationSuccess) {
-                    resolve();
-                } else if (exitCode === null && !migrationError) {
-                    // Stream closed without explicit exit - assume success if no errors
-                    log('[Migration] Stream closed without exit code, assuming success...');
-                    resolve();
-                } else {
-                    reject(new Error(migrationError || `Migration exited with code ${exitCode}`));
-                }
+            dumpStream.stderr.on('data', (chunk: Buffer) => {
+                log(`[vzdump] ${chunk.toString().trim()}`);
             });
 
-            stream.on('error', (err: any) => {
-                reject(new Error(`Stream error: ${err.message}`));
+            dumpStream.on('exit', (code: number | null) => { exitCode = code; });
+            dumpStream.on('close', () => {
+                if (exitCode === 0 || exitCode === null) resolve();
+                else reject(new Error(`vzdump failed with exit code ${exitCode}`));
             });
-
-            // Watchdog: Check for activity timeout (5 minutes without output = stuck)
-            const watchdog = setInterval(() => {
-                const idleTime = Date.now() - lastActivity;
-                if (idleTime > 300000) { // 5 minutes
-                    clearInterval(watchdog);
-                    reject(new Error('Migration appears stuck (no output for 5 minutes)'));
-                }
-            }, 30000);
-
-            stream.on('close', () => clearInterval(watchdog));
+            dumpStream.on('error', reject);
         });
 
-        log('[Migration] ✓ Migration completed successfully!');
+        // Find the created backup file
+        const filesOutput = await sourceSsh.exec(`ls -1t ${backupDir}/vzdump-${cmdType}-${vmid}-*.vma.zst 2>/dev/null | head -1`);
+        backupFile = filesOutput.trim();
+
+        if (!backupFile) {
+            throw new Error('Backup file not found after vzdump');
+        }
+
+        const fileSize = await sourceSsh.exec(`du -h ${backupFile} | cut -f1`);
+        log(`[Step 1/4] ✓ Backup created: ${backupFile} (${fileSize.trim()})`);
+
+        // ========== STEP 2: Transfer backup via SCP ==========
+        log('[Step 2/4] Transferring backup to target server via SCP...');
+
+        // Ensure target directory exists
+        await targetSsh.exec(`mkdir -p ${backupDir}`);
+
+        // SCP from source to target (server-to-server transfer)
+        const scpCmd = `scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${backupFile} root@${targetHost}:${backupDir}/`;
+        log(`[Step 2/4] Running: scp to ${targetHost}...`);
+
+        const scpStream = await sourceSsh.getExecStream(scpCmd, { pty: true });
+
+        await new Promise<void>((resolve, reject) => {
+            let exitCode: number | null = null;
+            let lastProgress = '';
+
+            scpStream.on('data', (chunk: Buffer) => {
+                const text = chunk.toString();
+                // SCP progress looks like: "file   45%   12MB  3.2MB/s   00:02 ETA"
+                if (text.includes('%')) {
+                    const match = text.match(/(\d+)%/);
+                    if (match && match[1] !== lastProgress) {
+                        lastProgress = match[1];
+                        log(`[scp] Transfer progress: ${match[1]}%`);
+                    }
+                }
+            });
+
+            scpStream.stderr.on('data', (chunk: Buffer) => {
+                const text = chunk.toString().trim();
+                if (text && !text.includes('Warning')) {
+                    log(`[scp] ${text}`);
+                }
+            });
+
+            scpStream.on('exit', (code: number | null) => { exitCode = code; });
+            scpStream.on('close', () => {
+                if (exitCode === 0 || exitCode === null) resolve();
+                else reject(new Error(`SCP transfer failed with exit code ${exitCode}`));
+            });
+            scpStream.on('error', reject);
+        });
+
+        log('[Step 2/4] ✓ Backup transferred successfully');
+
+        // ========== STEP 3: Restore on target with qmrestore ==========
+        log('[Step 3/4] Restoring VM on target server...');
+
+        const filename = backupFile.split('/').pop();
+        const targetBackupPath = `${backupDir}/${filename}`;
+        const restoreStorage = options.targetStorage || 'local-lvm';
+
+        const restoreCmd = `/usr/sbin/qmrestore ${targetBackupPath} ${targetVmid} --storage ${restoreStorage} --unique`;
+        log(`[Step 3/4] Running: qmrestore to VMID ${targetVmid} on storage ${restoreStorage}`);
+
+        const restoreStream = await targetSsh.getExecStream(restoreCmd, { pty: true });
+
+        await new Promise<void>((resolve, reject) => {
+            let exitCode: number | null = null;
+
+            restoreStream.on('data', (chunk: Buffer) => {
+                const lines = chunk.toString().split('\n');
+                lines.forEach(line => {
+                    const trimmed = line.trim();
+                    if (trimmed) {
+                        log(`[qmrestore] ${trimmed}`);
+                    }
+                });
+            });
+
+            restoreStream.stderr.on('data', (chunk: Buffer) => {
+                log(`[qmrestore] ${chunk.toString().trim()}`);
+            });
+
+            restoreStream.on('exit', (code: number | null) => { exitCode = code; });
+            restoreStream.on('close', () => {
+                if (exitCode === 0 || exitCode === null) resolve();
+                else reject(new Error(`qmrestore failed with exit code ${exitCode}`));
+            });
+            restoreStream.on('error', reject);
+        });
+
+        log(`[Step 3/4] ✓ VM restored as VMID ${targetVmid}`);
+
+        // ========== STEP 4: Cleanup ==========
+        log('[Step 4/4] Cleaning up...');
+
+        // Delete backup files
+        try {
+            await sourceSsh.exec(`rm -f ${backupFile}`);
+            log('[Cleanup] Deleted source backup file');
+        } catch { }
+
+        try {
+            await targetSsh.exec(`rm -f ${targetBackupPath}`);
+            log('[Cleanup] Deleted target backup file');
+        } catch { }
+
+        // Delete source VM (like PDM's --delete behavior)
+        log('[Cleanup] Deleting source VM...');
+        try {
+            await sourceSsh.exec(`/usr/sbin/qm stop ${vmid} --timeout 30`);
+        } catch { }
+        try {
+            await sourceSsh.exec(`/usr/sbin/qm destroy ${vmid} --purge`);
+            log('[Cleanup] ✓ Source VM deleted');
+        } catch (e) {
+            log(`[Cleanup] Warning: Could not delete source VM: ${e}`);
+        }
+
+        log('[Step 4/4] ✓ Cleanup complete');
+        log('[Migration] ═══════════════════════════════════════════');
+        log(`[Migration] ✓ Migration completed successfully!`);
         log(`[Migration] VM ${vmid} migrated to ${targetHost} as VMID ${targetVmid}`);
+        log('[Migration] ═══════════════════════════════════════════');
+
         return `Cross-cluster migration completed. Target VMID: ${targetVmid}`;
 
-    } catch (migrationError: any) {
-        log(`[Migration] Migration failed: ${migrationError.message}`);
+    } catch (error: any) {
+        log(`[Migration] ✗ Migration failed: ${error.message}`);
 
-        throw new Error(`Migration fehlgeschlagen:\n\n${migrationError.message}\n\nBitte prüfen Sie:\n- API-Tokens auf beiden Servern sind korrekt\n- SSL-Fingerprint ist aktuell\n- Netzwerk-Konnektivität zwischen den Servern\n- Firewall erlaubt Port 8006\n- Genügend Speicherplatz auf Ziel-Storage`);
+        // Cleanup on failure
+        if (backupFile) {
+            try { await sourceSsh.exec(`rm -f ${backupFile}`); } catch { }
+            try { await targetSsh.exec(`rm -f ${backupDir}/*`); } catch { }
+        }
+
+        throw new Error(`Migration fehlgeschlagen:\n\n${error.message}\n\nBitte prüfen Sie:\n- SSH-Zugang zwischen den Servern (für SCP)\n- Genügend Speicherplatz für Backup in /tmp\n- Ziel-Storage ist erreichbar`);
     }
 }
 
