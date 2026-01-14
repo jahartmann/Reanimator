@@ -4,25 +4,36 @@ import { NextResponse } from 'next/server';
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
     try {
         const { id } = await params;
-        const task = db.prepare('SELECT * FROM migration_tasks WHERE id = ?').get(id) as any;
+
+        // Use the same query logic as getMigrationTask in actions/migration.ts
+        const stmt = db.prepare(`
+            SELECT 
+                mt.*,
+                s1.name as source_name,
+                s2.name as target_name
+            FROM migration_tasks mt
+            LEFT JOIN servers s1 ON mt.source_server_id = s1.id
+            LEFT JOIN servers s2 ON mt.target_server_id = s2.id
+            WHERE mt.id = ?
+        `);
+
+        const task = stmt.get(id) as any;
 
         if (!task) {
             return NextResponse.json({ error: 'Task not found' }, { status: 404 });
         }
 
-        // Parse steps if stored as string, or fetch from separate table?
-        // In previous implementation (migration.ts), we use a separate table `migration_steps`.
-        // Let's check if we store steps in the task or separate.
-        // Usually separate.
-
-        const steps = db.prepare('SELECT * FROM migration_steps WHERE task_id = ? ORDER BY id ASC').all(id);
-
-        // Also we might need to parse status or logs if they are JSON?
-        // Logs are stored in `task.log` column (TEXT).
+        // Parse steps from JSON column
+        let steps = [];
+        try {
+            steps = JSON.parse(task.steps_json || '[]');
+        } catch (e) {
+            steps = [];
+        }
 
         const fullTask = {
             ...task,
-            steps: steps || []
+            steps: steps
         };
 
         return NextResponse.json(fullTask);

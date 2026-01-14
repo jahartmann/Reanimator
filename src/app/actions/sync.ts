@@ -21,7 +21,39 @@ export async function syncServerVMs(serverId: number) {
         await ssh.connect();
 
         // 1. Get Node Name (Robustly)
-        const nodeName = (await ssh.exec('cat /etc/hostname', 5000)).trim();
+        // Correct approach: Hostname might differ from Proxmox Node Name.
+        // We list all nodes and check which one matches our hostname or is marked as 'online' and 'local' (if we are on it)
+
+        let nodeName = '';
+        try {
+            // "hostname" command is standard
+            const osHostname = (await ssh.exec('hostname', 5000)).trim();
+            console.log(`[Sync] OS Hostname: "${osHostname}"`);
+
+            // Check PVE nodes
+            const nodesJson = await ssh.exec('pvesh get /nodes --output-format json 2>/dev/null', 5000);
+            const nodes = JSON.parse(nodesJson);
+
+            // 1. Try exact match
+            const exactMatch = nodes.find((n: any) => n.node === osHostname);
+            if (exactMatch) {
+                nodeName = exactMatch.node;
+            } else {
+                // 2. Try partial match or fallback to the only node if single node
+                if (nodes.length === 1) {
+                    nodeName = nodes[0].node;
+                    console.log(`[Sync] Hostname mismatch but single node found. Using "${nodeName}"`);
+                } else {
+                    // 3. Fallback to osHostname if we can't be sure
+                    console.warn(`[Sync] Could not match hostname "${osHostname}" to cluster nodes: ${nodes.map((n: any) => n.node).join(', ')}. Trying osHostname.`);
+                    nodeName = osHostname;
+                }
+            }
+        } catch (e) {
+            console.warn('[Sync] Failed to determine node name via pvesh, falling back to cat /etc/hostname', e);
+            nodeName = (await ssh.exec('cat /etc/hostname', 5000)).trim();
+        }
+
         console.log(`[Sync] Connected to ${server.name} (Determined Node Name: "${nodeName}")`);
 
         const vms: any[] = [];

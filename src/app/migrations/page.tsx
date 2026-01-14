@@ -96,6 +96,12 @@ export default function MigrationsPage() {
                                                                 <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
                                                                 <span className="font-semibold">{task.target_name}</span>
                                                             </div>
+                                                            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                                                                <span>{task.progress}/{task.total_steps} Schritte</span>
+                                                                {task.current_step && (
+                                                                    <span className="truncate">• {task.steps.find(s => s.status === 'running')?.name?.replace('Migrate ', '') || task.current_step}</span>
+                                                                )}
+                                                            </div>
                                                             <div className="text-sm text-blue-500 font-medium animate-pulse">
                                                                 {task.status === 'running' ? 'Migration Läuft...' : 'Wartet...'}
                                                             </div>
