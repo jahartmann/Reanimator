@@ -115,19 +115,210 @@ async function migrateLocal(ctx: MigrationContext): Promise<string> {
     return `Intra-cluster migration completed (UPID: ${upid})`;
 }
 
+// --- Pre-Flight Checks (ProxMigrate-Style) ---
+
+async function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function getVMDiskSize(ssh: SSHClient, vmid: string): Promise<number> {
+    // Get total disk size in bytes
+    try {
+        const config = await ssh.exec(`/usr/sbin/qm config ${vmid}`);
+        let totalBytes = 0;
+        const diskMatches = config.match(/size=(\d+)([KMGT])?/gi) || [];
+
+        for (const match of diskMatches) {
+            const sizeMatch = match.match(/size=(\d+)([KMGT])?/i);
+            if (sizeMatch) {
+                let size = parseInt(sizeMatch[1]);
+                const unit = (sizeMatch[2] || '').toUpperCase();
+                if (unit === 'K') size *= 1024;
+                else if (unit === 'M') size *= 1024 * 1024;
+                else if (unit === 'G') size *= 1024 * 1024 * 1024;
+                else if (unit === 'T') size *= 1024 * 1024 * 1024 * 1024;
+                totalBytes += size;
+            }
+        }
+        return totalBytes || 10 * 1024 * 1024 * 1024; // Default 10GB if can't parse
+    } catch {
+        return 10 * 1024 * 1024 * 1024; // Default 10GB
+    }
+}
+
+async function prepareVMForMigration(
+    ssh: SSHClient,
+    vmid: string,
+    type: 'qemu' | 'lxc',
+    log: (msg: string) => void
+): Promise<string> {
+    const cmd = type === 'qemu' ? 'qm' : 'pct';
+    log('[VM Prep] Checking VM state...');
+
+    // Get current status
+    let status = '';
+    try {
+        status = await ssh.exec(`/usr/sbin/${cmd} status ${vmid}`);
+        log(`[VM Prep] Current status: ${status.trim()}`);
+    } catch (e) {
+        throw new Error(`VM ${vmid} nicht gefunden oder nicht erreichbar`);
+    }
+
+    // Handle paused state (CRITICAL - this was causing the error!)
+    if (status.includes('paused')) {
+        log('[VM Prep] ⚠ VM is paused. Resuming first...');
+        try {
+            await ssh.exec(`/usr/sbin/${cmd} resume ${vmid}`);
+            await sleep(2000);
+            status = await ssh.exec(`/usr/sbin/${cmd} status ${vmid}`);
+            log(`[VM Prep] ✓ Resumed. New status: ${status.trim()}`);
+        } catch (e) {
+            throw new Error('Konnte VM nicht aus Pause-Zustand befreien. Bitte manuell "qm resume" ausführen.');
+        }
+    }
+
+    // Handle locked state
+    try {
+        const config = await ssh.exec(`/usr/sbin/${cmd} config ${vmid}`);
+        if (config.includes('lock:')) {
+            log('[VM Prep] ⚠ VM is locked. Unlocking...');
+            await ssh.exec(`/usr/sbin/${cmd} unlock ${vmid}`);
+            log('[VM Prep] ✓ Unlocked');
+        }
+    } catch {
+        log('[VM Prep] Could not check lock status');
+    }
+
+    // Return final status
+    const finalStatus = await ssh.exec(`/usr/sbin/${cmd} status ${vmid}`);
+    return finalStatus.trim();
+}
+
+async function testServerToServerSSH(
+    sourceSsh: SSHClient,
+    targetHost: string,
+    log: (msg: string) => void
+): Promise<void> {
+    log(`[Check] SSH Source → Target (${targetHost})...`);
+    try {
+        const result = await sourceSsh.exec(
+            `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 root@${targetHost} "echo OK"`,
+            15000
+        );
+        if (result.includes('OK')) {
+            log('[Check] ✓ Server-to-server SSH working');
+        } else {
+            throw new Error('Unexpected response');
+        }
+    } catch (e: any) {
+        throw new Error(
+            `Server-to-Server SSH fehlgeschlagen!\n\n` +
+            `Der Quellserver muss per SSH auf den Zielserver zugreifen können.\n` +
+            `Bitte auf dem QUELLSERVER ausführen:\n\n` +
+            `  ssh-copy-id root@${targetHost}\n\n` +
+            `Fehler: ${e.message}`
+        );
+    }
+}
+
+async function runPreFlightChecks(
+    ctx: MigrationContext,
+    targetHost: string,
+    log: (msg: string) => void
+): Promise<void> {
+    const { sourceSsh, targetSsh, vmid, type, options } = ctx;
+
+    log('[Pre-Flight] ════════════════════════════════════════');
+    log('[Pre-Flight] Starting connectivity and readiness checks...');
+
+    // 1. SSH Connectivity - Source
+    log('[Check 1/6] SSH to Source server...');
+    try {
+        await sourceSsh.exec('echo "OK"');
+        log('[Check 1/6] ✓ Source SSH OK');
+    } catch (e) {
+        throw new Error('SSH-Verbindung zum Quellserver fehlgeschlagen');
+    }
+
+    // 2. SSH Connectivity - Target
+    log('[Check 2/6] SSH to Target server...');
+    try {
+        await targetSsh.exec('echo "OK"');
+        log('[Check 2/6] ✓ Target SSH OK');
+    } catch (e) {
+        throw new Error('SSH-Verbindung zum Zielserver fehlgeschlagen');
+    }
+
+    // 3. VM State Recovery
+    log('[Check 3/6] Preparing VM for migration...');
+    const vmStatus = await prepareVMForMigration(sourceSsh, vmid, type, log);
+    log(`[Check 3/6] ✓ VM ready (${vmStatus})`);
+
+    // 4. Storage space check
+    log('[Check 4/6] Checking storage space...');
+    const backupDir = '/var/lib/vz/dump';
+    try {
+        const spaceOutput = await sourceSsh.exec(`df -B1 ${backupDir} 2>/dev/null | tail -1 | awk '{print $4}'`);
+        const availableBytes = parseInt(spaceOutput.trim()) || 0;
+        const vmSize = await getVMDiskSize(sourceSsh, vmid);
+        const requiredBytes = Math.ceil(vmSize * 1.2); // 20% buffer
+
+        const availableGB = Math.round(availableBytes / 1e9);
+        const requiredGB = Math.round(requiredBytes / 1e9);
+
+        if (availableBytes < requiredBytes) {
+            throw new Error(`Nicht genug Speicher in ${backupDir}!\nVerfügbar: ${availableGB}GB, Benötigt: ~${requiredGB}GB`);
+        }
+        log(`[Check 4/6] ✓ Storage OK (${availableGB}GB available, ~${requiredGB}GB needed)`);
+    } catch (e: any) {
+        if (e.message.includes('Nicht genug')) throw e;
+        log(`[Check 4/6] ⚠ Could not verify storage space: ${e.message}`);
+    }
+
+    // 5. Target storage exists
+    log('[Check 5/6] Verifying target storage...');
+    const targetStorage = options.targetStorage || 'local-lvm';
+    try {
+        const storageList = await targetSsh.exec('pvesm status --output-format json');
+        const storages = JSON.parse(storageList);
+        const found = storages.find((s: any) => s.storage === targetStorage);
+        if (!found) {
+            const available = storages.map((s: any) => s.storage).join(', ');
+            throw new Error(`Storage "${targetStorage}" nicht gefunden auf Zielserver!\nVerfügbar: ${available}`);
+        }
+        log(`[Check 5/6] ✓ Target storage "${targetStorage}" exists`);
+    } catch (e: any) {
+        if (e.message.includes('nicht gefunden')) throw e;
+        log(`[Check 5/6] ⚠ Could not verify target storage: ${e.message}`);
+    }
+
+    // 6. Server-to-Server SSH (for SCP)
+    log('[Check 6/6] Testing server-to-server SSH for SCP...');
+    await testServerToServerSSH(sourceSsh, targetHost, log);
+
+    log('[Pre-Flight] ════════════════════════════════════════');
+    log('[Pre-Flight] ✓ All checks passed! Starting migration...');
+    log('');
+}
+
+
 async function migrateRemote(ctx: MigrationContext): Promise<string> {
     const { sourceSsh, targetSsh, source, target, type, vmid, options, onLog, sourceNode } = ctx;
     const log = (msg: string) => { console.log(msg); if (onLog) onLog(msg); };
 
     // ============================================================
-    // PROXMIGRATE-STYLE MIGRATION (Robust 4-Step Process)
-    // Step 1: Create vzdump backup on source
+    // PROXMIGRATE-STYLE MIGRATION (Robust 5-Step Process)
+    // Pre-Flight: Connectivity & VM state checks
+    // Step 1: Stop VM and create vzdump backup on source
     // Step 2: Transfer backup via SCP (server-to-server)
     // Step 3: Restore on target with qmrestore
-    // Step 4: Cleanup backup files and optionally delete source
+    // Step 4: Cleanup backup files and delete source VM
     // ============================================================
 
-    log('[Migration] Using ProxMigrate-style migration (vzdump → SCP → qmrestore)');
+    log('[Migration] ╔═══════════════════════════════════════════════════════════╗');
+    log('[Migration] ║     ProxMigrate-Style Cross-Cluster Migration             ║');
+    log('[Migration] ╚═══════════════════════════════════════════════════════════╝');
+    log('');
 
     // Get Target Host for SCP
     let targetHost = target.ssh_host;
@@ -136,14 +327,17 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
     }
     if (!targetHost) throw new Error('Zielserver hat keine Host-IP konfiguriert.');
 
-    // Determine Target VMID
+    // ========== PRE-FLIGHT CHECKS ==========
+    await runPreFlightChecks(ctx, targetHost, log);
+
+    // Determine Target VMID (after pre-flight so we know target is reachable)
     let targetVmid = options.targetVmid;
     if (!targetVmid && options.autoVmid !== false) {
-        log('[Migration] Auto-selecting target VMID...');
+        log('[Setup] Auto-selecting target VMID...');
         try {
             const nextIdRaw = await targetSsh.exec(`pvesh get /cluster/nextid --output-format json 2>/dev/null || echo "100"`);
             targetVmid = nextIdRaw.replace(/"/g, '').trim();
-            log(`[Migration] Auto-selected VMID: ${targetVmid}`);
+            log(`[Setup] Auto-selected VMID: ${targetVmid}`);
         } catch {
             targetVmid = vmid;
         }
@@ -151,26 +345,14 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         targetVmid = vmid;
     }
 
-    // Pre-flight: Unlock source VM if locked
-    try {
-        const conf = await sourceSsh.exec(`/usr/sbin/qm config ${vmid}`);
-        if (conf.includes('lock:')) {
-            log('[Migration] Source VM is locked. Unlocking...');
-            await sourceSsh.exec(`/usr/sbin/qm unlock ${vmid}`);
-            log('[Migration] Unlocked successfully.');
-        }
-    } catch (e) {
-        log('[Migration] Could not check/unlock source VM, proceeding anyway...');
-    }
-
-    // Pre-flight: Clean up target if exists
+    // Clean up target VM if already exists
     try {
         await targetSsh.exec(`/usr/sbin/qm config ${targetVmid}`);
-        log(`[Migration] Target VM ${targetVmid} exists. Cleaning up...`);
+        log(`[Setup] Target VM ${targetVmid} already exists. Cleaning up...`);
         try { await targetSsh.exec(`/usr/sbin/qm stop ${targetVmid} --timeout 10`); } catch { }
         try { await targetSsh.exec(`/usr/sbin/qm unlock ${targetVmid}`); } catch { }
         try { await targetSsh.exec(`/usr/sbin/qm destroy ${targetVmid} --purge`); } catch { }
-        log('[Migration] Target cleanup complete.');
+        log('[Setup] ✓ Target cleanup complete');
     } catch {
         // VM doesn't exist - normal case
     }
