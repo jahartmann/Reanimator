@@ -3,9 +3,8 @@ import fs from 'fs';
 import path from 'path';
 
 const getPaths = () => {
-  const cwd = process.cwd();
-  const data = path.join(cwd, 'data');
-  const backups = path.join(cwd, 'data', 'config-backups');
+  const data = path.resolve('data');
+  const backups = path.resolve(data, 'config-backups');
   return { data, backups };
 };
 

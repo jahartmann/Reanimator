@@ -38,10 +38,10 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
         let ssh;
         try {
             ssh = createSSHClient({
-                host: server.ssh_host || new URL(server.url).hostname,
-                port: server.ssh_port || 22,
-                username: server.ssh_user || 'root',
-                privateKey: server.ssh_key,
+                ssh_host: server.ssh_host || new URL(server.url).hostname,
+                ssh_port: server.ssh_port || 22,
+                ssh_user: server.ssh_user || 'root',
+                ssh_key: server.ssh_key,
             });
             await ssh.connect();
 
@@ -128,10 +128,10 @@ export async function getEligibleStorages(serverId: number, type: 'iso' | 'vztmp
     let ssh;
     try {
         ssh = createSSHClient({
-            host: server.ssh_host || new URL(server.url).hostname,
-            port: server.ssh_port || 22,
-            username: server.ssh_user || 'root',
-            privateKey: server.ssh_key,
+            ssh_host: server.ssh_host || new URL(server.url).hostname,
+            ssh_port: server.ssh_port || 22,
+            ssh_user: server.ssh_user || 'root',
+            ssh_key: server.ssh_key,
         });
         await ssh.connect();
 
@@ -183,10 +183,10 @@ export async function syncLibraryItem(sourceServerId: number, targetServerId: nu
     try {
         // 1. Connect Source & Get Path
         sourceSSH = createSSHClient({
-            host: sourceServer.ssh_host || new URL(sourceServer.url).hostname,
-            port: sourceServer.ssh_port || 22,
-            username: sourceServer.ssh_user || 'root',
-            privateKey: sourceServer.ssh_key,
+            ssh_host: sourceServer.ssh_host || new URL(sourceServer.url).hostname,
+            ssh_port: sourceServer.ssh_port || 22,
+            ssh_user: sourceServer.ssh_user || 'root',
+            ssh_key: sourceServer.ssh_key,
         });
         await sourceSSH.connect();
 
@@ -195,10 +195,10 @@ export async function syncLibraryItem(sourceServerId: number, targetServerId: nu
 
         // 2. Connect Target & Determine Path
         targetSSH = createSSHClient({
-            host: targetServer.ssh_host || new URL(targetServer.url).hostname,
-            port: targetServer.ssh_port || 22,
-            username: targetServer.ssh_user || 'root',
-            privateKey: targetServer.ssh_key,
+            ssh_host: targetServer.ssh_host || new URL(targetServer.url).hostname,
+            ssh_port: targetServer.ssh_port || 22,
+            ssh_user: targetServer.ssh_user || 'root',
+            ssh_key: targetServer.ssh_key,
         });
         await targetSSH.connect();
 
