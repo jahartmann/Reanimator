@@ -2,6 +2,7 @@
 
 import { createSSHClient, SSHClient } from '@/lib/ssh';
 import db from '@/lib/db';
+import { syncServerVMs } from './sync';
 
 // --- Interfaces ---
 
@@ -673,6 +674,14 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         log(`[Migration] ✓ Migration completed successfully!`);
         log(`[Migration] VM ${vmid} migrated to ${targetHost} as VMID ${targetVmid}`);
         log('[Migration] ═══════════════════════════════════════════');
+
+        // Helper to sync safely
+        const safeSync = async (sid: number) => {
+            try { await syncServerVMs(sid); } catch (e) { console.warn(`Post-migration sync failed for server ${sid}`, e); }
+        };
+
+        // Sync both source and target to update VM lists
+        await Promise.all([safeSync(sourceId), safeSync(options.targetServerId)]);
 
         return `Cross-cluster migration completed. Target VMID: ${targetVmid}`;
 

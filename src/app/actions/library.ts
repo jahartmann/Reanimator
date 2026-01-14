@@ -46,7 +46,12 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
             await ssh.connect();
 
             // Get active storages
-            const statusOutput = await ssh.exec('pvesm status', 5000).catch(() => '');
+            let statusOutput = '';
+            try {
+                statusOutput = await ssh.exec('pvesm status', 5000);
+            } catch (e) {
+                console.error(`[Library] Failed to get storage status on ${server.name}`, e);
+            }
 
             const storages = statusOutput.split('\n')
                 .slice(1) // skip header
@@ -56,6 +61,8 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
                     return { name: parts[0], type: parts[1], status: parts[2] };
                 })
                 .filter(s => s.status === 'active');
+
+            console.log(`[Library] Found ${storages.length} active storages on ${server.name}`);
 
             // For each storage, try to list ISOs and Templates
             for (const storage of storages) {
