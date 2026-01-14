@@ -615,8 +615,7 @@ async function getSystemEvents(ssh: any): Promise<SystemEvent[]> {
     return events;
 }
 
-return events;
-}
+
 
 async function getBackupStats(ssh: any): Promise<BackupInfo[]> {
     const backups: BackupInfo[] = [];

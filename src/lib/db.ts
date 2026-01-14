@@ -21,4 +21,6 @@ db.pragma('journal_mode = WAL');
 db.pragma('busy_timeout = 3000'); // Wait up to 3s for locks
 
 export default db;
-export { backupDir };
+export function getBackupDir() {
+  return backupDir;
+}

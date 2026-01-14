@@ -1,6 +1,6 @@
 'use server';
 
-import db, { backupDir } from '@/lib/db';
+import db from '@/lib/db';
 import fs from 'fs';
 import path from 'path';
 import { performFullBackup, restoreFileToRemote } from '@/lib/backup-logic';

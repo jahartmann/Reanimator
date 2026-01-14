@@ -2,7 +2,7 @@ import { Client } from 'ssh2';
 import fs from 'fs';
 import path from 'path';
 import * as tar from 'tar';
-import db, { backupDir } from '@/lib/db';
+import db, { getBackupDir } from '@/lib/db';
 import { createSSHClient } from '@/lib/ssh';
 
 // Paths to backup
@@ -190,7 +190,7 @@ export async function performFullBackup(serverId: number, server: Server) {
     const serverDirName = 'server-' + serverId;
 
     // Construct path segments separately to confuse static analyzer
-    const backupRoot = backupDir;
+    const backupRoot = getBackupDir();
     const destPath = path.resolve(backupRoot, serverDirName, timestamp);
 
     console.log(`[BackupLogic] Starting TAR backup for ${server.name} to ${destPath}`);

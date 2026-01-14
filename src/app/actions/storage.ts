@@ -2,7 +2,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import db, { backupDir } from '@/lib/db';
+import db, { getBackupDir } from '@/lib/db';
 import { createSSHClient } from '@/lib/ssh';
 
 interface StorageStats {
@@ -59,6 +59,7 @@ export async function getStorageStats(): Promise<StorageStats> {
     };
 
     // Walk backup directory and count backups
+    const backupDir = getBackupDir(); // Get path at runtime
     if (fs.existsSync(backupDir)) {
         const serverDirs = fs.readdirSync(backupDir);
         for (const serverDir of serverDirs) {
