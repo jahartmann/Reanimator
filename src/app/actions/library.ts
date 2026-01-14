@@ -67,11 +67,14 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
 
             const serverItems: LibraryItem[] = [];
 
+            if (!client) throw new Error("SSH Client not initialized");
+            const ssh = client;
+
             // Parallelize storage scanning within server
             await Promise.all(activeStorages.map(async (storage) => {
                 // ISOs
                 try {
-                    const isoJson = await client.exec(`pvesm list ${storage.name} --content iso --output-format json 2>/dev/null`, 10000);
+                    const isoJson = await ssh.exec(`pvesm list ${storage.name} --content iso --output-format json 2>/dev/null`, 10000);
                     const isos = JSON.parse(isoJson);
                     isos.forEach((iso: any) => {
                         serverItems.push({
@@ -86,7 +89,7 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
                 } catch (e) {
                     try {
                         // Fallback text parsing
-                        const txt = await client.exec(`pvesm list ${storage.name} --content iso 2>/dev/null`, 5000);
+                        const txt = await ssh.exec(`pvesm list ${storage.name} --content iso 2>/dev/null`, 5000);
                         txt.split('\n').slice(1).forEach(line => {
                             const p = line.trim().split(/\s+/);
                             if (p.length < 2) return;
@@ -104,7 +107,7 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
 
                 // Templates
                 try {
-                    const tplJson = await client.exec(`pvesm list ${storage.name} --content vztmpl --output-format json 2>/dev/null`, 10000);
+                    const tplJson = await ssh.exec(`pvesm list ${storage.name} --content vztmpl --output-format json 2>/dev/null`, 10000);
                     const tpls = JSON.parse(tplJson);
                     tpls.forEach((tpl: any) => {
                         serverItems.push({
@@ -118,7 +121,7 @@ export async function getLibraryContent(): Promise<LibraryItem[]> {
                     });
                 } catch (e) {
                     try {
-                        const txt = await client.exec(`pvesm list ${storage.name} --content vztmpl 2>/dev/null`, 5000);
+                        const txt = await ssh.exec(`pvesm list ${storage.name} --content vztmpl 2>/dev/null`, 5000);
                         txt.split('\n').slice(1).forEach(line => {
                             const p = line.trim().split(/\s+/);
                             if (p.length < 2) return;
