@@ -21,72 +21,94 @@ export async function syncServerVMs(serverId: number) {
         await ssh.connect();
 
         // 1. Get Node Name (Robustly)
-        // cat /etc/hostname is safer than `hostname` as it usually matches the PVE internal node name (no FQDN)
         const nodeName = (await ssh.exec('cat /etc/hostname', 5000)).trim();
         console.log(`[Sync] Connected to ${server.name} (Determined Node Name: "${nodeName}")`);
 
-        // 2. Try Cluster Resources API (Best Source)
-        let resources: any[] = [];
+        const vms: any[] = [];
+        let method = 'none';
+
+        // 2. Try Node-Specific API (Authentic Source for this node)
         try {
-            const json = await ssh.exec('pvesh get /cluster/resources --output-format json 2>/dev/null', 10000);
-            resources = JSON.parse(json);
+            console.log(`[Sync] Attempting node-specific API for ${nodeName}...`);
+            const qmJson = await ssh.exec(`pvesh get /nodes/${nodeName}/qemu --output-format json 2>/dev/null`, 10000);
+            const lxcJson = await ssh.exec(`pvesh get /nodes/${nodeName}/lxc --output-format json 2>/dev/null`, 10000);
+
+            const qmList = JSON.parse(qmJson);
+            const lxcList = JSON.parse(lxcJson);
+
+            qmList.forEach((vm: any) => vms.push({
+                vmid: vm.vmid,
+                name: vm.name,
+                status: vm.status,
+                type: 'qemu'
+            }));
+            lxcList.forEach((ct: any) => vms.push({
+                vmid: ct.vmid,
+                name: ct.name,
+                status: ct.status,
+                type: 'lxc'
+            }));
+
+            if (vms.length > 0) method = 'node-api';
+
         } catch (e) {
-            console.error('[Sync] Failed to fetch /cluster/resources, falling back to local files', e);
+            console.warn('[Sync] Node-specific API failed or returned invalid JSON:', e);
         }
 
-        const vms: any[] = [];
-
-        // Filter resources for this node
-        const nodeResources = resources.filter(r => r.node === nodeName && (r.type === 'qemu' || r.type === 'lxc'));
-
-        if (nodeResources.length > 0) {
-            console.log(`[Sync] Found ${nodeResources.length} VMs on node ${nodeName} via API`);
-            nodeResources.forEach(r => {
-                vms.push({
-                    vmid: r.vmid,
-                    name: r.name || (r.type === 'qemu' ? `VM ${r.vmid}` : `CT ${r.vmid}`),
-                    status: r.status,
-                    type: r.type
-                });
-            });
-        } else {
-            // FALLBACK: File System Check
-            // If the API thinks this node is empty (or we failed to match names), check config files.
-            // This ensures we at least show "Unknown" status VMs if they exist.
-            console.log('[Sync] No VMs found via API (or mismatched node name). Checking config files...');
-
+        // 3. Fallback: Cluster Resources (If Node API failed or returned 0 items?)
+        // Only try if we found nothing yet, possibly a naming mismatch despite hostname check?
+        if (vms.length === 0) {
             try {
-                // QEMU Configs
+                console.log('[Sync] Node API empty/failed. Trying Cluster Resources...');
+                const json = await ssh.exec('pvesh get /cluster/resources --output-format json 2>/dev/null', 10000);
+                const resources = JSON.parse(json);
+                const nodeResources = resources.filter((r: any) => r.node === nodeName && (r.type === 'qemu' || r.type === 'lxc'));
+
+                nodeResources.forEach((r: any) => {
+                    vms.push({
+                        vmid: r.vmid,
+                        name: r.name || (r.type === 'qemu' ? `VM ${r.vmid}` : `CT ${r.vmid}`),
+                        status: r.status,
+                        type: r.type
+                    });
+                });
+                if (vms.length > 0) method = 'cluster-api';
+            } catch (e) {
+                console.warn('[Sync] Cluster Resources API failed:', e);
+            }
+        }
+
+        // 4. Fallback: File System (Last Resort)
+        if (vms.length === 0) {
+            console.log('[Sync] APIs returned no VMs. Checking config files...');
+            try {
+                // QEMU
                 const qmFiles = await ssh.exec('ls /etc/pve/qemu-server/*.conf 2>/dev/null || echo ""', 5000);
                 qmFiles.split('\n').forEach(line => {
                     const match = line.match(/\/(\d+)\.conf$/);
                     if (match) {
                         const vmid = parseInt(match[1]);
-                        // Check if we already have it (from API)
-                        if (!vms.find(v => v.vmid === vmid)) {
-                            vms.push({ vmid, name: `VM-${vmid} (Config Found)`, status: 'unknown', type: 'qemu' });
-                        }
+                        vms.push({ vmid, name: `VM-${vmid} (Config Found)`, status: 'unknown', type: 'qemu' });
                     }
                 });
 
-                // LXC Configs
+                // LXC
                 const lxcFiles = await ssh.exec('ls /etc/pve/lxc/*.conf 2>/dev/null || echo ""', 5000);
                 lxcFiles.split('\n').forEach(line => {
                     const match = line.match(/\/(\d+)\.conf$/);
                     if (match) {
                         const vmid = parseInt(match[1]);
-                        if (!vms.find(v => v.vmid === vmid)) {
-                            vms.push({ vmid, name: `CT-${vmid} (Config Found)`, status: 'unknown', type: 'lxc' });
-                        }
+                        vms.push({ vmid, name: `CT-${vmid} (Config Found)`, status: 'unknown', type: 'lxc' });
                     }
                 });
+                if (vms.length > 0) method = 'files';
             } catch (err) {
                 console.error('[Sync] File fallback failed:', err);
             }
         }
 
         await ssh.disconnect();
-        console.log(`[Sync] Total VMs identified: ${vms.length}`);
+        console.log(`[Sync] Success via [${method}]. Found ${vms.length} items on ${server.name}`);
 
         // Update DB
         const insert = db.prepare(`
