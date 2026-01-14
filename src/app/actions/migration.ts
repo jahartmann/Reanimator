@@ -208,8 +208,9 @@ export async function startVMMigration(
 // Background Worker
 async function executeMigrationTask(taskId: number, vms: any[], options: { storage?: string, bridge?: string, autoVmid?: boolean }) {
     const log = (msg: string) => {
-        const ts = new Date().toISOString().split('T')[1].split('.')[0];
+        const ts = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         db.prepare('UPDATE migration_tasks SET log = log || ? WHERE id = ?').run(`[${ts}] ${msg}\n`, taskId);
+        console.log(`[Migration Task ${taskId}] ${msg}`);
     };
 
     try {

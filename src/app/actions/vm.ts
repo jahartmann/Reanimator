@@ -257,6 +257,7 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         // Execute directly with PTY (Pseudo-Terminal) to match manual shell execution
         // Use getExecStream to provide LIVE LOGGING
         const stream = await sourceSsh.getExecStream(nativeCmd, { pty: true });
+        log('[Migration] Native command stream started successfully');
 
         await new Promise<void>((resolve, reject) => {
             let buffer = '';
@@ -268,7 +269,7 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
                     const lines = buffer.split('\n');
                     buffer = lines.pop() || '';
                     lines.forEach(line => {
-                        if (line.trim()) log(line.trim());
+                        if (line.trim()) log(`[Native] ${line.trim()}`);
                     });
                 }
             };
@@ -277,6 +278,8 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
             stream.stderr.on('data', processChunk);
 
             stream.on('close', (code: number) => {
+                // Flush remaining buffer
+                if (buffer.trim()) log(`[Native] ${buffer.trim()}`);
                 if (code === 0) resolve();
                 else reject(new Error(`Native command exited with code ${code}`));
             });

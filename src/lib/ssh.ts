@@ -47,9 +47,10 @@ export class SSHClient {
                 host: this.config.host,
                 port: this.config.port,
                 username: this.config.username,
-                readyTimeout: 10000, // 10 seconds timeout for handshake
-                keepaliveInterval: 30000, // 30s to avoid saturation drops
-                keepaliveCountMax: 10     // Higher tolerance
+                readyTimeout: 15000, // 15 seconds timeout for handshake
+                keepaliveInterval: 20000, // 20s - more aggressive per agent guidelines
+                keepaliveCountMax: 15,     // Higher tolerance for saturated networks
+                debug: (msg: string) => console.log(`[SSH Debug] ${msg}`)
             };
 
             if (this.config.privateKey) {
