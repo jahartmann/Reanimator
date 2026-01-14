@@ -43,10 +43,10 @@ export async function runBulkNodeCommand(serverIds: number[], command: string): 
         let ssh;
         try {
             ssh = createSSHClient({
-                host: server.ssh_host || new URL(server.url).hostname,
-                port: server.ssh_port || 22,
-                username: server.ssh_user || 'root',
-                privateKey: server.ssh_key,
+                ssh_host: server.ssh_host || new URL(server.url).hostname,
+                ssh_port: server.ssh_port || 22,
+                ssh_user: server.ssh_user || 'root',
+                ssh_key: server.ssh_key,
             });
             await ssh.connect();
             const output = await ssh.exec(command, 30000); // 30s timeout
@@ -101,10 +101,10 @@ export async function runBulkVMCommand(vmIds: number[], command: string): Promis
         let ssh: any;
         try {
             ssh = createSSHClient({
-                host: server.ssh_host || new URL(server.url).hostname,
-                port: server.ssh_port || 22,
-                username: server.ssh_user || 'root',
-                privateKey: server.ssh_key,
+                ssh_host: server.ssh_host || new URL(server.url).hostname,
+                ssh_port: server.ssh_port || 22,
+                ssh_user: server.ssh_user || 'root',
+                ssh_key: server.ssh_key,
             });
             await ssh.connect();
 
