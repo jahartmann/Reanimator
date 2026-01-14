@@ -2,7 +2,7 @@ import Link from 'next/link';
 import db from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Server, Network, HardDrive, Cpu, Wifi, WifiOff, Clock, Gauge, Activity, Database, Box, Settings, Tags } from "lucide-react";
+import { ArrowLeft, Server, Network, HardDrive, Cpu, Wifi, WifiOff, Clock, Gauge, Activity, Database, Box, Settings, Tags, Folder } from "lucide-react";
 import { createSSHClient } from '@/lib/ssh';
 import { ServerVisualization } from '@/components/ui/ServerVisualization';
 import { getVMs } from '@/app/actions/vm';
@@ -90,6 +90,17 @@ export default async function ServerDetailPage({
                         </p>
                     </div>
                     <div className="ml-auto flex items-center gap-2">
+                        <Dialog>
+                            <DialogTrigger asChild>
+                                <Button variant="outline" size="sm">
+                                    <Tags className="h-4 w-4 mr-2" />
+                                    Tags
+                                </Button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-2xl">
+                                <TagManagement serverId={serverId} />
+                            </DialogContent>
+                        </Dialog>
                         <EditServerDialog server={{
                             ...server,
                             group_name: server.group_name || undefined,
@@ -257,6 +268,7 @@ export default async function ServerDetailPage({
                             />
                         </div>
 
+
                         {/* Storage Pools */}
                         {info.pools.length > 0 && (
                             <Card className="overflow-hidden border-muted/60">
@@ -311,8 +323,61 @@ export default async function ServerDetailPage({
                             </Card>
                         )}
 
+                        {/* File Systems */}
+                        {info.filesystems && info.filesystems.length > 0 && (
+                            <Card className="overflow-hidden border-muted/60 lg:col-span-2">
+                                <CardHeader className="bg-gradient-to-r from-blue-500/5 to-transparent">
+                                    <CardTitle className="flex items-center gap-2">
+                                        <Folder className="h-5 w-5 text-blue-500" />
+                                        Dateisysteme ({info.filesystems.length})
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent className="p-0">
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-sm">
+                                            <thead>
+                                                <tr className="border-b border-border/50 bg-muted/20 text-muted-foreground text-xs uppercase">
+                                                    <th className="px-4 py-3 text-left font-medium">Mountpoint</th>
+                                                    <th className="px-4 py-3 text-left font-medium">Filesystem</th>
+                                                    <th className="px-4 py-3 text-right font-medium">Size</th>
+                                                    <th className="px-4 py-3 text-right font-medium">Used</th>
+                                                    <th className="px-4 py-3 text-right font-medium">Avail</th>
+                                                    <th className="px-4 py-3 text-right font-medium">Usage</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-border/50">
+                                                {info.filesystems.map((fs, i) => {
+                                                    const usage = parseInt(fs.usePerc.replace('%', '')) || 0;
+                                                    return (
+                                                        <tr key={i} className="hover:bg-muted/5 transition-colors">
+                                                            <td className="px-4 py-3 font-mono text-xs">{fs.mount}</td>
+                                                            <td className="px-4 py-3 text-xs text-muted-foreground">{fs.filesystem}</td>
+                                                            <td className="px-4 py-3 text-right font-mono text-xs">{fs.size}</td>
+                                                            <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">{fs.used}</td>
+                                                            <td className="px-4 py-3 text-right font-mono text-xs text-green-500">{fs.avail}</td>
+                                                            <td className="px-4 py-3 text-right">
+                                                                <div className="flex items-center justify-end gap-2">
+                                                                    <span className={`text-xs font-medium ${usage > 90 ? 'text-red-500' : usage > 75 ? 'text-amber-500' : 'text-muted-foreground'}`}>{fs.usePerc}</span>
+                                                                    <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
+                                                                        <div
+                                                                            className={`h-full rounded-full ${usage > 90 ? 'bg-red-500' : usage > 75 ? 'bg-amber-500' : 'bg-green-500'}`}
+                                                                            style={{ width: `${Math.min(usage, 100)}%` }}
+                                                                        />
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        )}
+
                         {/* Disks */}
-                        <Card className={`overflow-hidden border-muted/60 ${info.pools.length === 0 ? 'lg:col-span-2' : ''}`}>
+                        <Card className={`overflow-hidden border-muted/60 ${info.pools.length === 0 ? 'lg:col-span-2' : ''} lg:col-span-2`}>
                             <CardHeader className="bg-gradient-to-r from-emerald-500/5 to-transparent">
                                 <CardTitle className="flex items-center gap-2">
                                     <HardDrive className="h-5 w-5 text-emerald-500" />
@@ -330,7 +395,7 @@ export default async function ServerDetailPage({
                                         {/* Physical Disks */}
                                         {info.disks.filter(d => d.type === 'disk' && (
                                             (d.transport && ['nvme', 'sata', 'sas', 'scsi', 'usb', 'ata', 'ide'].includes(d.transport.toLowerCase())) ||
-                                            (!d.name.startsWith('rbd') && !d.name.startsWith('dm-') && !d.name.startsWith('zd') && d.size.includes('T') || d.size.includes('G'))
+                                            (!d.name.startsWith('rbd') && !d.name.startsWith('dm-') && !d.name.startsWith('zd') && (d.size.includes('T') || d.size.includes('G')))
                                         )).length > 0 && (
                                                 <div>
                                                     <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
@@ -418,23 +483,6 @@ export default async function ServerDetailPage({
                                                     </div>
                                                 </div>
                                             )}
-                                    </div>
-                                )}
-
-                                {/* Partitions */}
-                                {info.disks.filter(d => d.type === 'part' && d.mountpoint !== '-').length > 0 && (
-                                    <div className="mt-4 pt-4 border-t">
-                                        <p className="text-xs font-medium text-muted-foreground mb-2">Gemountete Partitionen</p>
-                                        <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
-                                            {info.disks.filter(d => d.type === 'part' && d.mountpoint !== '-').map((part, i) => (
-                                                <div key={i} className="flex items-center gap-2 text-xs p-2 bg-muted/20 rounded">
-                                                    <span className="font-mono">{part.name}</span>
-                                                    <span className="text-muted-foreground">→</span>
-                                                    <span className="text-primary truncate">{part.mountpoint}</span>
-                                                    <span className="text-muted-foreground ml-auto">{part.size}</span>
-                                                </div>
-                                            ))}
-                                        </div>
                                     </div>
                                 )}
                             </CardContent>

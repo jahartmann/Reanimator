@@ -369,10 +369,52 @@ async function getPoolStats(ssh: any, debug: string[]) {
     return pools;
 }
 
+
+export interface Filesystem {
+    filesystem: string;
+    size: string;
+    used: string;
+    avail: string;
+    usePerc: string;
+    mount: string;
+}
+
+async function getFileSystems(ssh: any, debug: string[]) {
+    try {
+        const cmd = 'df -h | grep -vE "^Filesystem|tmpfs|cdrom" || echo ""';
+        debug.push(`[FS] Running: ${cmd}`);
+        const output = await ssh.exec(cmd, 10000);
+
+        const filesystems: Filesystem[] = [];
+        const lines = output.trim().split('\n');
+
+        for (const line of lines) {
+            const parts = line.split(/\s+/);
+            if (parts.length >= 6) {
+                // Filesystem Size Used Avail Use% Mounted on
+                // might be slight variations, but usually standard
+                filesystems.push({
+                    filesystem: parts[0],
+                    size: parts[1],
+                    used: parts[2],
+                    avail: parts[3],
+                    usePerc: parts[4],
+                    mount: parts[5] // rest handled? df usually keeps mount at end
+                });
+            }
+        }
+        return filesystems.filter(f => f.size && f.mount && f.mount !== '');
+    } catch (e: any) {
+        debug.push(`[FS] Error: ${e.message}`);
+        return [];
+    }
+}
+
 export async function getServerInfo(server: any): Promise<{
     networks: NetworkInterface[];
     disks: DiskInfo[];
     pools: StoragePool[];
+    filesystems: Filesystem[];
     system: SystemInfo;
     debug: string[];
 } | null> {
@@ -391,16 +433,14 @@ export async function getServerInfo(server: any): Promise<{
         await ssh.connect();
         debug.push('SSH Connected');
 
-        // Serialize fetching to avoid hitting MaxSessions (usually 10) on SSH server
-        // getSystemStats uses ~10 channels. The others use ~3.
-        // Running them all in parallel exceeds the default limit.
         const system = await getSystemStats(ssh);
         debug.push('System Stats Fetched');
 
-        const [networks, disks, pools] = await Promise.all([
+        const [networks, disks, pools, filesystems] = await Promise.all([
             getNetworkStats(ssh, debug),
             getDiskStats(ssh, debug),
-            getPoolStats(ssh, debug)
+            getPoolStats(ssh, debug),
+            getFileSystems(ssh, debug)
         ]);
 
         ssh.disconnect();
@@ -409,6 +449,7 @@ export async function getServerInfo(server: any): Promise<{
             networks,
             disks,
             pools,
+            filesystems,
             system,
             debug
         };
@@ -421,6 +462,7 @@ export async function getServerInfo(server: any): Promise<{
             networks: [],
             disks: [],
             pools: [],
+            filesystems: [],
             system: {
                 hostname: 'Connection Error', os: 'Error', kernel: '-', uptime: '-', cpu: '-', cpuCores: 0, cpuUsage: 0, memory: '-', memoryTotal: 0, memoryUsed: 0, memoryUsage: 0, loadAvg: '-'
             },
@@ -428,3 +470,4 @@ export async function getServerInfo(server: any): Promise<{
         };
     }
 }
+

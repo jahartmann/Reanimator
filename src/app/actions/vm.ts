@@ -844,6 +844,7 @@ export async function getVMs(serverId: number): Promise<VirtualMachine[]> {
         await ssh.connect();
         const nodeName = (await ssh.exec('hostname')).trim();
 
+        // 1. Get List via API (for Status, Uptime, basic usage - heavily cached/fast usually)
         const [qemuJson, lxcJson] = await Promise.all([
             ssh.exec(`pvesh get /nodes/${nodeName}/qemu --output-format json 2>/dev/null || echo "[]"`),
             ssh.exec(`pvesh get /nodes/${nodeName}/lxc --output-format json 2>/dev/null || echo "[]"`)
@@ -852,18 +853,83 @@ export async function getVMs(serverId: number): Promise<VirtualMachine[]> {
         const qemuList = JSON.parse(qemuJson);
         const lxcList = JSON.parse(lxcJson);
 
-        const mapVM = (vm: any, type: 'qemu' | 'lxc') => ({
-            vmid: vm.vmid.toString(),
-            name: vm.name,
-            status: vm.status,
-            type,
-            cpus: vm.cpus,
-            memory: vm.maxmem,
-            uptime: vm.uptime,
-            tags: vm.tags ? vm.tags.split(',') : [],
-            networks: [],
-            storages: []
+        // 2. Fetch Config Details via explicit file read (grep) for Performance
+        // We look for usage of storages (scsi/ide/sata/virtio/rootfs/mp) and networks (net)
+        // Format: /etc/pve/.../100.conf:net0: ...
+        const configPath = `/etc/pve/nodes/${nodeName}`;
+        const cmd = `grep -E "^(net|scsi|ide|sata|virtio|rootfs|mp)[0-9]*:" ${configPath}/qemu-server/*.conf ${configPath}/lxc/*.conf 2>/dev/null`;
+
+        const configOutput = await ssh.exec(cmd);
+
+        // Parse Config Data
+        const vmDetails: Record<string, { networks: Set<string>, storages: Set<string> }> = {};
+
+        configOutput.split('\n').forEach(line => {
+            if (!line.trim()) return;
+            // Line format: /path/to/100.conf:net0: virtio=...,bridge=vmbr0
+            const parts = line.split(':');
+            if (parts.length < 3) return;
+
+            // Extract VMID from path
+            const pathMsg = parts[0];
+            const vmidMatch = pathMsg.match(/\/(\d+)\.conf$/);
+            if (!vmidMatch) return;
+            const vmid = vmidMatch[1];
+
+            if (!vmDetails[vmid]) {
+                vmDetails[vmid] = { networks: new Set(), storages: new Set() };
+            }
+
+            const key = parts[1].trim(); // net0, scsi0...
+            const value = parts.slice(2).join(':').trim(); // rest of string
+
+            // Check Network (bridge, ip)
+            if (key.startsWith('net')) {
+                // bridge=vmbr0
+                const brMatch = value.match(/bridge=([^,]+)/);
+                if (brMatch) vmDetails[vmid].networks.add(brMatch[1]);
+
+                // IP (LXC only usually)
+                const ipMatch = value.match(/ip=([0-9a-fA-F.:/]+)/);
+                if (ipMatch && ipMatch[1] !== 'dhcp' && ipMatch[1] !== 'manual') {
+                    vmDetails[vmid].networks.add(ipMatch[1]);
+                }
+            }
+
+            // Check Storage (volume)
+            // scsi0: local-zfs:vm-100-disk-0
+            // rootfs: local-zfs:subvol-100-disk-0
+            if (key.match(/^(scsi|ide|sata|virtio|rootfs|mp)/)) {
+                // value often starts with "storage:volume" or just "/path"
+                // e.g. "local-zfs:vm-100-disk-0,size=..."
+                const storageMatch = value.match(/^([^:]+):/);
+                if (storageMatch) {
+                    const storage = storageMatch[1];
+                    // Filter out "cdrom", "none", absolute paths (bind mounts)
+                    if (storage !== 'cdrom' && storage !== 'none' && !storage.startsWith('/')) {
+                        vmDetails[vmid].storages.add(storage);
+                    }
+                }
+            }
         });
+
+        const mapVM = (vm: any, type: 'qemu' | 'lxc') => {
+            const vmid = vm.vmid.toString();
+            const details = vmDetails[vmid] || { networks: new Set(), storages: new Set() };
+
+            return {
+                vmid: vmid,
+                name: vm.name,
+                status: vm.status,
+                type,
+                cpus: vm.cpus,
+                memory: vm.maxmem,
+                uptime: vm.uptime,
+                tags: vm.tags ? vm.tags.split(',') : [],
+                networks: Array.from(details.networks),
+                storages: Array.from(details.storages)
+            };
+        };
 
         return [
             ...qemuList.map((x: any) => mapVM(x, 'qemu')),

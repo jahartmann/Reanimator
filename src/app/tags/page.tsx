@@ -219,7 +219,7 @@ export default function TagsPage() {
                                     {tags.map(tag => (
                                         <TableRow key={tag.id}>
                                             <TableCell>
-                                                <Badge style={{ backgroundColor: tag.color }} className="text-white hover:opacity-90">
+                                                <Badge style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }} className="hover:opacity-90">
                                                     {tag.name}
                                                 </Badge>
                                             </TableCell>
@@ -301,9 +301,37 @@ export default function TagsPage() {
                                                             <div className="min-w-0">
                                                                 <div className="font-medium truncate">{vm.name} <span className="text-muted-foreground">({vm.vmid})</span></div>
                                                                 <div className="text-xs text-muted-foreground flex gap-1 mt-1">
-                                                                    {vm.tags && vm.tags.map(t => (
-                                                                        <span key={t} className="bg-muted px-1 rounded">{t}</span>
-                                                                    ))}
+    // Helper for readable text color
+                                                                    function getContrastColor(hexColor: string) {
+        // Remove hash if present
+        const hex = hexColor.replace('#', '');
+                                                                    const r = parseInt(hex.substr(0, 2), 16);
+                                                                    const g = parseInt(hex.substr(2, 2), 16);
+                                                                    const b = parseInt(hex.substr(4, 2), 16);
+                                                                    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+        return (yiq >= 128) ? 'black' : 'white';
+    }
+
+                                                                    // ... (inside render)
+                                                                    // Update Badge style: color: getContrastColor(tag.color)
+
+                                                                    {vm.tags && vm.tags.map(t => {
+                                                                        // Find color from tags list or use default
+                                                                        const knownTag = tags.find(tag => tag.name === t);
+                                                                        const color = knownTag?.color || '#e5e7eb';
+                                                                        return (
+                                                                            <span
+                                                                                key={t}
+                                                                                className="px-1 rounded"
+                                                                                style={{
+                                                                                    backgroundColor: color,
+                                                                                    color: getContrastColor(color)
+                                                                                }}
+                                                                            >
+                                                                                {t}
+                                                                            </span>
+                                                                        )
+                                                                    })}
                                                                 </div>
                                                             </div>
                                                         </div>

@@ -187,15 +187,39 @@ export async function assignTagsToResource(
 
         if (!resource) return { success: false, message: 'Resource not found' };
 
+        if (!resource) return { success: false, message: 'Resource not found' };
+
         const { node, type } = resource; // type is 'qemu' or 'lxc'
 
-        // pvesh set /nodes/{node}/{type}/{vmid} -tags {tags}
-        // Note: qemu uses 'tags', lxc uses 'tags' too?
-        // Let's check docs or assume standard.
-        // For qemu: configuration option is 'tags'
-        // For lxc: configuration option is 'tags'
+        let cmd = '';
+        if (type === 'qemu') {
+            cmd = `qm set ${vmid} --tags "${tagString}"`;
+        } else if (type === 'lxc') {
+            cmd = `pct set ${vmid} --tags "${tagString}"`;
+        } else {
+            return { success: false, message: 'Unknown resource type: ' + type };
+        }
 
-        const cmd = `pvesh set /nodes/${node}/${type}/${vmid} -tags "${tagString}"`;
+        // Execute on the specific node? No, qm/pct need to run on the node where VM is? 
+        // Or cluster-wide? qm usually runs on any node in cluster if shared? 
+        // Actually qm needs to run on the node OR we use ssh to connect to THAT node.
+        // My SSH client connects to `server.ssh_host`. Is that the node?
+        // If `server` represents the cluster entry point, we might be on a different node.
+        // But `server` in DB usually is a specific node.
+        // If the VM is on another node (resource.node), we might need to forward the command?
+        // Simple fix: `ssh node "qm ..."` if we are on a different node.
+        // But wait, `pvesh` handles forwarding. `qm` might not.
+        // If I use `pvesh set /nodes/{node}/{type}/{vmid}/config -tags ...` it works via API.
+        // Let's try the API path properly first: `/nodes/{node}/qemu/{vmid}/config`.
+
+        // Retry with proper API path first (maybe I missed /config or something?)
+        // Docs: PUT /nodes/{node}/qemu/{vmid}/config
+        // Params: tags
+
+        cmd = `pvesh set /nodes/${node}/${type}/${vmid}/config -tags "${tagString}"`;
+
+        // Debug
+        console.log(`[Tags] Assigning to ${vmid} on ${node}: ${cmd}`);
         await ssh.exec(cmd);
 
         return { success: true };

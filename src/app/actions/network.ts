@@ -1,104 +1,223 @@
 'use server';
 
-import db from '@/lib/db';
 import { createSSHClient } from '@/lib/ssh';
+import db from '@/lib/db';
 
-// Get network interfaces config
-export async function getNetworkConfig(serverId: number): Promise<{ success: boolean; content?: string; message?: string }> {
-    const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId) as any;
-    if (!server) return { success: false, message: 'Server not found' };
+interface Server {
+    id: number;
+    ssh_host: string;
+    ssh_port: number;
+    ssh_user: string;
+    ssh_key: string;
+}
 
-    const ssh = createSSHClient({
-        ssh_host: server.ssh_host,
-        ssh_port: server.ssh_port,
-        ssh_user: server.ssh_user,
-        ssh_key: server.ssh_key
-    });
+function getServer(serverId: number): Server | null {
+    return db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId) as Server;
+}
+
+export interface NetworkInterface {
+    name: string;
+    type: 'eth' | 'bridge' | 'bond' | 'vlan' | 'unknown';
+    auto: boolean;
+    method: 'static' | 'manual' | 'dhcp' | 'loopback';
+    address?: string; // CIDR or plain
+    gateway?: string;
+    ports?: string[]; // bridge-ports or bond-slaves
+    bondMode?: string;
+    comments?: string[];
+    raw?: string[]; // Preserved raw lines for re-construction
+}
+
+export async function readNetworkConfig(serverId: number): Promise<{ content: string; interfaces: NetworkInterface[] }> {
+    const server = getServer(serverId);
+    if (!server) throw new Error('Server not found');
+
+    const ssh = createSSHClient(server);
+    await ssh.connect();
 
     try {
-        await ssh.connect();
         const content = await ssh.exec('cat /etc/network/interfaces');
-        return { success: true, content };
-    } catch (e) {
-        console.error('[Network] Fetch failed:', e);
-        return { success: false, message: String(e) };
+        const interfaces = parseInterfaces(content);
+        return { content, interfaces };
     } finally {
         await ssh.disconnect();
     }
 }
 
-// Save network configuration (write to file + backup)
-export async function saveNetworkConfig(serverId: number, content: string): Promise<{ success: boolean; message: string }> {
-    const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId) as any;
-    if (!server) return { success: false, message: 'Server not found' };
+export async function saveNetworkConfig(serverId: number, content: string): Promise<void> {
+    const server = getServer(serverId);
+    if (!server) throw new Error('Server not found');
 
-    const ssh = createSSHClient({
-        ssh_host: server.ssh_host,
-        ssh_port: server.ssh_port,
-        ssh_user: server.ssh_user,
-        ssh_key: server.ssh_key
-    });
+    const ssh = createSSHClient(server);
+    await ssh.connect();
 
     try {
-        await ssh.connect();
+        // Backup first
+        await ssh.exec('cp /etc/network/interfaces /etc/network/interfaces.bak.$(date +%s)');
 
-        // 1. Backup existing config
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        await ssh.exec(`cp /etc/network/interfaces /etc/network/interfaces.bak.${timestamp}`);
-
-        // 2. Write new config
-        // Using echo logic here requires careful escaping. 
-        // Better: write to temporary file then move.
-        const tempPath = `/tmp/interfaces.${timestamp}`;
-
-        // We need to escape single quotes for echo 'CONTENT' > file
-        const safeContent = content.replace(/'/g, "'\\''");
-
-        await ssh.exec(`echo '${safeContent}' > ${tempPath}`);
-
-        // 3. Move to destination (requires root/sudo)
-        await ssh.exec(`mv ${tempPath} /etc/network/interfaces`);
-
-        return { success: true, message: 'Configuration saved. Backup created.' };
-    } catch (e) {
-        console.error('[Network] Save failed:', e);
-        return { success: false, message: String(e) };
+        // Write new file (using echo/cat pattern to avoid quoting hell, simplified here)
+        // Safer: Upload via SFTP or base64
+        const base64 = Buffer.from(content).toString('base64');
+        await ssh.exec(`echo "${base64}" | base64 -d > /etc/network/interfaces`);
     } finally {
         await ssh.disconnect();
     }
 }
 
-// Apply network configuration (ifreload -a)
-export async function applyNetworkConfig(serverId: number): Promise<{ success: boolean; message: string }> {
-    const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId) as any;
-    if (!server) return { success: false, message: 'Server not found' };
+export async function applyNetworkConfig(serverId: number): Promise<string> {
+    const server = getServer(serverId);
+    if (!server) throw new Error('Server not found');
 
-    const ssh = createSSHClient({
-        ssh_host: server.ssh_host,
-        ssh_port: server.ssh_port,
-        ssh_user: server.ssh_user,
-        ssh_key: server.ssh_key
-    });
+    const ssh = createSSHClient(server);
+    await ssh.connect();
 
     try {
-        await ssh.connect();
+        // Try ifreload (ifupdown2)
+        try {
+            return await ssh.exec('ifreload -a');
+        } catch {
+            // Fallback ifupdown (dangerous over SSH if networking breaks!)
+            // usually proxmox has ifupdown2
+            return "ifreload failed. Is ifupdown2 installed?";
+        }
+    } finally {
+        await ssh.disconnect();
+    }
+}
 
-        // WARNING: This command can cut off connection
-        // We use ifreload -a which is standard in Proxmox (ifupdown2)
-        console.log(`[Network] Applying config on server ${server.name}`);
-        const output = await ssh.exec('ifreload -a', 10000); // 10s timeout
 
-        return { success: true, message: output || 'Network reloaded.' };
-    } catch (e) {
-        console.error('[Network] Apply failed:', e);
+export async function saveNetworkInterfaces(serverId: number, interfaces: NetworkInterface[]): Promise<void> {
+    const content = serializeInterfaces(interfaces);
+    await saveNetworkConfig(serverId, content);
+}
 
-        // If SSH fails here, it might mean the network changed successfully but connection dropped
-        // Or it broke completely.
-        return {
-            success: false,
-            message: `Execution finished with error (might be expected if IP changed): ${String(e)}`
+function serializeInterfaces(interfaces: NetworkInterface[]): string {
+    const lines: string[] = [
+        '# network interface settings; autogenerated by Proxhost',
+        '# Please do not edit this file directly if you rely on the Visual Editor.',
+        ''
+    ];
+
+    // Order: Loopback, Physical, Bonds, VLANs, Bridges
+    const sorted = [...interfaces].sort((a, b) => {
+        const score = (i: NetworkInterface) => {
+            if (i.method === 'loopback') return 0;
+            if (i.type === 'eth') return 1;
+            if (i.type === 'bond') return 2;
+            if (i.type === 'vlan') return 3;
+            if (i.type === 'bridge') return 4;
+            return 5;
         };
-    } finally {
-        await ssh.disconnect();
+        return score(a) - score(b);
+    });
+
+    for (const iface of sorted) {
+        if (iface.auto) {
+            lines.push(`auto ${iface.name}`);
+        }
+
+        // Method defaults to manual if not set
+        const method = iface.method || 'manual';
+        lines.push(`iface ${iface.name} inet ${method}`);
+
+        if (iface.address) {
+            lines.push(`    address ${iface.address}`);
+        }
+        if (iface.gateway) {
+            lines.push(`    gateway ${iface.gateway}`);
+        }
+
+        if (iface.type === 'bridge' && iface.ports) {
+            lines.push(`    bridge-ports ${iface.ports.join(' ')}`);
+            lines.push(`    bridge-stp off`);
+            lines.push(`    bridge-fd 0`);
+        }
+
+        if (iface.type === 'bond') {
+            if (iface.ports) lines.push(`    bond-slaves ${iface.ports.join(' ')}`);
+            if (iface.bondMode) lines.push(`    bond-mode ${iface.bondMode}`);
+            lines.push(`    bond-miimon 100`);
+            lines.push(`    bond-downdelay 200`);
+            lines.push(`    bond-updelay 200`);
+        }
+
+        // Add additional options from comment driven UI or keep raw?
+        // For now, we only support basic properties.
+
+        lines.push(''); // Empty line
     }
+
+    return lines.join('\n');
 }
+
+function parseInterfaces(content: string): NetworkInterface[] {
+    const lines = content.split('\n');
+    const interfaces: NetworkInterface[] = [];
+    let current: NetworkInterface | null = null;
+
+    const finalizeCurrent = () => {
+        if (current) {
+            // Detect type logic
+            if (current.ports && current.name.startsWith('vmbr')) current.type = 'bridge';
+            else if (current.ports && current.name.startsWith('bond') || current.bondMode) current.type = 'bond';
+            else if (current.name.includes('.')) current.type = 'vlan';
+            else if (current.name.startsWith('eth') || current.name.startsWith('en')) current.type = 'eth';
+            // Default to eth if unknown physical? or unknown
+
+            interfaces.push(current);
+        }
+    };
+
+    lines.forEach(line => {
+        const trim = line.trim();
+        // Keep comments? Not in this version.
+        if (!trim || trim.startsWith('#')) return;
+
+        if (trim.startsWith('auto ')) {
+            const name = trim.split(/\s+/)[1];
+            let iface = interfaces.find(i => i.name === name) || (current?.name === name ? current : null);
+            if (!iface) {
+                if (current && current.name !== name) finalizeCurrent();
+                // Check if already in list (from iface line before auto?)
+                const existing = interfaces.find(i => i.name === name);
+                if (existing) {
+                    current = existing;
+                } else {
+                    current = { name, type: 'unknown', auto: true, method: 'manual', raw: [] };
+                }
+            }
+            if (current) current.auto = true;
+        } else if (trim.startsWith('iface ')) {
+            const parts = trim.split(/\s+/);
+            const name = parts[1];
+            const method = parts[3] as any;
+
+            const existing = interfaces.find(i => i.name === name);
+            if (existing) {
+                current = existing;
+            } else {
+                if (current && current.name !== name) finalizeCurrent();
+                current = { name, type: 'unknown', auto: false, method: 'manual', raw: [] };
+            }
+
+            if (current) {
+                current.method = method;
+                current.raw?.push(line);
+            }
+        } else if (current) {
+            current.raw?.push(line);
+            if (trim.startsWith('address ')) current.address = trim.split(/\s+/)[1];
+            if (trim.startsWith('gateway ')) current.gateway = trim.split(/\s+/)[1];
+            if (trim.startsWith('bridge-ports ')) current.ports = trim.replace('bridge-ports', '').trim().split(/\s+/);
+            if (trim.startsWith('bridge_ports ')) current.ports = trim.replace('bridge_ports', '').trim().split(/\s+/);
+            if (trim.startsWith('slaves ')) current.ports = trim.replace('slaves', '').trim().split(/\s+/);
+            if (trim.startsWith('bond-slaves ')) current.ports = trim.replace('bond-slaves', '').trim().split(/\s+/);
+            if (trim.startsWith('bond_mode ')) current.bondMode = trim.split(/\s+/)[1];
+            if (trim.startsWith('bond-mode ')) current.bondMode = trim.split(/\s+/)[1];
+        }
+    });
+
+    finalizeCurrent();
+    return interfaces;
+}
+
