@@ -1,8 +1,24 @@
-// ... (imports)
-// Add Tooltip import or use simple conditional rendering for details overlay
-// We reuse the existing Overlay concept but feed it specific data
+'use client';
 
-// ... (interfaces)
+import { useState } from 'react';
+import { motion, AnimatePresence } from "framer-motion";
+import { Cpu, MemoryStick, HardDrive, Network, Database } from 'lucide-react';
+
+// Simple UsageBar component since it was missing
+const UsageBar = ({ usage, color, label }: { usage: number, color: string, label: string }) => (
+    <div className="w-full">
+        <div className="flex justify-between text-[10px] mb-1">
+            <span className="text-zinc-400">{label}</span>
+            <span className="text-zinc-300">{usage.toFixed(1)}%</span>
+        </div>
+        <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
+            <div
+                className="h-full transition-all duration-500"
+                style={{ width: `${Math.min(usage, 100)}%`, backgroundColor: color }}
+            />
+        </div>
+    </div>
+);
 
 import { SystemInfo, NetworkInterface, DiskInfo, StoragePool } from '@/app/actions/monitoring';
 
