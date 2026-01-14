@@ -20,59 +20,52 @@ export async function syncServerVMs(serverId: number) {
     try {
         await ssh.connect();
 
-        // 1. Get Qemu VMs
-        const qmList = await ssh.exec('/usr/sbin/qm list --full 2>/dev/null || echo ""');
-        console.log('[Sync] Raw QM List:', qmList);
+        // 1. Get Node Name (required for pvesh API calls)
+        const nodeName = (await ssh.exec('hostname', 5000)).trim();
+        console.log(`[Sync] Connected to ${server.name} (Node: ${nodeName})`);
 
-        // 2. Get LXC Containers
-        const lxcList = await ssh.exec('/usr/sbin/pct list 2>/dev/null || echo ""');
-        console.log('[Sync] Raw LXC List:', lxcList);
+        // 2. Get VMs and CTs via API (JSON) - Much more robust than qm list parsing
+        // /nodes/{node}/qemu and /nodes/{node}/lxc
+
+        // QEMU
+        const qmJson = await ssh.exec(`pvesh get /nodes/${nodeName}/qemu --output-format json 2>/dev/null`, 10000);
+        const lxcJson = await ssh.exec(`pvesh get /nodes/${nodeName}/lxc --output-format json 2>/dev/null`, 10000);
 
         await ssh.disconnect();
 
-        // Parse Output
         const vms: any[] = [];
 
         // Parse Qemu
-        qmList.split('\n').slice(1).forEach(line => {
-            const parts = line.trim().split(/\s+/);
-            if (parts.length < 3) return;
-            const vmid = parseInt(parts[0]);
-            if (isNaN(vmid)) return;
-
-            // QM List: VMID NAME STATUS ...
-            vms.push({
-                vmid: vmid,
-                name: parts[1],
-                status: parts[2],
-                type: 'qemu'
+        try {
+            const qmList = JSON.parse(qmJson);
+            qmList.forEach((vm: any) => {
+                vms.push({
+                    vmid: vm.vmid,
+                    name: vm.name,
+                    status: vm.status,
+                    type: 'qemu'
+                });
             });
-        });
+        } catch (e) {
+            console.error('[Sync] Failed to parse QEMU JSON', e);
+        }
 
         // Parse LXC
-        lxcList.split('\n').slice(1).forEach(line => {
-            const parts = line.trim().split(/\s+/);
-            if (parts.length < 2) return;
-            const vmid = parseInt(parts[0]);
-            if (isNaN(vmid)) return;
-
-            // PCT List: VMID Status Lock Name
-            // Beware: Lock is optional.
-            // If 4 parts: VMID Status Lock Name
-            // If 3 parts: VMID Status Name
-
-            let status = parts[1];
-            let name = parts.length >= 4 ? parts[3] : parts[2];
-
-            if (!name) name = `CT-${vmid}`;
-
-            vms.push({
-                vmid: vmid,
-                status: status,
-                name: name,
-                type: 'lxc'
+        try {
+            const lxcList = JSON.parse(lxcJson);
+            lxcList.forEach((ct: any) => {
+                vms.push({
+                    vmid: ct.vmid,
+                    name: ct.name,
+                    status: ct.status,
+                    type: 'lxc'
+                });
             });
-        });
+        } catch (e) {
+            console.error('[Sync] Failed to parse LXC JSON', e);
+        }
+
+        console.log(`[Sync] Found ${vms.length} VMs/CTs on ${server.name}`);
 
         // Update DB
         const insert = db.prepare(`
