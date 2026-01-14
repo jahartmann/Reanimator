@@ -2,6 +2,7 @@
 
 import db from '@/lib/db';
 import { createSSHClient } from '@/lib/ssh';
+import { getServers } from './server';
 
 // server actions for managing tags
 export interface Tag {
@@ -204,4 +205,61 @@ export async function assignTagsToResource(
     } finally {
         await ssh.disconnect();
     }
+}
+
+// Scan all tags from all servers (VMs/LXCs)
+export async function scanAllClusterTags(): Promise<{ success: boolean; message: string; count: number }> {
+    const servers = await getServers();
+    const foundTags = new Set<string>();
+    let errorCount = 0;
+
+    for (const server of servers) {
+        try {
+            const ssh = createSSHClient({
+                ssh_host: server.ssh_host,
+                ssh_port: server.ssh_port,
+                ssh_user: server.ssh_user,
+                ssh_key: server.ssh_key
+            });
+            await ssh.connect();
+
+            // Get all resources to extract tags
+            const output = await ssh.exec('pvesh get /cluster/resources --output-format json');
+            const resources = JSON.parse(output);
+
+            resources.forEach((r: any) => {
+                if (r.tags) {
+                    const tList = r.tags.split(',').map((t: string) => t.trim()).filter((t: string) => t);
+                    tList.forEach((t: string) => foundTags.add(t));
+                }
+            });
+
+            await ssh.disconnect();
+        } catch (e) {
+            console.error(`Error scanning tags on server ${server.name}:`, e);
+            errorCount++;
+        }
+    }
+
+    // Sync found tags to DB (if not exist)
+    const insertStmt = db.prepare('INSERT OR IGNORE INTO tags (name, color) VALUES (?, ?)');
+    let newCount = 0;
+    const existingTags = new Set((db.prepare('SELECT name FROM tags').all() as Tag[]).map(t => t.name));
+
+    const defaultColors = ['#FF6B6B', '#4ECDC4', '#FFE66D', '#1A535C', '#F7FFF7'];
+
+    for (const tagName of Array.from(foundTags)) {
+        if (!existingTags.has(tagName)) {
+            // Assign random default color
+            const color = defaultColors[Math.floor(Math.random() * defaultColors.length)];
+            insertStmt.run(tagName, color);
+            newCount++;
+        }
+    }
+
+    return {
+        success: true,
+        message: `Scanned ${servers.length} servers. Found ${foundTags.size} unique tags. Added ${newCount} new tags. Errors on ${errorCount} servers.`,
+        count: newCount
+    };
 }

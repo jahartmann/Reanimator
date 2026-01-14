@@ -1,34 +1,42 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { getTags, createTag, deleteTag, scanAllClusterTags, Tag, pushTagsToServer, assignTagsToResource } from '@/app/actions/tags';
+import { getServers, Server } from '@/app/actions/server';
+import { getVMs, VirtualMachine } from '@/app/actions/vm';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Tag as TagIcon, Plus, Trash2, RefreshCw, Server, Loader2, Upload, Download, CheckCircle2, AlertTriangle } from "lucide-react";
-import { Tag, getTags, createTag, deleteTag, pushTagsToServer, syncTagsFromProxmox } from '@/app/actions/tags';
-import { getServers } from '@/app/actions/server';
-
-interface ServerInfo {
-    id: number;
-    name: string;
-}
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from "@/components/ui/table";
+import { Loader2, Plus, RefreshCw, Trash2, Tag as TagIcon, Server as ServerIcon, Calculator } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function TagsPage() {
     const [tags, setTags] = useState<Tag[]>([]);
-    const [servers, setServers] = useState<ServerInfo[]>([]);
-    const [selectedServerId, setSelectedServerId] = useState<string>('');
+    const [loading, setLoading] = useState(true);
+    const [scanning, setScanning] = useState(false);
 
+    // Create Tag
     const [newTagName, setNewTagName] = useState('');
     const [newTagColor, setNewTagColor] = useState('#3b82f6');
 
-    const [loading, setLoading] = useState(true);
-    const [pushing, setPushing] = useState(false);
-    const [syncing, setSyncing] = useState(false);
-    const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+    // Assignment
+    const [servers, setServers] = useState<Server[]>([]);
+    const [allVMs, setAllVMs] = useState<(VirtualMachine & { serverId: number, serverName: string })[]>([]);
+    const [selectedVMs, setSelectedVMs] = useState<Set<string>>(new Set()); // "serverId-vmid"
+    const [selectedTags, setSelectedTags] = useState<Set<number>>(new Set());
+    const [assigning, setAssigning] = useState(false);
 
     useEffect(() => {
         loadData();
@@ -37,15 +45,25 @@ export default function TagsPage() {
     async function loadData() {
         setLoading(true);
         try {
-            const [tagsData, serversData] = await Promise.all([
+            const [tData, sData] = await Promise.all([
                 getTags(),
                 getServers()
             ]);
-            setTags(tagsData);
-            setServers(serversData.map(s => ({ id: s.id, name: s.name })));
-            if (serversData.length > 0 && !selectedServerId) {
-                setSelectedServerId(serversData[0].id.toString());
-            }
+            setTags(tData);
+            setServers(sData);
+
+            // Fetch VMs for all servers
+            const vmPromises = sData.map(async s => {
+                try {
+                    const vms = await getVMs(s.id);
+                    return vms.map(vm => ({ ...vm, serverId: s.id, serverName: s.name }));
+                } catch {
+                    return [];
+                }
+            });
+            const vmsFlat = (await Promise.all(vmPromises)).flat();
+            setAllVMs(vmsFlat);
+
         } catch (e) {
             console.error(e);
         } finally {
@@ -53,245 +71,263 @@ export default function TagsPage() {
         }
     }
 
-    async function handleCreate() {
+    async function handleScan() {
+        setScanning(true);
+        try {
+            const res = await scanAllClusterTags();
+            if (res.success) {
+                alert(res.message);
+                const tData = await getTags();
+                setTags(tData);
+            }
+        } catch (e) {
+            alert('Scan failed');
+        } finally {
+            setScanning(false);
+        }
+    }
+
+    async function handleCreateTag() {
         if (!newTagName) return;
         try {
             const res = await createTag(newTagName, newTagColor);
             if (res.success) {
                 setNewTagName('');
-                setMessage({ type: 'success', text: `Tag "${newTagName}" erstellt` });
-                loadData();
+                loadData(); // Reload tags
             } else {
-                setMessage({ type: 'error', text: res.error || 'Fehler' });
+                alert(res.error);
             }
         } catch (e) {
-            setMessage({ type: 'error', text: String(e) });
+            console.error(e);
         }
     }
 
-    async function handleDelete(id: number) {
-        if (!confirm('Tag wirklich löschen?')) return;
+    async function handleDeleteTag(id: number) {
+        if (!confirm('Tag löschen?')) return;
         await deleteTag(id);
-        setMessage({ type: 'success', text: 'Tag gelöscht' });
         loadData();
     }
 
-    async function handlePush() {
-        if (!selectedServerId || tags.length === 0) return;
-        setPushing(true);
-        setMessage(null);
-        try {
-            const res = await pushTagsToServer(parseInt(selectedServerId), tags);
-            if (res.success) {
-                setMessage({ type: 'success', text: `${tags.length} Tags zu Server gepusht` });
-            } else {
-                setMessage({ type: 'error', text: res.message || 'Push fehlgeschlagen' });
-            }
-        } catch (e) {
-            setMessage({ type: 'error', text: String(e) });
-        } finally {
-            setPushing(false);
-        }
+    const toggleVM = (key: string) => {
+        const next = new Set(selectedVMs);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        setSelectedVMs(next);
+    };
+
+    const toggleTagSelection = (id: number) => {
+        const next = new Set(selectedTags);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setSelectedTags(next);
     }
 
-    async function handleSync() {
-        if (!selectedServerId) return;
-        setSyncing(true);
-        setMessage(null);
-        try {
-            const res = await syncTagsFromProxmox(parseInt(selectedServerId));
-            if (res.success) {
-                setMessage({ type: 'success', text: res.message || 'Synchronisiert' });
-                loadData();
-            } else {
-                setMessage({ type: 'error', text: res.message || 'Sync fehlgeschlagen' });
+    async function handleAssign() {
+        if (selectedVMs.size === 0 || selectedTags.size === 0) return alert('Bitte VMs und Tags wählen');
+        if (!confirm(`${selectedTags.size} Tags an ${selectedVMs.size} VMs zuweisen?`)) return;
+
+        setAssigning(true);
+        const tagNames = tags.filter(t => selectedTags.has(t.id)).map(t => t.name);
+
+        // Group by server
+        const tasks: { serverId: number, vmid: string }[] = [];
+        selectedVMs.forEach(key => {
+            const [sid, vmid] = key.split('-');
+            tasks.push({ serverId: parseInt(sid), vmid });
+        });
+
+        const results = [];
+        for (const task of tasks) {
+            try {
+                await assignTagsToResource(task.serverId, task.vmid, tagNames);
+                results.push(`OK: ${task.vmid}`);
+            } catch (e) {
+                results.push(`Error: ${task.vmid}`);
             }
-        } catch (e) {
-            setMessage({ type: 'error', text: String(e) });
-        } finally {
-            setSyncing(false);
         }
+
+        // Push colors to servers too?
+        // Maybe optional.
+
+        setAssigning(false);
+        alert('Zugewiesen!\n' + results.join('\n'));
+        setSelectedVMs(new Set());
+        setSelectedTags(new Set());
     }
 
-    const selectedServerName = servers.find(s => s.id.toString() === selectedServerId)?.name || '';
+    // Group VMs by server for display
+    const vmsByServer = servers.reduce((acc, s) => {
+        acc[s.id] = allVMs.filter(v => v.serverId === s.id);
+        return acc;
+    }, {} as Record<number, typeof allVMs>);
+
 
     return (
-        <div className="space-y-6">
-            <div>
-                <h1 className="text-3xl font-bold">Tags Management</h1>
-                <p className="text-muted-foreground">Zentrale Verwaltung von Tags für alle Server</p>
+        <div className="container mx-auto py-8">
+            <div className="flex justify-between items-center mb-8">
+                <div>
+                    <h1 className="text-3xl font-bold">Tag Management</h1>
+                    <p className="text-muted-foreground">Zentrale Verwaltung aller Proxmox Tags</p>
+                </div>
+                <Button onClick={handleScan} disabled={scanning} variant="outline">
+                    <RefreshCw className={`mr-2 h-4 w-4 ${scanning ? 'animate-spin' : ''}`} />
+                    Cluster Scan
+                </Button>
             </div>
 
-            {/* Feedback Message */}
-            {message && (
-                <Alert className={message.type === 'success' ? 'border-green-500/50 bg-green-500/10' : 'border-red-500/50 bg-red-500/10'}>
-                    {message.type === 'success' ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <AlertTriangle className="h-4 w-4 text-red-500" />}
-                    <AlertDescription className={message.type === 'success' ? 'text-green-700' : 'text-red-700'}>
-                        {message.text}
-                    </AlertDescription>
-                </Alert>
-            )}
+            <Tabs defaultValue="manage">
+                <TabsList>
+                    <TabsTrigger value="manage">Tags Verwalten</TabsTrigger>
+                    <TabsTrigger value="assign">Zuweisen</TabsTrigger>
+                </TabsList>
 
-            <div className="grid gap-6 md:grid-cols-3">
-                {/* Create Tag */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Neuen Tag erstellen</CardTitle>
-                        <CardDescription>Definieren Sie Name und Farbe</CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium">Name</label>
-                            <Input
-                                placeholder="z.B. Production"
-                                value={newTagName}
-                                onChange={e => setNewTagName(e.target.value)}
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium">Farbe</label>
-                            <div className="flex gap-2">
-                                <Input
-                                    type="color"
-                                    className="w-12 p-1 h-10"
-                                    value={newTagColor}
-                                    onChange={e => setNewTagColor(e.target.value)}
-                                />
-                                <Input
-                                    value={newTagColor}
-                                    onChange={e => setNewTagColor(e.target.value)}
-                                    className="font-mono"
-                                />
+                {/* MANAGE TAB */}
+                <TabsContent value="manage" className="space-y-6">
+                    <Card>
+                        <CardHeader><CardTitle>Neuen Tag erstellen</CardTitle></CardHeader>
+                        <CardContent>
+                            <div className="flex gap-4 items-end">
+                                <div className="space-y-2 flex-1">
+                                    <Label>Name</Label>
+                                    <Input value={newTagName} onChange={e => setNewTagName(e.target.value)} placeholder="z.B. production" />
+                                </div>
+                                <div className="space-y-2 w-32">
+                                    <Label>Farbe</Label>
+                                    <div className="flex gap-2">
+                                        <Input type="color" value={newTagColor} onChange={e => setNewTagColor(e.target.value)} className="w-12 p-1" />
+                                        <Input value={newTagColor} onChange={e => setNewTagColor(e.target.value)} />
+                                    </div>
+                                </div>
+                                <Button onClick={handleCreateTag} disabled={!newTagName}>
+                                    <Plus className="mr-2 h-4 w-4" /> Erstellen
+                                </Button>
                             </div>
-                        </div>
-                        <div className="pt-2">
-                            <Button className="w-full" onClick={handleCreate} disabled={!newTagName}>
-                                <Plus className="h-4 w-4 mr-2" />
-                                Erstellen
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
+                        </CardContent>
+                    </Card>
 
-                {/* Server Sync Card */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <Server className="h-5 w-5" />
-                            Server Synchronisation
-                        </CardTitle>
-                        <CardDescription>Tags mit Proxmox synchronisieren</CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium">Server auswählen</label>
-                            <Select value={selectedServerId} onValueChange={setSelectedServerId}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Server wählen..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {servers.map(s => (
-                                        <SelectItem key={s.id} value={s.id.toString()}>
-                                            {s.name}
-                                        </SelectItem>
+                    <Card>
+                        <CardContent className="p-0">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Tag</TableHead>
+                                        <TableHead>Farbe</TableHead>
+                                        <TableHead className="text-right">Aktionen</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {tags.map(tag => (
+                                        <TableRow key={tag.id}>
+                                            <TableCell>
+                                                <Badge style={{ backgroundColor: tag.color }} className="text-white hover:opacity-90">
+                                                    {tag.name}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-4 h-4 rounded-full border" style={{ backgroundColor: tag.color }} />
+                                                    <span className="font-mono text-xs">{tag.color}</span>
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                <Button variant="ghost" size="sm" onClick={() => handleDeleteTag(tag.id)}>
+                                                    <Trash2 className="h-4 w-4 text-red-500" />
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
                                     ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 pt-2">
-                            <Button
-                                variant="outline"
-                                onClick={handleSync}
-                                disabled={!selectedServerId || syncing}
-                            >
-                                {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-                                Abrufen
-                            </Button>
-                            <Button
-                                onClick={handlePush}
-                                disabled={!selectedServerId || pushing || tags.length === 0}
-                            >
-                                {pushing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
-                                Pushen
-                            </Button>
-                        </div>
-                        {selectedServerName && (
-                            <p className="text-xs text-muted-foreground text-center">
-                                Ausgewählt: <strong>{selectedServerName}</strong>
-                            </p>
-                        )}
-                    </CardContent>
-                </Card>
+                                    {tags.length === 0 && (
+                                        <TableRow>
+                                            <TableCell colSpan={3} className="text-center py-8 text-muted-foreground">
+                                                Keine Tags gefunden. Starten Sie einen Scan.
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
 
-                {/* Info Card */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Hinweis</CardTitle>
-                    </CardHeader>
-                    <CardContent className="text-sm text-muted-foreground space-y-2">
-                        <p><strong>Abrufen:</strong> Lädt Tags vom ausgewählten Proxmox Server und speichert sie lokal.</p>
-                        <p><strong>Pushen:</strong> Schreibt alle lokalen Tags in die Datacenter-Config des Servers.</p>
-                        <p className="text-amber-600">⚠️ Push überschreibt vorhandene Tag-Styles!</p>
-                    </CardContent>
-                </Card>
-            </div>
-
-            {/* Tag List */}
-            <Card>
-                <CardHeader className="flex flex-row items-center justify-between">
-                    <CardTitle>Verfügbare Tags ({tags.length})</CardTitle>
-                    <Button variant="ghost" size="sm" onClick={loadData} disabled={loading}>
-                        <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                    </Button>
-                </CardHeader>
-                <CardContent>
-                    {loading ? (
-                        <div className="flex justify-center py-8">
-                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                        </div>
-                    ) : tags.length === 0 ? (
-                        <div className="text-center py-8 text-muted-foreground">
-                            <TagIcon className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                            <p>Keine Tags definiert</p>
-                            <p className="text-xs mt-1">Erstellen Sie Tags oder rufen Sie sie von einem Server ab.</p>
-                        </div>
-                    ) : (
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Vorschau</TableHead>
-                                    <TableHead>Name</TableHead>
-                                    <TableHead>Farbe (Hex)</TableHead>
-                                    <TableHead className="text-right">Aktionen</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {tags.map(tag => (
-                                    <TableRow key={tag.id}>
-                                        <TableCell>
-                                            <Badge style={{ backgroundColor: `#${tag.color}`, color: '#fff' }}>
+                {/* ASSIGN TAB */}
+                <TabsContent value="assign" className="space-y-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        {/* 1. Select Tags */}
+                        <Card className="lg:col-span-1 h-[600px] flex flex-col">
+                            <CardHeader><CardTitle>1. Tags wählen</CardTitle></CardHeader>
+                            <CardContent className="flex-1 overflow-auto p-4 pt-0">
+                                <div className="space-y-2">
+                                    {tags.map(tag => (
+                                        <div
+                                            key={tag.id}
+                                            className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedTags.has(tag.id) ? 'border-primary bg-primary/5' : 'hover:bg-muted'}`}
+                                            onClick={() => toggleTagSelection(tag.id)}
+                                        >
+                                            <Checkbox checked={selectedTags.has(tag.id)} />
+                                            <Badge style={{ backgroundColor: tag.color }} className="text-white">
                                                 {tag.name}
                                             </Badge>
-                                        </TableCell>
-                                        <TableCell className="font-medium">{tag.name}</TableCell>
-                                        <TableCell className="font-mono text-muted-foreground">#{tag.color}</TableCell>
-                                        <TableCell className="text-right">
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="text-red-500"
-                                                onClick={() => handleDelete(tag.id)}
-                                            >
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    )}
-                </CardContent>
-            </Card>
+                                        </div>
+                                    ))}
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* 2. Select VMs */}
+                        <Card className="lg:col-span-2 h-[600px] flex flex-col">
+                            <CardHeader className="flex flex-row items-center justify-between">
+                                <CardTitle>2. VMs wählen</CardTitle>
+                                <div className="text-sm text-muted-foreground">
+                                    {selectedVMs.size} ausgewählt
+                                </div>
+                            </CardHeader>
+                            <CardContent className="flex-1 overflow-auto p-4 pt-0">
+                                <div className="space-y-6">
+                                    {servers.map(server => (
+                                        <div key={server.id}>
+                                            <h3 className="flex items-center gap-2 font-medium mb-2 sticky top-0 bg-background py-2 z-10">
+                                                <ServerIcon className="h-4 w-4" /> {server.name}
+                                            </h3>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pl-4">
+                                                {vmsByServer[server.id]?.map(vm => {
+                                                    const key = `${server.id}-${vm.vmid}`;
+                                                    return (
+                                                        <div
+                                                            key={key}
+                                                            className={`flex items-center gap-3 p-2 rounded border cursor-pointer text-sm ${selectedVMs.has(key) ? 'border-primary bg-primary/5' : 'hover:bg-muted'}`}
+                                                            onClick={() => toggleVM(key)}
+                                                        >
+                                                            <Checkbox checked={selectedVMs.has(key)} />
+                                                            <div className="min-w-0">
+                                                                <div className="font-medium truncate">{vm.name} <span className="text-muted-foreground">({vm.vmid})</span></div>
+                                                                <div className="text-xs text-muted-foreground flex gap-1 mt-1">
+                                                                    {vm.tags && vm.tags.map(t => (
+                                                                        <span key={t} className="bg-muted px-1 rounded">{t}</span>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )
+                                                })}
+                                                {(!vmsByServer[server.id] || vmsByServer[server.id].length === 0) && (
+                                                    <p className="text-sm text-muted-foreground italic">Keine VMs gefunden API Error?</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
+
+                    <div className="flex justify-end pt-4 border-t">
+                        <Button size="lg" onClick={handleAssign} disabled={selectedTags.size === 0 || selectedVMs.size === 0 || assigning}>
+                            {assigning ? <Loader2 className="animate-spin mr-2" /> : <TagIcon className="mr-2" />}
+                            Tags Zuweisen
+                        </Button>
+                    </div>
+                </TabsContent>
+            </Tabs>
         </div>
     );
 }

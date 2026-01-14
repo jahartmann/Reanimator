@@ -93,21 +93,7 @@ export default async function ServerDetailPage({
                         <EditServerDialog server={{
                             ...server,
                             group_name: server.group_name || undefined,
-                            // ensure undefined types match what component expects if needed, 
-                            // but 'as any' or explicit spread works.
-                            // Actually Interface matches closely.
                         }} />
-                        <Dialog>
-                            <DialogTrigger asChild>
-                                <Button variant="outline" size="sm">
-                                    <Tags className="h-4 w-4 mr-2" />
-                                    Tags
-                                </Button>
-                            </DialogTrigger>
-                            <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-                                <TagManagement serverId={serverId} />
-                            </DialogContent>
-                        </Dialog>
                     </div>
                 </div>
             </div>

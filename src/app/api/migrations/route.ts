@@ -3,6 +3,9 @@ import db from '@/lib/db';
 import { getAllMigrationTasks, startServerMigration, startVMMigration } from '@/app/actions/migration';
 import { getVMs } from '@/app/actions/vm';
 
+export const dynamic = 'force-dynamic';
+
+
 export async function GET() {
     try {
         const tasks = await getAllMigrationTasks();
