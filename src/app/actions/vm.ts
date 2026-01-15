@@ -17,6 +17,7 @@ export interface VirtualMachine {
     tags?: string[];
     networks?: string[];
     storages?: string[];
+    vlan?: number;
 }
 
 export interface MigrationOptions {
@@ -972,7 +973,7 @@ export async function getVMs(serverId: number): Promise<VirtualMachine[]> {
         }
 
         // 3. Fetch Config Details (for storages and networks)
-        const vmDetails: Record<string, { networks: Set<string>, storages: Set<string> }> = {};
+        const vmDetails: Record<string, { networks: Set<string>, storages: Set<string>, vlan?: number }> = {};
 
         try {
             const configPath = `/etc/pve/nodes/${nodeName}`;
@@ -990,7 +991,7 @@ export async function getVMs(serverId: number): Promise<VirtualMachine[]> {
                 const vmid = vmidMatch[1];
 
                 if (!vmDetails[vmid]) {
-                    vmDetails[vmid] = { networks: new Set(), storages: new Set() };
+                    vmDetails[vmid] = { networks: new Set(), storages: new Set(), vlan: undefined };
                 }
 
                 const key = parts[1].trim();
@@ -999,6 +1000,9 @@ export async function getVMs(serverId: number): Promise<VirtualMachine[]> {
                 if (key.startsWith('net')) {
                     const brMatch = value.match(/bridge=([^,]+)/);
                     if (brMatch) vmDetails[vmid].networks.add(brMatch[1]);
+
+                    const tagMatch = value.match(/tag=(\d+)/);
+                    if (tagMatch) vmDetails[vmid].vlan = parseInt(tagMatch[1]);
 
                     const ipMatch = value.match(/ip=([0-9a-fA-F.:/]+)/);
                     if (ipMatch && ipMatch[1] !== 'dhcp' && ipMatch[1] !== 'manual') {
@@ -1034,7 +1038,8 @@ export async function getVMs(serverId: number): Promise<VirtualMachine[]> {
                 uptime: vm.uptime,
                 tags: vm.tags ? (typeof vm.tags === 'string' ? vm.tags.split(',') : vm.tags) : [],
                 networks: Array.from(details.networks),
-                storages: Array.from(details.storages)
+                storages: Array.from(details.storages),
+                vlan: details.vlan
             };
         };
 

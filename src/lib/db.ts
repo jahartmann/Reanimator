@@ -22,6 +22,18 @@ console.log('[DB] Initialized database at:', path.resolve(DB_PATH));
 db.pragma('journal_mode = WAL');
 db.pragma('busy_timeout = 3000'); // Wait up to 3s for locks
 
+// Migrations
+try {
+  const table = db.prepare("PRAGMA table_info(vms)").all() as any[];
+  const hasVlan = table.some(c => c.name === 'vlan');
+  if (!hasVlan) {
+    console.log('[DB] Migrating: Adding vlan column to vms table');
+    db.prepare("ALTER TABLE vms ADD COLUMN vlan INTEGER").run();
+  }
+} catch (e) {
+  // Ignore if table doesn't exist (init script handles it)
+}
+
 export default db;
 export function getBackupDir() {
   // Return relative path string to avoid Turbopack resolving it as a glob

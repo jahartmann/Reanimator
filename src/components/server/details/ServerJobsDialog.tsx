@@ -102,84 +102,101 @@ export function ServerJobsDialog({ serverId, serverName }: ServerJobsDialogProps
                     </DialogTitle>
                 </DialogHeader>
 
-                {createMode ? (
-                    <div className="space-y-4 py-4 border rounded-lg p-4 bg-muted/20">
-                        <h3 className="font-semibold">Neuen Job erstellen</h3>
+                ) : (
+                <div className="space-y-4 py-4 border rounded-lg p-4 bg-muted/20">
+                    <h3 className="font-semibold">Neuen Job erstellen</h3>
 
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label>Job Typ</Label>
-                                <Select value={newJobType} onValueChange={(v: any) => setNewJobType(v)}>
-                                    <SelectTrigger>
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="scan">🛡️ Security & Health Scan (AI)</SelectItem>
-                                        <SelectItem value="config">💾 Config Backup (/etc, pve config)</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-
-                            <div className="space-y-2">
-                                <Label>Zeitplan (Cron)</Label>
-                                <Input value={scheduleStr} onChange={e => setScheduleStr(e.target.value)} placeholder="* * * * *" />
-                                <p className="text-xs text-muted-foreground">0 3 * * * = Täglich 03:00</p>
-                            </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label>Job Typ</Label>
+                            <Select value={newJobType} onValueChange={(v: any) => setNewJobType(v)}>
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="scan">🛡️ Security & Health Scan (AI)</SelectItem>
+                                    <SelectItem value="config">💾 Config Backup (/etc, pve config)</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
 
                         <div className="space-y-2">
-                            <Label>Name (Optional)</Label>
-                            <Input value={customName} onChange={e => setCustomName(e.target.value)} placeholder={`Auto-${newJobType === 'scan' ? 'Scan' : 'Backup'}`} />
+                            <Label>Intervall</Label>
+                            <Select onValueChange={(val) => {
+                                if (val === 'daily') setScheduleStr('0 3 * * *');
+                                if (val === 'weekly') setScheduleStr('0 3 * * 1'); // Monday 3AM
+                                if (val === 'hourly') setScheduleStr('0 * * * *');
+                            }}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Wähle Intervall" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="daily">Täglich (03:00)</SelectItem>
+                                    <SelectItem value="weekly">Wöchentlich (Mo 03:00)</SelectItem>
+                                    <SelectItem value="hourly">Stündlich</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
+                    </div>
 
-                        <div className="flex justify-end gap-2 pt-2">
-                            <Button variant="ghost" onClick={() => setCreateMode(false)}>Abbrechen</Button>
-                            <Button onClick={handleCreate}>Erstellen</Button>
-                        </div>
+                    <div className="space-y-2">
+                        <Label>Cron Ausdruck (Manuell)</Label>
+                        <Input value={scheduleStr} onChange={e => setScheduleStr(e.target.value)} placeholder="* * * * *" fontMono />
                     </div>
-                ) : (
-                    <div className="space-y-4">
-                        {loading ? (
-                            <div className="text-center py-10"><RefreshCw className="animate-spin h-6 w-6 mx-auto" /></div>
-                        ) : jobs.length === 0 ? (
-                            <div className="text-center py-10 text-muted-foreground">Keine Jobs geplant.</div>
-                        ) : (
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Typ</TableHead>
-                                        <TableHead>Name</TableHead>
-                                        <TableHead>Zeitplan</TableHead>
-                                        <TableHead>Aktiv</TableHead>
-                                        <TableHead className="text-right">Aktionen</TableHead>
+
+                    <div className="space-y-2">
+                        <Label>Name (Optional)</Label>
+                        <Input value={customName} onChange={e => setCustomName(e.target.value)} placeholder={`Auto-${newJobType === 'scan' ? 'Scan' : 'Backup'}`} />
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                        <Button variant="ghost" onClick={() => setCreateMode(false)}>Abbrechen</Button>
+                        <Button onClick={handleCreate}>Erstellen</Button>
+                    </div>
+                </div>
+                )}
+                <div className="space-y-4">
+                    {loading ? (
+                        <div className="text-center py-10"><RefreshCw className="animate-spin h-6 w-6 mx-auto" /></div>
+                    ) : jobs.length === 0 ? (
+                        <div className="text-center py-10 text-muted-foreground">Keine Jobs geplant.</div>
+                    ) : (
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Typ</TableHead>
+                                    <TableHead>Name</TableHead>
+                                    <TableHead>Zeitplan</TableHead>
+                                    <TableHead>Aktiv</TableHead>
+                                    <TableHead className="text-right">Aktionen</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {jobs.map(job => (
+                                    <TableRow key={job.id}>
+                                        <TableCell>
+                                            {job.job_type === 'scan' ? (
+                                                <span className="flex items-center gap-2"><AlertCircle className="h-4 w-4 text-amber-500" /> Scan</span>
+                                            ) : (
+                                                <span className="flex items-center gap-2"><RefreshCw className="h-4 w-4 text-blue-500" /> Backup</span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell className="font-medium">{job.name}</TableCell>
+                                        <TableCell className="font-mono bg-muted/50 px-2 py-1 rounded w-fit">{job.schedule}</TableCell>
+                                        <TableCell>
+                                            <Switch checked={job.enabled} onCheckedChange={() => handleToggle(job.id)} />
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            <Button variant="ghost" size="icon" onClick={() => handleDelete(job.id)}>
+                                                <Trash2 className="h-4 w-4 text-red-500" />
+                                            </Button>
+                                        </TableCell>
                                     </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {jobs.map(job => (
-                                        <TableRow key={job.id}>
-                                            <TableCell>
-                                                {job.job_type === 'scan' ? (
-                                                    <span className="flex items-center gap-2"><AlertCircle className="h-4 w-4 text-amber-500" /> Scan</span>
-                                                ) : (
-                                                    <span className="flex items-center gap-2"><RefreshCw className="h-4 w-4 text-blue-500" /> Backup</span>
-                                                )}
-                                            </TableCell>
-                                            <TableCell className="font-medium">{job.name}</TableCell>
-                                            <TableCell className="font-mono bg-muted/50 px-2 py-1 rounded w-fit">{job.schedule}</TableCell>
-                                            <TableCell>
-                                                <Switch checked={job.enabled} onCheckedChange={() => handleToggle(job.id)} />
-                                            </TableCell>
-                                            <TableCell className="text-right">
-                                                <Button variant="ghost" size="icon" onClick={() => handleDelete(job.id)}>
-                                                    <Trash2 className="h-4 w-4 text-red-500" />
-                                                </Button>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        )}
-                    </div>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    )}
+                </div>
                 )}
             </DialogContent>
         </Dialog>

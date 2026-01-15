@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import TagManagement from '@/components/ui/TagManagement';
 import { ServerSyncButton } from '@/components/server/ServerSyncButton';
 import EditServerDialog from '@/components/server/EditServerDialog';
-import { ServerJobsDialog } from '@/components/server/details/ServerJobsDialog';
+
 
 interface ServerHeaderProps {
     server: {
@@ -47,7 +47,6 @@ export function ServerHeader({ server }: ServerHeaderProps) {
                 </div>
                 <div className="ml-auto flex items-center gap-2">
                     <div className="flex items-center gap-2">
-                        <ServerJobsDialog serverId={server.id} serverName={server.name} />
                         <Link href={`?edit=true`}>
                             <Button variant="outline" size="sm">
                                 <Settings className="mr-2 h-4 w-4" />

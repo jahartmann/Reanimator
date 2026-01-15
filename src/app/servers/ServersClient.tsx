@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Server, Trash2, ExternalLink, ChevronDown, ChevronRight, FolderOpen, Search, Layers } from "lucide-react";
+import { Plus, Server, Trash2, ExternalLink, ChevronDown, ChevronRight, FolderOpen, Search, Layers, Clock } from "lucide-react";
+import { ServerJobsDialog } from '@/components/server/details/ServerJobsDialog';
 
 interface ServerItem {
     id: number;
@@ -275,6 +276,7 @@ function ServerRow({
                 </div>
             </Link>
             <div className="flex items-center gap-2">
+                <ServerJobsDialog serverId={server.id} serverName={server.name} />
                 <Link href={`/servers/${server.id}`}>
                     <Button variant="outline" size="sm">
                         <ExternalLink className="mr-2 h-4 w-4" />

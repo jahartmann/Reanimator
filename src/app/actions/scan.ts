@@ -111,7 +111,35 @@ export async function scanHost(serverId: number) {
 // ... existing code ...
 
 export async function scanEntireInfrastructure() {
+    const startTime = Date.now();
+    let jobId: number | null = null;
+
     try {
+        // 1. Create a "Global Scan" job record if it doesn't exist (conceptually) or just log to history
+        // Since history requires a job_id (linked to jobs table usually), we might need a dummy job or allow null. 
+        // Checking schema: history(id, job_id, start_time, end_time, status, log, created_at)
+        // If job_id is Foreign Key, we must insert a job first. Let's assume we can create a temporary or system job.
+
+        // For better visibility, let's insert a "System Task" into history. 
+        // If job_id is strict FK, we need a job. Let's create a "Global Scan" system job if not exists.
+
+        let globalScanJob = db.prepare("SELECT id FROM jobs WHERE name = 'Global Scan' AND job_type = 'scan'").get() as { id: number };
+
+        if (!globalScanJob) {
+            const info = db.prepare("INSERT INTO jobs (name, job_type, schedule, enabled) VALUES ('Global Scan', 'scan', '@manual', 1)").run();
+            globalScanJob = { id: Number(info.lastInsertRowid) };
+        }
+
+        jobId = globalScanJob.id;
+
+        // Log Start
+        const historyInfo = db.prepare("INSERT INTO history (job_id, start_time, status, log) VALUES (?, ?, 'running', 'Global Scan started...')").run(jobId, new Date().toISOString());
+        const historyId = historyInfo.lastInsertRowid;
+
+        const updateLog = (msg: string) => {
+            db.prepare("UPDATE history SET log = log || '\n' || ? WHERE id = ?").run(msg, historyId);
+        };
+
         const servers = db.prepare('SELECT id, name FROM servers').all() as { id: number, name: string }[];
         const results = {
             servers: 0,
@@ -119,8 +147,11 @@ export async function scanEntireInfrastructure() {
             errors: [] as string[]
         };
 
+        updateLog(`Found ${servers.length} servers to scan.`);
+
         for (const server of servers) {
             try {
+                updateLog(`Scanning Server: ${server.name}...`);
                 // Scan Host
                 await scanHost(server.id);
                 results.servers++;
@@ -129,15 +160,30 @@ export async function scanEntireInfrastructure() {
                 const vmRes = await scanAllVMs(server.id);
                 if (vmRes.success && vmRes.count) {
                     results.vms += vmRes.count;
+                    updateLog(`  -> Scanned ${vmRes.count} VMs on ${server.name}`);
                 }
             } catch (e: any) {
                 console.error(`Scan failed for ${server.name}:`, e);
                 results.errors.push(`${server.name}: ${e.message}`);
+                updateLog(`  -> ERROR on ${server.name}: ${e.message}`);
             }
         }
 
+        // Log End
+        const endTime = new Date().toISOString();
+        const finalStatus = results.errors.length > 0 ? 'warning' : 'completed';
+        const summary = `Scan finished. Servers: ${results.servers}, VMs: ${results.vms}, Errors: ${results.errors.length}`;
+
+        db.prepare("UPDATE history SET end_time = ?, status = ?, log = log || '\n' || ? WHERE id = ?").run(endTime, finalStatus, summary, historyId);
+
         return { success: true, results };
     } catch (e: any) {
+        if (jobId) {
+            // Try to log failure
+            try {
+                db.prepare("UPDATE history SET end_time = ?, status = 'failed', log = log || '\nFatal Error: ' || ? WHERE job_id = ? AND end_time IS NULL").run(new Date().toISOString(), e.message, jobId);
+            } catch { }
+        }
         return { success: false, error: e.message };
     }
 }
