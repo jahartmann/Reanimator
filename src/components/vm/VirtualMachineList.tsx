@@ -105,7 +105,7 @@ export function VirtualMachineList({ vms, currentServerId, otherServers, availab
                                                 {vm.memory && <span>• {Math.round(vm.memory / 1024 / 1024 / 1024)} GB</span>}
                                             </div>
                                             {/* Network and Storage Info */}
-                                            {(vm.networks?.length || vm.storages?.length) && (
+                                            {((vm.networks?.length || 0) > 0 || (vm.storages?.length || 0) > 0) && (
                                                 <div className="flex flex-wrap gap-1 mt-1">
                                                     {vm.networks?.map(n => (
                                                         <span key={n} className="text-[10px] bg-blue-500/10 text-blue-600 px-1.5 py-0.5 rounded">
