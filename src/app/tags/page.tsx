@@ -24,17 +24,26 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from 'sonner';
 
 
+// Helper for better contrast
 function getContrastColor(hexColor: string) {
     if (!hexColor) return 'black';
-    const hex = hexColor.replace('#', '');
-    // Handle short hex if necessary, but assuming full 6 hex for now or failing gracefully
-    if (hex.length !== 6) return 'black';
+    let hex = hexColor.replace('#', '');
+
+    // Handle short hex
+    if (hex.length === 3) {
+        hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    }
+
+    if (hex.length !== 6) return 'black'; // Fallback
 
     const r = parseInt(hex.substring(0, 2), 16);
     const g = parseInt(hex.substring(2, 4), 16);
     const b = parseInt(hex.substring(4, 6), 16);
+
+    // Calculate relative luminance for better accessibility
+    // (Rec. 709)
     const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
-    return (yiq >= 128) ? 'black' : 'white';
+    return (yiq >= 150) ? '#000000' : '#ffffff'; // Threshold higher than 128 to prefer black on mid-tones
 }
 
 export default function TagsPage() {
@@ -59,6 +68,8 @@ export default function TagsPage() {
 
     useEffect(() => {
         loadData();
+        // Automatic Cluster Sync on Visit
+        handleScan(true);
     }, []);
 
     async function loadData() {
@@ -90,17 +101,17 @@ export default function TagsPage() {
         }
     }
 
-    async function handleScan() {
+    async function handleScan(silent = false) {
         setScanning(true);
         try {
             const res = await scanAllClusterTags();
             if (res.success) {
-                alert(res.message);
+                if (!silent) toast.success(res.message);
                 const tData = await getTags();
                 setTags(tData);
             }
         } catch (e) {
-            alert('Scan failed');
+            if (!silent) toast.error('Scan failed');
         } finally {
             setScanning(false);
         }
@@ -255,7 +266,7 @@ export default function TagsPage() {
                                     {tags.map(tag => (
                                         <TableRow key={tag.id}>
                                             <TableCell>
-                                                <Badge style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }} className="hover:opacity-90">
+                                                <Badge style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }} className="hover:opacity-90 border shadow-sm">
                                                     {tag.name}
                                                 </Badge>
                                             </TableCell>
@@ -300,7 +311,7 @@ export default function TagsPage() {
                                             onClick={() => toggleTagSelection(tag.id)}
                                         >
                                             <Checkbox checked={selectedTags.has(tag.id)} />
-                                            <Badge style={{ backgroundColor: tag.color }} className="text-white">
+                                            <Badge style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }} className="border shadow-sm">
                                                 {tag.name}
                                             </Badge>
                                         </div>
