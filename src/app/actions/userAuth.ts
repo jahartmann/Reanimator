@@ -124,7 +124,7 @@ export async function login(username: string, password: string): Promise<{ succe
             const cookieStore = await cookies();
             cookieStore.set('session', sessionId, {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
+                secure: false, // process.env.NODE_ENV === 'production', // FORCE FALSE for debugging
                 sameSite: 'lax',
                 maxAge: SESSION_DURATION_HOURS * 60 * 60,
                 path: '/',
@@ -178,7 +178,7 @@ export async function login(username: string, password: string): Promise<{ succe
         const cookieStore = await cookies();
         cookieStore.set('session', sessionId, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: false, // process.env.NODE_ENV === 'production',
             sameSite: 'lax',
             maxAge: SESSION_DURATION_HOURS * 60 * 60,
             path: '/',
@@ -221,7 +221,12 @@ export async function getCurrentUser(): Promise<User | null> {
         const cookieStore = await cookies();
         const sessionId = cookieStore.get('session')?.value;
 
-        if (!sessionId) return null;
+        // logAuth(`[Auth] getCurrentUser - Cookie session: ${sessionId ? sessionId.substring(0, 8) + '...' : 'NONE'}`);
+
+        if (!sessionId) {
+            logAuth('[Auth] getCurrentUser: No session cookie found');
+            return null;
+        }
 
         const session = db.prepare(`
             SELECT s.*, u.id as uid, u.username, u.email, u.is_admin, u.is_active, 
@@ -231,7 +236,10 @@ export async function getCurrentUser(): Promise<User | null> {
             WHERE s.id = ? AND s.expires_at > datetime('now') AND u.is_active = 1
         `).get(sessionId) as any;
 
-        if (!session) return null;
+        if (!session) {
+            logAuth(`[Auth] getCurrentUser: Session not found in DB or expired/inactive. ID: ${sessionId}`);
+            return null;
+        }
 
         return {
             id: session.uid,
@@ -244,6 +252,7 @@ export async function getCurrentUser(): Promise<User | null> {
             last_login: session.last_login,
         };
     } catch (error) {
+        logAuth(`[Auth] getCurrentUser failed: ${error}`);
         console.error('[Auth] getCurrentUser failed:', error);
         return null;
     }
