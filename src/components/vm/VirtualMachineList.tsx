@@ -180,26 +180,65 @@ export function VirtualMachineList({ vms, currentServerId, otherServers, availab
 // --- Health Check Components ---
 
 import { getVMConfig } from '@/app/actions/vm';
-import { analyzeConfigWithAI } from '@/app/actions/ai';
+import { analyzeConfigWithAI, HealthResult } from '@/app/actions/ai';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Stethoscope, Sparkles } from "lucide-react"; // Make sure Stethoscope is imported
+import { Stethoscope, Sparkles, CheckCircle, AlertTriangle, Info, AlertCircle } from "lucide-react";
 
-function HealthCheckDialog({ open, onOpenChange, result }: { open: boolean, onOpenChange: (o: boolean) => void, result: string | null }) {
+function HealthCheckDialog({ open, onOpenChange, result }: { open: boolean, onOpenChange: (o: boolean) => void, result: HealthResult | null }) {
+    if (!result) return null;
+
+    const getScoreColor = (score: number) => {
+        if (score >= 90) return 'text-green-500';
+        if (score >= 70) return 'text-amber-500';
+        return 'text-red-500';
+    };
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <Stethoscope className="h-5 w-5 text-purple-500" />
                         AI Config Doctor
                     </DialogTitle>
                     <DialogDescription>
-                        Analyse der VM-Konfiguration auf Best Practices.
+                        {result.summary}
                     </DialogDescription>
                 </DialogHeader>
-                <div className="mt-4 p-4 bg-muted/30 rounded-lg border leading-relaxed text-sm whitespace-pre-wrap">
-                    {result}
+
+                <div className="flex items-center justify-between p-4 bg-muted/30 rounded-lg border mb-2">
+                    <span className="font-medium">Optimization Score</span>
+                    <span className={`text-2xl font-bold ${getScoreColor(result.score)}`}>{result.score}/100</span>
                 </div>
+
+                <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+                    {result.issues.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+                            <CheckCircle className="h-12 w-12 text-green-500 mb-4 opacity-50" />
+                            <p>Keine Probleme gefunden. Gute Arbeit!</p>
+                        </div>
+                    ) : (
+                        result.issues.map((issue, i) => (
+                            <div key={i} className="p-3 rounded-lg border bg-card flex gap-3 text-sm">
+                                <div className="shrink-0 mt-0.5">
+                                    {issue.severity === 'critical' && <AlertCircle className="h-4 w-4 text-red-500" />}
+                                    {issue.severity === 'warning' && <AlertTriangle className="h-4 w-4 text-amber-500" />}
+                                    {issue.severity === 'info' && <Info className="h-4 w-4 text-blue-500" />}
+                                </div>
+                                <div className="space-y-1">
+                                    <h4 className="font-medium">{issue.title}</h4>
+                                    <p className="text-muted-foreground text-xs leading-relaxed">{issue.description}</p>
+                                    {issue.fix && (
+                                        <div className="mt-2 text-xs bg-muted p-2 rounded font-mono">
+                                            {issue.fix}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+
                 <DialogFooter>
                     <Button onClick={() => onOpenChange(false)}>Schließen</Button>
                 </DialogFooter>

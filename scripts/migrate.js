@@ -91,6 +91,16 @@ db.exec(`
     FOREIGN KEY(backup_id) REFERENCES config_backups(id)
   );
 
+  -- Scan Results table
+  CREATE TABLE IF NOT EXISTS scan_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id INTEGER,
+    vmid TEXT,          -- Can be NULL for Host scans
+    type TEXT,          -- 'vm', 'lxc', 'host'
+    result_json TEXT,   -- JSON analysis from AI
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
   -- Settings table
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,

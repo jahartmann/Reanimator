@@ -50,10 +50,11 @@ export default async function ServerDetailPage({
         );
     }
 
-    const [info, vms, availableTags] = await Promise.all([
+    const [info, vms, availableTags, scanResults] = await Promise.all([
         getServerInfo(server),
         getVMs(serverId),
-        getTags()
+        getTags(),
+        getScanResults(serverId)
     ]);
 
     const otherServers = db.prepare('SELECT id, name FROM servers WHERE id != ?').all(serverId) as { id: number; name: string }[];
@@ -82,6 +83,10 @@ export default async function ServerDetailPage({
                             VMs & Container
                             <span className="bg-muted px-1.5 py-0.5 rounded-full text-[10px]">{vms.length}</span>
                         </TabsTrigger>
+                        <TabsTrigger value="health" className="gap-2 px-4 py-2">
+                            <ShieldCheck className="h-4 w-4" />
+                            Health & Security
+                        </TabsTrigger>
                         <TabsTrigger value="hardware" className="gap-2 px-4 py-2">
                             <HardDrive className="h-4 w-4" />
                             Hardware
@@ -109,6 +114,10 @@ export default async function ServerDetailPage({
                         />
                     </TabsContent>
 
+                    <TabsContent value="health">
+                        <ServerHealth initialResults={scanResults} serverId={serverId} />
+                    </TabsContent>
+
                     <TabsContent value="hardware">
                         <ServerHardware info={info} />
                     </TabsContent>
@@ -131,3 +140,7 @@ export default async function ServerDetailPage({
         </div>
     );
 }
+
+import { getScanResults } from '@/app/actions/scan';
+import { ServerHealth } from '@/components/server/details/ServerHealth';
+import { ShieldCheck } from 'lucide-react';

@@ -459,15 +459,15 @@ function AIAutoTagButton({ allVMs, onTagsApplied, existingTags }: { allVMs: any[
         <>
             <Button onClick={handleAnalyze} variant="default" className="ml-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white border-0">
                 <Sparkles className="mr-2 h-4 w-4" />
-                AI Vorschläge
+                Vorschlagen
             </Button>
 
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
-                            <Brain className="h-5 w-5 text-purple-500" />
-                            KI Tag-Vorschläge
+                            <Sparkles className="h-5 w-5 text-purple-500" />
+                            Tag-Vorschläge
                         </DialogTitle>
                         <DialogDescription>
                             Ollama analysiert Ihre VM-Namen und schlägt Kategorien vor.
