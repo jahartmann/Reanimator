@@ -113,22 +113,7 @@ function parseAIJSON(response: string) {
     }
 }
 
-export async function suggestTagsWithAI(vmNames: string[]): Promise<Record<string, string[]>> {
-    const context = `
-Analyze the following VM names and suggest 1-3 broad, industry-standard categories (tags) for each.
-Context: Proxmox Virtualization Environment.
-Rules:
-- Tags should be lowercase, single words (e.g., "database", "web", "windows", "cache", "proxy").
-- Avoid generic tags like "vm" or "server".
-- Format: JSON Object where key is VM Name and value is Array of strings.
 
-Names:
-${vmNames.join('\n')}
-    `.trim();
-
-    const response = await generateAIResponse('Tag these VMs', context);
-    return parseAIJSON(response) || {};
-}
 
 export type HealthIssue = {
     severity: 'critical' | 'warning' | 'info';
@@ -145,27 +130,27 @@ export type HealthResult = {
 
 export async function analyzeConfigWithAI(config: string, type: 'qemu' | 'lxc'): Promise<HealthResult> {
     const context = `
-You are a Proxmox Performance & Security Auditor.
-Analyze this VM configuration.
-Output STRICT JSON exactly corresponding to this TypeScript interface:
+Du bist ein Proxmox Performance & Security Auditor.
+Analysiere diese VM-Konfiguration.
+Antworte AUSSCHLIESSLICH mit validem JSON (kein Markdown), passend zu diesem Interface:
 {
-  score: number; // 0-100, 100 is perfect
-  summary: string; // 1 sentence overview
-  issues: [
+  "score": number, // 0-100, 100 ist perfekt
+  "summary": "string", // 1 Satz Zusammenfassung auf DEUTSCH
+  "issues": [
     {
-      severity: "critical" | "warning" | "info",
-      title: string,
-      description: string, // concise reason
-      fix: string // command or setting to change
+      "severity": "critical" | "warning" | "info",
+      "title": "string", // DEUTSCH
+      "description": "string", // DEUTSCH, präzise
+      "fix": "string" // Befehl oder Einstellung
     }
   ]
 }
 
-Check for:
-- VirtIO usage (Net/Disk) -> Warning if not
-- CPU Type (prefer 'host') -> Warning if kvm64
-- Discard/SSD Emulation -> Info/Warning
-- Network Bridges -> Check for validity
+Prüfe auf:
+- VirtIO Nutzung (Net/Disk) -> Warnung wenn nicht
+- CPU Type (prefer 'host') -> Warnung wenn kvm64
+- Discard/SSD Emulation -> Info/Warnung
+- Network Bridges -> Plausibilität
     `.trim();
 
     const response = await generateAIResponse(`Type: ${type}\nConfig:\n${config}`, context);
@@ -180,23 +165,23 @@ Check for:
 
 export async function analyzeHostWithAI(files: { filename: string, content: string }[]): Promise<HealthResult> {
     const context = `
-You are a Linux Systems Engineer auditing a Proxmox Host.
-Analyze the provided configuration files for security, performance, and stability issues.
+Du bist ein Linux System Engineer, der einen Proxmox Host auditiert.
+Analysiere die Konfigurationsdateien auf Sicherheit, Performance und Stabilität.
 
-Files provided:
+Dateien:
 ${files.map(f => `- ${f.filename}`).join('\n')}
 
-Output STRICT JSON (same format as before):
+Antworte AUSSCHLIESSLICH mit validem JSON (gleiches Format wie oben):
 {
-  score: number,
-  summary: string,
-  issues: [{ severity, title, description, fix }]
+  "score": number,
+  "summary": "string", // DEUTSCH
+  "issues": [{ "severity": "...", "title": "...", "description": "...", "fix": "..." }]
 }
 
 Checks:
-- /etc/network/interfaces: Redundancy (Bonding)? Empty Bridges?
-- storage.cfg: Unsafe mounts?
-- sysctl: Swappiness? Forwarding enabled?
+- /etc/network/interfaces: Redundanz (Bonding)? Leere Bridges?
+- storage.cfg: Unsichere Mounts?
+- sysctl: Swappiness? Forwarding aktiv?
     `.trim();
 
     const fileContentStr = files.map(f => `=== ${f.filename} ===\n${f.content}\n`).join('\n');

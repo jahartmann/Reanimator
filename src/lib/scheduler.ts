@@ -47,6 +47,22 @@ async function runJob(job: any) {
                 .run('success', new Date().toISOString(), `Backup created: ${backupResult.backupId}`, historyId);
             console.log(`[Scheduler] Config backup job ${job.name} completed: backup ID ${backupResult.backupId}`);
 
+        } else if (job.job_type === 'scan') {
+            // Health Scan Job
+            console.log(`[Scheduler] Starting Health Scan for Server ${job.source_server_id}`);
+
+            // 1. Scan Host
+            const hostRes = await scanHost(job.source_server_id);
+            if (!hostRes.success) throw new Error(`Host Scan Failed: ${hostRes.error}`);
+
+            // 2. Scan VMs
+            const vmRes = await scanAllVMs(job.source_server_id);
+            if (!vmRes.success) throw new Error(`VM Scan Failed: ${vmRes.error}`);
+
+            db.prepare('UPDATE history SET status = ?, end_time = ?, log = ? WHERE id = ?')
+                .run('success', new Date().toISOString(), `Host & ${vmRes.count} VMs scanned`, historyId);
+            console.log(`[Scheduler] Scan job ${job.name} completed.`);
+
         } else {
             // Default mock for other job types
             await new Promise(resolve => setTimeout(resolve, 2000));

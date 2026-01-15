@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScanResult, scanAllVMs, scanHost } from '@/app/actions/scan';
-import { Loader2, ShieldCheck, Server, Monitor, AlertTriangle, CheckCircle, Info, RefreshCw, Smartphone } from "lucide-react";
+import { createScanSchedule } from '@/app/actions/schedule';
+import { Loader2, ShieldCheck, Server, Monitor, AlertTriangle, CheckCircle, Info, RefreshCw, Smartphone, Clock } from "lucide-react";
 import { toast } from 'sonner';
 import { HealthResult, HealthIssue } from '@/app/actions/ai';
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -65,112 +66,131 @@ export function ServerHealth({ initialResults, serverId }: ServerHealthProps) {
                 toast.error('Scan Failed: ' + res.error);
             }
         } catch { toast.error('Scan Error'); }
-        finally { setScanningVMs(false); }
+    } catch { toast.error('Scan Error'); }
+    finally { setScanningVMs(false); }
+}
+
+async function handleAutomate() {
+    if (!confirm('Soll ein täglicher Scan (03:00 Uhr) eingeplant werden? Sie können dies im Task Manager verwalten.')) return;
+    try {
+        const res = await createScanSchedule(serverId, '0 3 * * *');
+        if (res.success) {
+            toast.success('Hintergrund-Task erstellt!');
+        } else {
+            toast.error(res.error || 'Fehler beim Erstellen');
+        }
+    } catch (e) {
+        toast.error('Fehler: ' + e);
     }
+}
 
-    return (
-        <div className="space-y-6">
-            {/* Overview Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card>
-                    <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Gesamt Score</CardTitle></CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold flex items-center gap-2">
-                            <ShieldCheck className={`h-6 w-6 ${avgScore >= 90 ? 'text-green-500' : avgScore >= 70 ? 'text-amber-500' : 'text-red-500'}`} />
-                            {avgScore}/100
-                        </div>
-                        <p className="text-xs text-muted-foreground">Sicherheitslevel</p>
-                    </CardContent>
-                </Card>
-                <Card>
-                    <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Offene Probleme</CardTitle></CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">{totalIssues}</div>
-                        <p className="text-xs text-muted-foreground">Optimierungspotenzial</p>
-                    </CardContent>
-                </Card>
-                <Card className="flex flex-col justify-center p-4 gap-2">
-                    <Button onClick={handleScanHost} disabled={scanningHost || scanningVMs} variant="outline" className="w-full justify-start">
-                        {scanningHost ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
-                        Host Scannen
-                    </Button>
-                    <Button onClick={handleScanVMs} disabled={scanningHost || scanningVMs} variant="outline" className="w-full justify-start">
-                        {scanningVMs ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                        Alle VMs Scannen
-                    </Button>
-                </Card>
-            </div>
-
-            <Tabs defaultValue="host">
-                <TabsList>
-                    <TabsTrigger value="host">Host System</TabsTrigger>
-                    <TabsTrigger value="vms">Virtual Machines ({vmResults.length})</TabsTrigger>
-                </TabsList>
-
-                {/* HOST TAB */}
-                <TabsContent value="host">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle className="flex items-center gap-2">
-                                <Server className="h-5 w-5" />
-                                Host Konfiguration
-                                {hostResult && <Badge variant="outline" className="ml-2">{hostResult.result.score}/100</Badge>}
-                            </CardTitle>
-                            <CardDescription>
-                                {hostResult ? new Date(hostResult.created_at).toLocaleString() : 'Noch nie gescannt'}
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            {!hostResult ? (
-                                <div className="text-center py-10 text-muted-foreground">Keine Scan-Daten. Starten Sie einen Scan.</div>
-                            ) : (
-                                <ResultList issues={hostResult.result.issues} summary={hostResult.result.summary} />
-                            )}
-                        </CardContent>
-                    </Card>
-                </TabsContent>
-
-                {/* VMs TAB */}
-                <TabsContent value="vms">
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        {vmResults.map(vm => (
-                            <Card key={vm.vmid}>
-                                <CardHeader className="py-3 bg-muted/20 border-b">
-                                    <div className="flex justify-between items-center">
-                                        <CardTitle className="text-base flex items-center gap-2">
-                                            {vm.type === 'qemu' ? <Monitor className="h-4 w-4" /> : <Smartphone className="h-4 w-4" />}
-                                            VM {vm.vmid}
-                                        </CardTitle>
-                                        <Badge className={`${vm.result.score >= 90 ? 'bg-green-500' : 'bg-amber-500'}`}>
-                                            {vm.result.score}
-                                        </Badge>
-                                    </div>
-                                </CardHeader>
-                                <CardContent className="p-0">
-                                    <ScrollArea className="h-[200px] p-4">
-                                        {vm.result.issues.length === 0 ? (
-                                            <div className="flex items-center gap-2 text-green-500 text-sm">
-                                                <CheckCircle className="h-4 w-4" /> Alles in Ordnung
-                                            </div>
-                                        ) : (
-                                            <div className="space-y-3">
-                                                {vm.result.issues.map((issue, idx) => (
-                                                    <IssueItem key={idx} issue={issue} compact />
-                                                ))}
-                                            </div>
-                                        )}
-                                    </ScrollArea>
-                                </CardContent>
-                            </Card>
-                        ))}
-                        {vmResults.length === 0 && (
-                            <div className="col-span-full text-center py-10 text-muted-foreground">Keine VM Scans gefunden.</div>
-                        )}
+return (
+    <div className="space-y-6">
+        {/* Overview Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Gesamt Score</CardTitle></CardHeader>
+                <CardContent>
+                    <div className="text-2xl font-bold flex items-center gap-2">
+                        <ShieldCheck className={`h-6 w-6 ${avgScore >= 90 ? 'text-green-500' : avgScore >= 70 ? 'text-amber-500' : 'text-red-500'}`} />
+                        {avgScore}/100
                     </div>
-                </TabsContent>
-            </Tabs>
+                    <p className="text-xs text-muted-foreground">Sicherheitslevel</p>
+                </CardContent>
+            </Card>
+            <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Offene Probleme</CardTitle></CardHeader>
+                <CardContent>
+                    <div className="text-2xl font-bold">{totalIssues}</div>
+                    <p className="text-xs text-muted-foreground">Optimierungspotenzial</p>
+                </CardContent>
+            </Card>
+            <Card className="flex flex-col justify-center p-4 gap-2">
+                <Button onClick={handleScanHost} disabled={scanningHost || scanningVMs} variant="outline" className="w-full justify-start">
+                    {scanningHost ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
+                    Host Scannen
+                </Button>
+                <Button onClick={handleScanVMs} disabled={scanningHost || scanningVMs} variant="outline" className="w-full justify-start">
+                    {scanningVMs ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                    Alle VMs Scannen
+                </Button>
+                <Button onClick={handleAutomate} variant="ghost" className="w-full justify-start text-muted-foreground hover:text-primary">
+                    <Clock className="mr-2 h-4 w-4" />
+                    Tägl. 3:00 Uhr planen
+                </Button>
+            </Card>
         </div>
-    );
+
+        <Tabs defaultValue="host">
+            <TabsList>
+                <TabsTrigger value="host">Host System</TabsTrigger>
+                <TabsTrigger value="vms">Virtual Machines ({vmResults.length})</TabsTrigger>
+            </TabsList>
+
+            {/* HOST TAB */}
+            <TabsContent value="host">
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <Server className="h-5 w-5" />
+                            Host Konfiguration
+                            {hostResult && <Badge variant="outline" className="ml-2">{hostResult.result.score}/100</Badge>}
+                        </CardTitle>
+                        <CardDescription>
+                            {hostResult ? new Date(hostResult.created_at).toLocaleString() : 'Noch nie gescannt'}
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        {!hostResult ? (
+                            <div className="text-center py-10 text-muted-foreground">Keine Scan-Daten. Starten Sie einen Scan.</div>
+                        ) : (
+                            <ResultList issues={hostResult.result.issues} summary={hostResult.result.summary} />
+                        )}
+                    </CardContent>
+                </Card>
+            </TabsContent>
+
+            {/* VMs TAB */}
+            <TabsContent value="vms">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {vmResults.map(vm => (
+                        <Card key={vm.vmid}>
+                            <CardHeader className="py-3 bg-muted/20 border-b">
+                                <div className="flex justify-between items-center">
+                                    <CardTitle className="text-base flex items-center gap-2">
+                                        {vm.type === 'qemu' ? <Monitor className="h-4 w-4" /> : <Smartphone className="h-4 w-4" />}
+                                        VM {vm.vmid}
+                                    </CardTitle>
+                                    <Badge className={`${vm.result.score >= 90 ? 'bg-green-500' : 'bg-amber-500'}`}>
+                                        {vm.result.score}
+                                    </Badge>
+                                </div>
+                            </CardHeader>
+                            <CardContent className="p-0">
+                                <ScrollArea className="h-[200px] p-4">
+                                    {vm.result.issues.length === 0 ? (
+                                        <div className="flex items-center gap-2 text-green-500 text-sm">
+                                            <CheckCircle className="h-4 w-4" /> Alles in Ordnung
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {vm.result.issues.map((issue, idx) => (
+                                                <IssueItem key={idx} issue={issue} compact />
+                                            ))}
+                                        </div>
+                                    )}
+                                </ScrollArea>
+                            </CardContent>
+                        </Card>
+                    ))}
+                    {vmResults.length === 0 && (
+                        <div className="col-span-full text-center py-10 text-muted-foreground">Keine VM Scans gefunden.</div>
+                    )}
+                </div>
+            </TabsContent>
+        </Tabs>
+    </div>
+);
 }
 
 function ResultList({ issues, summary }: { issues: HealthIssue[], summary: string }) {

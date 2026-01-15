@@ -220,7 +220,7 @@ export default function TagsPage() {
                     <RefreshCw className={`mr-2 h-4 w-4 ${scanning ? 'animate-spin' : ''}`} />
                     Cluster Scan
                 </Button>
-                <AIAutoTagButton allVMs={allVMs} onTagsApplied={loadData} existingTags={tags} />
+
             </div>
 
             <Tabs defaultValue="manage">
@@ -398,120 +398,5 @@ export default function TagsPage() {
 }
 
 // AI Component
-import { suggestTagsWithAI } from '@/app/actions/ai';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Sparkles, Brain } from "lucide-react";
 
-function AIAutoTagButton({ allVMs, onTagsApplied, existingTags }: { allVMs: any[], onTagsApplied: () => void, existingTags: Tag[] }) {
-    const [open, setOpen] = useState(false);
-    const [analyzing, setAnalyzing] = useState(false);
-    const [suggestions, setSuggestions] = useState<Record<string, string[]>>({});
-    const [applying, setApplying] = useState(false);
-
-    async function handleAnalyze() {
-        setAnalyzing(true);
-        setOpen(true);
-        setSuggestions({});
-
-        // 1. Get VM list
-        const vmNames = allVMs.map(v => v.name).filter(n => n && n.length > 2);
-
-        // 2. Call AI
-        const result = await suggestTagsWithAI(vmNames);
-        setSuggestions(result);
-        setAnalyzing(false);
-    }
-
-    async function handleApply() {
-        if (!confirm('Vorschläge anwenden? Dies wird neue Tags erstellen und VMs zuweisen.')) return;
-        setApplying(true);
-
-        const promises = [];
-
-        // Iterate suggestions
-        for (const [vmName, tags] of Object.entries(suggestions)) {
-            const vm = allVMs.find(v => v.name === vmName);
-            if (!vm) continue;
-
-            // 1. Create missing tags
-            for (const tagName of tags) {
-                // Check if tag exists (case insensitive)
-                const exists = existingTags.some(t => t.name.toLowerCase() === tagName.toLowerCase());
-                if (!exists) {
-                    // Create it (try catch to avoid race conditions or use createTag safely)
-                    try { await createTag(tagName, '#6b7280'); } catch { }
-                }
-            }
-
-            // 2. Assign tags
-            promises.push(assignTagsToResource(vm.serverId, vm.vmid.toString(), tags));
-        }
-
-        await Promise.allSettled(promises);
-
-        setApplying(false);
-        setOpen(false);
-        toast.success('Tags wurden angewendet!');
-        onTagsApplied();
-    }
-
-    return (
-        <>
-            <Button onClick={handleAnalyze} variant="default" className="ml-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white border-0">
-                <Sparkles className="mr-2 h-4 w-4" />
-                Vorschlagen
-            </Button>
-
-            <Dialog open={open} onOpenChange={setOpen}>
-                <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                            <Sparkles className="h-5 w-5 text-purple-500" />
-                            Tag-Vorschläge
-                        </DialogTitle>
-                        <DialogDescription>
-                            Ollama analysiert Ihre VM-Namen und schlägt Kategorien vor.
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="flex-1 overflow-y-auto min-h-[300px] border rounded-md p-4 bg-muted/30">
-                        {analyzing ? (
-                            <div className="flex flex-col items-center justify-center h-full space-y-4">
-                                <Loader2 className="h-10 w-10 animate-spin text-purple-500" />
-                                <p className="text-muted-foreground animate-pulse">Analysiere Infrastruktur...</p>
-                            </div>
-                        ) : (
-                            <div className="space-y-4">
-                                {Object.keys(suggestions).length === 0 ? (
-                                    <div className="text-center text-muted-foreground py-10">Keine offensichtlichen Tags gefunden.</div>
-                                ) : (
-                                    Object.entries(suggestions).map(([vm, tags]) => (
-                                        <div key={vm} className="flex items-center justify-between p-3 bg-background rounded border">
-                                            <span className="font-medium">{vm}</span>
-                                            <div className="flex gap-2">
-                                                {tags.map(t => (
-                                                    <Badge key={t} variant="secondary" className="bg-purple-500/10 text-purple-700 hover:bg-purple-500/20 border-purple-200">
-                                                        {t}
-                                                    </Badge>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                        )}
-                    </div>
-
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setOpen(false)}>Abbrechen</Button>
-                        <Button onClick={handleApply} disabled={analyzing || applying || Object.keys(suggestions).length === 0} className="bg-purple-600 hover:bg-purple-700">
-                            {applying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                            alle Anwenden
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-        </>
-    );
-}
 

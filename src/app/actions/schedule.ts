@@ -55,6 +55,38 @@ export async function createConfigBackupSchedule(
     }
 }
 
+// Create a new health scan schedule
+export async function createScanSchedule(
+    serverId: number,
+    schedule: string,
+    name?: string
+): Promise<{ success: boolean; jobId?: number; error?: string }> {
+    try {
+        const server = db.prepare('SELECT name FROM servers WHERE id = ?').get(serverId) as { name: string } | undefined;
+        if (!server) {
+            return { success: false, error: 'Server nicht gefunden' };
+        }
+
+        const jobName = name || `Auto-Scan: ${server.name}`;
+
+        // Check if job already exists
+        const existing = db.prepare('SELECT id FROM jobs WHERE source_server_id = ? AND job_type = ?').get(serverId, 'scan');
+        if (existing) {
+            return { success: false, error: 'Für diesen Server existiert bereits ein Scan-Job' };
+        }
+
+        const result = db.prepare(`
+            INSERT INTO jobs (name, job_type, source_server_id, schedule, enabled)
+            VALUES (?, 'scan', ?, ?, 1)
+        `).run(jobName, serverId, schedule);
+
+        return { success: true, jobId: result.lastInsertRowid as number };
+    } catch (e) {
+        console.error('[Schedule] Failed to create scan job:', e);
+        return { success: false, error: String(e) };
+    }
+}
+
 // Update schedule for existing job
 export async function updateJobSchedule(
     jobId: number,
