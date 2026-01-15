@@ -8,11 +8,7 @@ import { getServer } from './vm';
 export async function getNetworkConfig(serverId: number): Promise<{ success: boolean; interfaces?: NetworkInterface[]; error?: string }> {
     try {
         const server = await getServer(serverId);
-        const ssh = createSSHClient({
-            ssh_host: server.ip,
-            ssh_user: server.username,
-            ssh_key: server.password
-        });
+        const ssh = createSSHClient(server);
         await ssh.connect();
 
         const content = await ssh.exec('cat /etc/network/interfaces');
@@ -39,11 +35,7 @@ export async function getNetworkConfig(serverId: number): Promise<{ success: boo
 export async function saveNetworkConfig(serverId: number, interfaces: NetworkInterface[], apply: boolean = false): Promise<{ success: boolean; error?: string }> {
     try {
         const server = await getServer(serverId);
-        const ssh = createSSHClient({
-            ssh_host: server.ip,
-            ssh_user: server.username,
-            ssh_key: server.password
-        });
+        const ssh = createSSHClient(server);
         await ssh.connect();
 
         const content = generateNetworkInterfaces(interfaces);

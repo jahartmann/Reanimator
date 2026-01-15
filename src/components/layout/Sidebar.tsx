@@ -16,7 +16,6 @@ const navItems = [
     { name: 'Tags', href: '/tags', icon: TagIcon },
     { name: 'Speicher', href: '/storage', icon: HardDrive },
     { name: 'Konfigurationen', href: '/configs', icon: FolderCog },
-    { name: 'Konfigurationen', href: '/configs', icon: FolderCog },
     { name: 'Tasks', href: '/tasks', icon: ListTodo },
     { name: 'Cluster Trust', href: '/settings/trust', icon: ShieldCheck },
     { name: 'Einstellungen', href: '/settings', icon: Settings },

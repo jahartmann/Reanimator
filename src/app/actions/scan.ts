@@ -126,7 +126,16 @@ export async function scanEntireInfrastructure() {
         let globalScanJob = db.prepare("SELECT id FROM jobs WHERE name = 'Global Scan' AND job_type = 'scan'").get() as { id: number };
 
         if (!globalScanJob) {
-            const info = db.prepare("INSERT INTO jobs (name, job_type, schedule, enabled) VALUES ('Global Scan', 'scan', '@manual', 1)").run();
+            // Fix: jobs table requires source_server_id/target_server_id. Use first server as placeholder.
+            const firstServer = db.prepare('SELECT id FROM servers LIMIT 1').get() as { id: number };
+            if (!firstServer) {
+                return { success: false, error: 'No servers available to initialize Global Scan.' };
+            }
+
+            const info = db.prepare(`
+                INSERT INTO jobs (name, job_type, schedule, enabled, source_server_id, target_server_id) 
+                VALUES ('Global Scan', 'scan', '@manual', 1, ?, ?)
+            `).run(firstServer.id, firstServer.id);
             globalScanJob = { id: Number(info.lastInsertRowid) };
         }
 
