@@ -44,7 +44,9 @@ interface MigrationContext {
 
 // --- Helper: Get Server ---
 
-async function getServer(id: number) {
+// --- Helper: Get Server ---
+
+export async function getServer(id: number) {
     const stmt = db.prepare('SELECT * FROM servers WHERE id = ?');
     const server = stmt.get(id) as any;
     if (!server) throw new Error(`Server ${id} not found`);
@@ -53,7 +55,7 @@ async function getServer(id: number) {
 
 // --- Helper: Robust Node Name Detection ---
 // Fallback chain: exact match → single node → OS hostname fallback
-async function determineNodeName(ssh: SSHClient): Promise<string> {
+export async function determineNodeName(ssh: SSHClient): Promise<string> {
     try {
         // Get OS hostname
         const osHostname = (await ssh.exec('hostname', 5000)).trim();

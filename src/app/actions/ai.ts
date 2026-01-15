@@ -101,40 +101,20 @@ Ignoriere den Stacktrace, fokussiere dich auf die Fehlermeldung.
     return generateAIResponse(`Hier ist der Log:\n\n${truncatedLog}`, context);
 }
 
+// Helper to separate JSON from text
+function parseAIJSON(response: string) {
+    try {
+        const jsonMatch = response.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+        const jsonStr = jsonMatch ? jsonMatch[0] : response;
+        return JSON.parse(jsonStr);
+    } catch (e) {
+        console.error('AI JSON Parse Error:', e);
+        return null;
+    }
+}
+
 export async function suggestTagsWithAI(vmNames: string[]): Promise<Record<string, string[]>> {
     const context = `
-Du bist ein Ordnungsliebender Admin.
-Analysiere die VM-Namen.
-Erstelle sinnvolle Tags (Kategorien) basierend auf dem Namen.
-Beispiele:
-- "db-prod-01" -> ["Datenbank", "Production", "SQL"]
-- "win2019-dc" -> ["Windows", "Domain Controller"]
-- "nextcloud" -> ["Webservice", "Cloud"]
-- "pve-test" -> ["Testing"]
-
-Antworte NUR mit reinem JSON. Format: {"vmName": ["Tag1", "Tag2"]}.
-Kein Markdown, kein Text davor/danach.
-    `.trim();
-
-    const prompt = `VM Liste:\n${vmNames.join('\n')}`;
-
-    try {
-        const response = await generateAIResponse(prompt, context);
-        // Sanitize JSON response (remove markdown code blocks if Ollama adds them)
-        // Helper to separate JSON from text
-        function parseAIJSON(response: string) {
-            try {
-                const jsonMatch = response.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-                const jsonStr = jsonMatch ? jsonMatch[0] : response;
-                return JSON.parse(jsonStr);
-            } catch (e) {
-                console.error('AI JSON Parse Error:', e);
-                return null;
-            }
-        }
-
-        export async function suggestTagsWithAI(vmNames: string[]): Promise<Record<string, string[]>> {
-            const context = `
 Analyze the following VM names and suggest 1-3 broad, industry-standard categories (tags) for each.
 Context: Proxmox Virtualization Environment.
 Rules:
@@ -146,25 +126,25 @@ Names:
 ${vmNames.join('\n')}
     `.trim();
 
-            const response = await generateAIResponse('Tag these VMs', context);
-            return parseAIJSON(response) || {};
-        }
+    const response = await generateAIResponse('Tag these VMs', context);
+    return parseAIJSON(response) || {};
+}
 
-        export type HealthIssue = {
-            severity: 'critical' | 'warning' | 'info';
-            title: string;
-            description: string;
-            fix?: string;
-        };
+export type HealthIssue = {
+    severity: 'critical' | 'warning' | 'info';
+    title: string;
+    description: string;
+    fix?: string;
+};
 
-        export type HealthResult = {
-            score: number; // 0-100
-            issues: HealthIssue[];
-            summary: string;
-        };
+export type HealthResult = {
+    score: number; // 0-100
+    issues: HealthIssue[];
+    summary: string;
+};
 
-        export async function analyzeConfigWithAI(config: string, type: 'qemu' | 'lxc'): Promise<HealthResult> {
-            const context = `
+export async function analyzeConfigWithAI(config: string, type: 'qemu' | 'lxc'): Promise<HealthResult> {
+    const context = `
 You are a Proxmox Performance & Security Auditor.
 Analyze this VM configuration.
 Output STRICT JSON exactly corresponding to this TypeScript interface:
@@ -188,18 +168,18 @@ Check for:
 - Network Bridges -> Check for validity
     `.trim();
 
-            const response = await generateAIResponse(`Type: ${type}\nConfig:\n${config}`, context);
-            const result = parseAIJSON(response);
+    const response = await generateAIResponse(`Type: ${type}\nConfig:\n${config}`, context);
+    const result = parseAIJSON(response);
 
-            // Fallback if AI fails
-            if (!result) {
-                return { score: 100, issues: [], summary: 'AI Parse Error' };
-            }
-            return result;
-        }
+    // Fallback if AI fails
+    if (!result) {
+        return { score: 100, issues: [], summary: 'AI Parse Error' };
+    }
+    return result;
+}
 
-        export async function analyzeHostWithAI(files: { filename: string, content: string }[]): Promise<HealthResult> {
-            const context = `
+export async function analyzeHostWithAI(files: { filename: string, content: string }[]): Promise<HealthResult> {
+    const context = `
 You are a Linux Systems Engineer auditing a Proxmox Host.
 Analyze the provided configuration files for security, performance, and stability issues.
 
@@ -219,8 +199,8 @@ Checks:
 - sysctl: Swappiness? Forwarding enabled?
     `.trim();
 
-            const fileContentStr = files.map(f => `=== ${f.filename} ===\n${f.content}\n`).join('\n');
+    const fileContentStr = files.map(f => `=== ${f.filename} ===\n${f.content}\n`).join('\n');
 
-            const response = await generateAIResponse(fileContentStr, context);
-            return parseAIJSON(response) || { score: 100, issues: [], summary: 'AI Parse Error' };
-        }
+    const response = await generateAIResponse(fileContentStr, context);
+    return parseAIJSON(response) || { score: 100, issues: [], summary: 'AI Parse Error' };
+}

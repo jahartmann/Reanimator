@@ -1,7 +1,8 @@
 'use server';
 
 import db from '@/lib/db';
-import { getServer, createSSHClient, determineNodeName } from './vm';
+import { createSSHClient } from '@/lib/ssh';
+import { getServer, determineNodeName } from './vm';
 import { getVMs, getVMConfig } from './vm';
 import { analyzeConfigWithAI, analyzeHostWithAI, HealthResult } from './ai';
 
