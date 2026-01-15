@@ -216,7 +216,7 @@ export default function TagsPage() {
                     <h1 className="text-3xl font-bold">Tag Management</h1>
                     <p className="text-muted-foreground">Zentrale Verwaltung aller Proxmox Tags</p>
                 </div>
-                <Button onClick={handleScan} disabled={scanning} variant="outline">
+                <Button onClick={() => handleScan(false)} disabled={scanning} variant="outline">
                     <RefreshCw className={`mr-2 h-4 w-4 ${scanning ? 'animate-spin' : ''}`} />
                     Cluster Scan
                 </Button>
