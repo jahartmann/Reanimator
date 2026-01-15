@@ -69,7 +69,7 @@ function deleteSession(sessionId: string): void {
 }
 
 function cleanExpiredSessions(): void {
-    db.prepare('DELETE FROM sessions WHERE expires_at < datetime("now")').run();
+    db.prepare("DELETE FROM sessions WHERE expires_at < datetime('now')").run();
 }
 
 // ====== AUTHENTICATION ======
@@ -126,7 +126,7 @@ export async function login(username: string, password: string): Promise<{ succe
         console.log('[Auth] Cookie set');
 
         // Update last login
-        db.prepare('UPDATE users SET last_login = datetime("now") WHERE id = ?').run(user.id);
+        db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
 
         // Check if password change required
         if (user.force_password_change) {
@@ -167,7 +167,7 @@ export async function getCurrentUser(): Promise<User | null> {
                    u.force_password_change, u.created_at, u.last_login
             FROM sessions s
             JOIN users u ON s.user_id = u.id
-            WHERE s.id = ? AND s.expires_at > datetime("now") AND u.is_active = 1
+            WHERE s.id = ? AND s.expires_at > datetime('now') AND u.is_active = 1
         `).get(sessionId) as any;
 
         if (!session) {
