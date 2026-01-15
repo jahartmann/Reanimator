@@ -111,65 +111,64 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
                 {loading ? (
                     <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>
                 ) : (
-                ): (
-                        <div className = "space-y-4">
+                    <div className="space-y-4">
                         <Table>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead className = "w-[100px]">Name</TableHead>
-            <TableHead className="w-[80px]">Type</TableHead>
-            <TableHead className="w-[150px]">CIDR / IP</TableHead>
-            <TableHead className="w-[150px]">Gateway</TableHead>
-            <TableHead>Ports / Slaves</TableHead>
-            <TableHead className="w-[80px]">Autostart</TableHead>
-            <TableHead className="w-[100px] text-right">Actions</TableHead>
-        </TableRow>
+                                    <TableHead className="w-[100px]">Name</TableHead>
+                                    <TableHead className="w-[80px]">Type</TableHead>
+                                    <TableHead className="w-[150px]">CIDR / IP</TableHead>
+                                    <TableHead className="w-[150px]">Gateway</TableHead>
+                                    <TableHead>Ports / Slaves</TableHead>
+                                    <TableHead className="w-[80px]">Autostart</TableHead>
+                                    <TableHead className="w-[100px] text-right">Actions</TableHead>
+                                </TableRow>
                             </TableHeader >
-        <TableBody>
-            {interfaces.map((iface, idx) => (
-                <TableRow key={idx}>
-                    <TableCell className="font-medium">{iface.name}</TableCell>
-                    <TableCell>
-                        <Badge variant="outline">{iface.method === 'loopback' ? 'Loopback' : (iface.bridge_ports ? 'Bridge' : (iface.bond_slaves ? 'Bond' : 'Eth'))}</Badge>
-                    </TableCell>
-                    <TableCell>{iface.address || '-'}</TableCell>
-                    <TableCell>{iface.gateway || '-'}</TableCell>
-                    <TableCell className="font-mono text-xs">
-                        {iface.bridge_ports || iface.bond_slaves || '-'}
-                    </TableCell>
-                    <TableCell>
-                        {iface.auto ? <CheckIcon /> : '-'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                            <InterfaceDialog
-                                mode="edit"
-                                initialData={iface}
-                                onSave={(data) => handleUpdate(idx, data)}
-                            />
-                            <Button variant="ghost" size="icon" onClick={() => handleDelete(idx)}>
-                                <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
-                        </div>
-                    </TableCell>
-                </TableRow>
-            ))}
-        </TableBody>
+                            <TableBody>
+                                {interfaces.map((iface, idx) => (
+                                    <TableRow key={idx}>
+                                        <TableCell className="font-medium">{iface.name}</TableCell>
+                                        <TableCell>
+                                            <Badge variant="outline">{iface.method === 'loopback' ? 'Loopback' : (iface.bridge_ports ? 'Bridge' : (iface.bond_slaves ? 'Bond' : 'Eth'))}</Badge>
+                                        </TableCell>
+                                        <TableCell>{iface.address || '-'}</TableCell>
+                                        <TableCell>{iface.gateway || '-'}</TableCell>
+                                        <TableCell className="font-mono text-xs">
+                                            {iface.bridge_ports || iface.bond_slaves || '-'}
+                                        </TableCell>
+                                        <TableCell>
+                                            {iface.auto ? <CheckIcon /> : '-'}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            <div className="flex justify-end gap-1">
+                                                <InterfaceDialog
+                                                    mode="edit"
+                                                    initialData={iface}
+                                                    onSave={(data) => handleUpdate(idx, data)}
+                                                />
+                                                <Button variant="ghost" size="icon" onClick={() => handleDelete(idx)}>
+                                                    <Trash2 className="h-4 w-4 text-red-500" />
+                                                </Button>
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
                         </Table >
 
                         <div className="flex justify-start pt-4">
                             <InterfaceDialog mode="create" onSave={handleCreate} />
                         </div>
-                        
+
                         <div className="bg-muted p-4 rounded text-xs font-mono text-muted-foreground mt-8">
-                             <p className="font-bold mb-2">DEBUG: Raw Stats</p>
-                             <p>Interfaces: {interfaces.length}</p>
-                             <p>Raw Lines: {originalInterfaces.reduce((acc, i) => acc + (i.rawLines?.length || 0), 0)}</p>
-                             <p>Is Loading: {String(loading)}</p>
+                            <p className="font-bold mb-2">DEBUG: Raw Stats</p>
+                            <p>Interfaces: {interfaces.length}</p>
+                            <p>Raw Lines: {originalInterfaces.reduce((acc, i) => acc + (i.rawLines?.length || 0), 0)}</p>
+                            <p>Is Loading: {String(loading)}</p>
                         </div>
                     </div >
                 )
-}
+                }
             </CardContent >
         </Card >
     );
