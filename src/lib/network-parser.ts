@@ -35,8 +35,7 @@ export function parseNetworkInterfaces(content: string): NetworkInterface[] {
         if (!line && !current) continue;
 
         // Auto declaration
-        if (line.startsWith('auto ')) {
-            const parts = line.split(/\s+/);
+        if (line.startsWith('auto') || parts[0] === 'auto') {
             for (let j = 1; j < parts.length; j++) {
                 autoInterfaces.add(parts[j]);
             }
@@ -44,7 +43,7 @@ export function parseNetworkInterfaces(content: string): NetworkInterface[] {
         }
 
         // Iface declaration
-        if (line.startsWith('iface ')) {
+        if (parts[0] === 'iface') {
             // Save previous
             if (current) {
                 interfaces.push(current);

@@ -108,3 +108,36 @@ export async function scanHost(serverId: number) {
         await ssh.disconnect();
     }
 }
+// ... existing code ...
+
+export async function scanEntireInfrastructure() {
+    try {
+        const servers = db.prepare('SELECT id, name FROM servers').all() as { id: number, name: string }[];
+        const results = {
+            servers: 0,
+            vms: 0,
+            errors: [] as string[]
+        };
+
+        for (const server of servers) {
+            try {
+                // Scan Host
+                await scanHost(server.id);
+                results.servers++;
+
+                // Scan VMs
+                const vmRes = await scanAllVMs(server.id);
+                if (vmRes.success && vmRes.count) {
+                    results.vms += vmRes.count;
+                }
+            } catch (e: any) {
+                console.error(`Scan failed for ${server.name}:`, e);
+                results.errors.push(`${server.name}: ${e.message}`);
+            }
+        }
+
+        return { success: true, results };
+    } catch (e: any) {
+        return { success: false, error: e.message };
+    }
+}

@@ -23,6 +23,16 @@ export async function getScheduledJobs(): Promise<ScheduledJob[]> {
     `).all() as ScheduledJob[];
 }
 
+export async function getJobsForServer(serverId: number): Promise<ScheduledJob[]> {
+    return db.prepare(`
+        SELECT j.*, s.name as server_name 
+        FROM jobs j 
+        LEFT JOIN servers s ON j.source_server_id = s.id
+        WHERE j.source_server_id = ?
+        ORDER BY j.name
+    `).all(serverId) as ScheduledJob[];
+}
+
 // Create a new config backup schedule
 export async function createConfigBackupSchedule(
     serverId: number,

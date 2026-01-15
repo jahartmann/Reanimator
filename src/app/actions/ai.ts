@@ -131,61 +131,65 @@ export type HealthResult = {
 export async function analyzeConfigWithAI(config: string, type: 'qemu' | 'lxc'): Promise<HealthResult> {
     const context = `
 Du bist ein Proxmox Performance & Security Auditor.
-Analysiere diese VM-Konfiguration.
-Antworte AUSSCHLIESSLICH mit validem JSON (kein Markdown), passend zu diesem Interface:
+Analysiere diese VM-Konfiguration (Type: ${type}).
+
+Antworte AUSSCHLIESSLICH mit validem JSON (kein Markdown, kein Text davor/danach):
 {
-  "score": number, // 0-100, 100 ist perfekt
-  "summary": "string", // 1 Satz Zusammenfassung auf DEUTSCH
+  "score": number, // 0-100 (100 = Perfekt)
+  "summary": "string", // Kurze deutsche Zusammenfassung
   "issues": [
     {
       "severity": "critical" | "warning" | "info",
       "title": "string", // DEUTSCH
       "description": "string", // DEUTSCH, präzise
-      "fix": "string" // Befehl oder Einstellung
+      "fix": "string", // Konkreter Befehl oder Einstellung
+      "reasoning": "string" // WARUM ist das ein Problem? (Erklärung)
     }
   ]
 }
 
-Prüfe auf:
-- VirtIO Nutzung (Net/Disk) -> Warnung wenn nicht
-- CPU Type (prefer 'host') -> Warnung wenn kvm64
-- Discard/SSD Emulation -> Info/Warnung
-- Network Bridges -> Plausibilität
+Prüfe streng auf Best Practices:
+1. VirtIO: Wir wollen 'virtio' für Net & Disk (scsi mit virtio-scsi).
+2. CPU: Type sollte 'host' sein (beste Performance), außer es gibt Migrationsgründe (kvm64 ist fallback -> Warnung).
+3. Discard: SSD Emulation / Discard sollte aktiv sein.
+4. Agent: Qemu-Guest-Agent sollte installiert/aktiv sein.
+
+Config:
+${config}
     `.trim();
 
-    const response = await generateAIResponse(`Type: ${type}\nConfig:\n${config}`, context);
+    const response = await generateAIResponse(context, ''); // Prompt is in context mainly
     const result = parseAIJSON(response);
 
     // Fallback if AI fails
     if (!result) {
-        return { score: 100, issues: [], summary: 'AI Parse Error' };
+        return { score: 100, issues: [], summary: 'KI-Parsing fehlgeschlagen (Ungültiges JSON)' };
     }
     return result;
 }
 
 export async function analyzeHostWithAI(files: { filename: string, content: string }[]): Promise<HealthResult> {
     const context = `
-Du bist ein Linux System Engineer, der einen Proxmox Host auditiert.
-Analysiere die Konfigurationsdateien auf Sicherheit, Performance und Stabilität.
+Du bist ein Linux System Engineer (Debian/Proxmox).
+Analysiere diese System-Dumps auf Sicherheit und Performance.
 
-Dateien:
-${files.map(f => `- ${f.filename}`).join('\n')}
-
-Antworte AUSSCHLIESSLICH mit validem JSON (gleiches Format wie oben):
+Antworte AUSSCHLIESSLICH mit validem JSON (Deutsch):
 {
-  "score": number,
-  "summary": "string", // DEUTSCH
-  "issues": [{ "severity": "...", "title": "...", "description": "...", "fix": "..." }]
+  "score": number, // 0-100
+  "summary": "string",
+  "issues": [{ "severity": "...", "title": "...", "description": "...", "fix": "...", "reasoning": "..." }]
 }
 
 Checks:
-- /etc/network/interfaces: Redundanz (Bonding)? Leere Bridges?
-- storage.cfg: Unsichere Mounts?
-- sysctl: Swappiness? Forwarding aktiv?
+1. **User Check**: Prüfe /etc/passwd oder shadow (falls vorhanden) ob NUR 'root' genutzt wird. -> WARNUNG: "Nur Root-User aktiv". Empfehle separaten Admin-User/Sudo.
+2. Network: Redundanz vorhanden (LACP/Bond)? Leere Bridges?
+3. Storage: 'dir' Storage auf Root-Disk? (Warnung).
+4. Sysctl: Swappiness optimiert? (vm.swappiness < 60 für Server empfohlen).
+
+Dateien:
+${files.map(f => `=== ${f.filename} ===\n${f.content}\n`).join('\n')}
     `.trim();
 
-    const fileContentStr = files.map(f => `=== ${f.filename} ===\n${f.content}\n`).join('\n');
-
-    const response = await generateAIResponse(fileContentStr, context);
-    return parseAIJSON(response) || { score: 100, issues: [], summary: 'AI Parse Error' };
+    const response = await generateAIResponse(context, '');
+    return parseAIJSON(response) || { score: 100, issues: [], summary: 'KI-Parsing fehlgeschlagen' };
 }

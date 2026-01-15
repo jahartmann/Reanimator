@@ -114,10 +114,6 @@ export function ServerHealth({ initialResults, serverId }: ServerHealthProps) {
                         {scanningVMs ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
                         Alle VMs Scannen
                     </Button>
-                    <Button onClick={handleAutomate} variant="ghost" className="w-full justify-start text-muted-foreground hover:text-primary">
-                        <Clock className="mr-2 h-4 w-4" />
-                        Tägl. 3:00 Uhr planen
-                    </Button>
                 </Card>
             </div>
 

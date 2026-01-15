@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Server, FolderCog, Clock, Download, Activity, Database } from "lucide-react";
 import { MonitoringPanel } from '@/components/ui/MonitoringPanel';
 import { StorageDashboard } from '@/components/ui/StorageDashboard';
+import { GlobalScanButton } from '@/components/GlobalScanButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,6 +81,7 @@ export default function Dashboard() {
               Backup erstellen
             </Button>
           </Link>
+          <GlobalScanButton />
         </CardContent>
       </Card>
 

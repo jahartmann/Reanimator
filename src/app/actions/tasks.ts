@@ -1,0 +1,102 @@
+'use server';
+
+import db from '@/lib/db';
+
+export interface TaskItem {
+    id: string; // "job-123" or "mig-456"
+    rawId: number;
+    source: 'job' | 'migration';
+    type: string; // 'scan', 'config', 'migration', etc.
+    description: string;
+    status: 'running' | 'completed' | 'failed' | 'pending' | 'cancelled';
+    startTime: string;
+    endTime?: string;
+    duration?: string;
+    log?: string;
+    node?: string; // Source Server Name
+}
+
+export async function getAllTasks(limit: number = 50, filterType?: string, filterStatus?: string): Promise<TaskItem[]> {
+    // We fetch jobs and migrations and union them in JS or SQL. SQL is better for sorting/limiting.
+    // However, they are in different tables with different columns. 
+    // Let's use a nice Union query.
+
+    // Note: SQLite UNION limits might apply, but 50 records is fine.
+
+    const sql = `
+        SELECT 
+            'job' as source,
+            h.id as rawId,
+            j.job_type as type,
+            j.name as description,
+            h.status,
+            h.start_time as startTime,
+            h.end_time as endTime,
+            h.log,
+            s.name as node_name
+        FROM history h
+        JOIN jobs j ON h.job_id = j.id
+        LEFT JOIN servers s ON j.source_server_id = s.id
+        
+        UNION ALL
+        
+        SELECT
+            'migration' as source,
+            mt.id as rawId,
+            'migration' as type,
+            'Migration ' || COALESCE(s1.name, '?') || ' -> ' || COALESCE(s2.name, '?') as description,
+            mt.status,
+            mt.created_at as startTime,
+            mt.completed_at as endTime,
+            mt.log,
+            s1.name as node_name
+        FROM migration_tasks mt
+        LEFT JOIN servers s1 ON mt.source_server_id = s1.id
+        LEFT JOIN servers s2 ON mt.target_server_id = s2.id
+        
+        ORDER BY startTime DESC
+        LIMIT ?
+    `;
+
+    const rows = db.prepare(sql).all(limit) as any[];
+
+    return rows.map(row => {
+        // Calculate duration if valid dates
+        let duration = '';
+        if (row.startTime && row.endTime) {
+            const start = new Date(row.startTime).getTime();
+            const end = new Date(row.endTime).getTime();
+            const diffMs = end - start;
+            if (!isNaN(diffMs)) {
+                if (diffMs < 1000) duration = `${diffMs}ms`;
+                else if (diffMs < 60000) duration = `${Math.round(diffMs / 1000)}s`;
+                else duration = `${Math.round(diffMs / 60000)}m`;
+            }
+        } else if (row.status === 'running' && row.startTime) {
+            // Pending/Running duration?
+            const start = new Date(row.startTime).getTime();
+            const now = Date.now();
+            const diffMs = now - start;
+            duration = `Running (${Math.round(diffMs / 1000)}s)`;
+        }
+
+        // Apply filters in JS for flexibility (or add WHERE clauses above if performance needs it)
+        return {
+            id: `${row.source}-${row.rawId}`,
+            rawId: row.rawId,
+            source: row.source,
+            type: row.type,
+            description: row.description,
+            status: row.status,
+            startTime: row.startTime,
+            endTime: row.endTime,
+            duration,
+            log: row.log,
+            node: row.node_name
+        };
+    }).filter(t => {
+        if (filterType && t.type !== filterType) return false;
+        if (filterStatus && t.status !== filterStatus) return false;
+        return true;
+    });
+}

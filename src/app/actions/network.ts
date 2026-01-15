@@ -18,7 +18,10 @@ export async function getNetworkConfig(serverId: number): Promise<{ success: boo
         const content = await ssh.exec('cat /etc/network/interfaces');
         await ssh.disconnect();
 
+        console.log(`[Network] Fetched ${content.length} chars from ${server.name}`);
+
         const interfaces = parseNetworkInterfaces(content);
+        console.log(`[Network] Parsed ${interfaces.length} interfaces`);
         // Sort: lo first, then others by name
         interfaces.sort((a, b) => {
             if (a.method === 'loopback') return -1;
