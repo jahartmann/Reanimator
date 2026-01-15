@@ -75,6 +75,8 @@ function cleanExpiredSessions(): void {
 // ====== AUTHENTICATION ======
 
 export async function login(username: string, password: string): Promise<{ success: boolean; error?: string; requiresPasswordChange?: boolean }> {
+    console.log('[Auth] Login attempt for:', username);
+
     try {
         // Clean up expired sessions periodically
         cleanExpiredSessions();
@@ -83,18 +85,34 @@ export async function login(username: string, password: string): Promise<{ succe
         const user = db.prepare('SELECT * FROM users WHERE username = ? AND is_active = 1')
             .get(username) as any;
 
+        console.log('[Auth] User found:', user ? 'YES' : 'NO');
+
         if (!user) {
+            console.log('[Auth] Login failed: user not found or inactive');
             return { success: false, error: 'Ungültiger Benutzername oder Passwort' };
         }
 
+        console.log('[Auth] Comparing password hash...');
+
         // Verify password
-        const validPassword = await bcrypt.compare(password, user.password_hash);
+        let validPassword = false;
+        try {
+            validPassword = await bcrypt.compare(password, user.password_hash);
+        } catch (bcryptError) {
+            console.error('[Auth] bcrypt.compare error:', bcryptError);
+            return { success: false, error: 'Passwortprüfung fehlgeschlagen' };
+        }
+
+        console.log('[Auth] Password valid:', validPassword);
+
         if (!validPassword) {
             return { success: false, error: 'Ungültiger Benutzername oder Passwort' };
         }
 
         // Create session
+        console.log('[Auth] Creating session...');
         const sessionId = await createSession(user.id);
+        console.log('[Auth] Session created:', sessionId.substring(0, 8) + '...');
 
         // Set cookie
         const cookieStore = await cookies();
@@ -105,19 +123,22 @@ export async function login(username: string, password: string): Promise<{ succe
             maxAge: SESSION_DURATION_HOURS * 60 * 60, // 24 hours in seconds
             path: '/',
         });
+        console.log('[Auth] Cookie set');
 
         // Update last login
         db.prepare('UPDATE users SET last_login = datetime("now") WHERE id = ?').run(user.id);
 
         // Check if password change required
         if (user.force_password_change) {
+            console.log('[Auth] Password change required');
             return { success: true, requiresPasswordChange: true };
         }
 
+        console.log('[Auth] Login successful');
         return { success: true };
     } catch (error) {
-        console.error('[Auth] Login failed:', error);
-        return { success: false, error: 'Login fehlgeschlagen' };
+        console.error('[Auth] Login failed with error:', error);
+        return { success: false, error: 'Login fehlgeschlagen: ' + String(error) };
     }
 }
 

@@ -36,8 +36,11 @@ export default function LoginPage() {
         setError('');
         setLoading(true);
 
+        console.log('[Login] Attempting login for:', username);
+
         try {
             const result = await login(username, password);
+            console.log('[Login] Result:', result);
 
             if (result.success) {
                 if (result.requiresPasswordChange) {
@@ -50,7 +53,8 @@ export default function LoginPage() {
                 setError(result.error || 'Login fehlgeschlagen');
             }
         } catch (e) {
-            setError('Ein Fehler ist aufgetreten');
+            console.error('[Login] Exception:', e);
+            setError('Ein Fehler ist aufgetreten: ' + String(e));
         } finally {
             setLoading(false);
         }
