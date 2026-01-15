@@ -15,10 +15,10 @@ export async function getNetworkConfig(serverId: number): Promise<{ success: boo
         });
         await ssh.connect();
 
-        const content = await ssh.execCommand('cat /etc/network/interfaces');
-        ssh.dispose();
+        const content = await ssh.exec('cat /etc/network/interfaces');
+        await ssh.disconnect();
 
-        const interfaces = parseNetworkInterfaces(content.stdout);
+        const interfaces = parseNetworkInterfaces(content);
         // Sort: lo first, then others by name
         interfaces.sort((a, b) => {
             if (a.method === 'loopback') return -1;
@@ -46,31 +46,26 @@ export async function saveNetworkConfig(serverId: number, interfaces: NetworkInt
         const content = generateNetworkInterfaces(interfaces);
 
         // Backup existing
-        await ssh.execCommand(`cp /etc/network/interfaces /etc/network/interfaces.bak.$(date +%s)`);
+        await ssh.exec(`cp /etc/network/interfaces /etc/network/interfaces.bak.$(date +%s)`);
 
         // Write new file
-        // echo with EOF to handle newlines safely
-        // But ssh.execCommand might struggle with complex multiline.
-        // Better to use sftp or a robust echo.
-        // Node-ssh execCommand usually handles just a command string. 
-        // We can use a temporary file approach or base64 decode.
-
         const base64Content = Buffer.from(content).toString('base64');
-        await ssh.execCommand(`echo "${base64Content}" | base64 -d > /etc/network/interfaces.new`);
+        await ssh.exec(`echo "${base64Content}" | base64 -d > /etc/network/interfaces.new`);
 
         // Move to real file
-        await ssh.execCommand(`mv /etc/network/interfaces.new /etc/network/interfaces`);
+        await ssh.exec(`mv /etc/network/interfaces.new /etc/network/interfaces`);
 
         if (apply) {
             // Try ifreload first (Proxmox standard), fall back to networking restart
-            const reload = await ssh.execCommand('ifreload -a');
-            if (reload.code !== 0) {
+            try {
+                await ssh.exec('ifreload -a');
+            } catch (e) {
                 // Fallback
-                await ssh.execCommand('systemctl restart networking');
+                await ssh.exec('systemctl restart networking');
             }
         }
 
-        ssh.dispose();
+        await ssh.disconnect();
         return { success: true };
     } catch (e: any) {
         console.error('Network Save Error:', e);
