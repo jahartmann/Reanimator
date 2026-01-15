@@ -288,13 +288,12 @@ for (const [name, desc] of defaultRoles) {
 }
 
 // Create default admin user if not exists (password: admin - must be changed on first login!)
-// Using bcrypt hash for "admin" - $2b$10$X8x3hs6zQB2eIJP3qR5qPOxZ1QKJY3jEwXR7k4r5xCJGWv0.1mnK.
 const adminExists = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
 if (!adminExists) {
-  // Pre-computed bcrypt hash for "admin" with cost 10
+  // Properly generated bcrypt hash for "admin" with cost 10
   db.prepare(`
     INSERT INTO users (username, password_hash, is_admin, force_password_change)
-    VALUES ('admin', '$2b$10$dGJhOHU1d0N5cmFiNDNxZu.kNvhKPV8RGZmPNHYxN7oZxN0xZx1G6', 1, 1)
+    VALUES ('admin', '$2b$10$9qaMqgdKUlZRQcZN2.I9eucGWiuZSkFuVs7krsbyYMu9IhGKQwwGa', 1, 1)
   `).run();
   console.log('Created default admin user (username: admin, password: admin)');
 }
