@@ -1,4 +1,5 @@
 const Database = require('better-sqlite3');
+const bcrypt = require('bcryptjs');
 const fs = require('fs');
 const path = require('path');
 
@@ -290,10 +291,10 @@ for (const [name, desc] of defaultRoles) {
 // Create default admin user if not exists (password: admin - must be changed on first login!)
 const adminExists = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
 if (!adminExists) {
-  // Properly generated bcrypt hash for "admin" with cost 10
+  // Properly generated bcryptjs hash for "admin" with cost 10
   db.prepare(`
     INSERT INTO users (username, password_hash, is_admin, force_password_change)
-    VALUES ('admin', '$2b$10$9qaMqgdKUlZRQcZN2.I9eucGWiuZSkFuVs7krsbyYMu9IhGKQwwGa', 1, 1)
+    VALUES ('admin', '$2b$10$fM2P4g7J.8qGo4o2pfRhvOXMWZ2bMsV3Eh2PhQH7i1u.HgtGr1Fdu', 1, 1)
   `).run();
   console.log('Created default admin user (username: admin, password: admin)');
 }
