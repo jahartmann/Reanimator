@@ -137,7 +137,7 @@ export async function POST(request: NextRequest) {
 
                 // 5. Build
                 send('📦 Installing dependencies (this may take a while)...');
-                await runStep('npm', ['install'], projectRoot);
+                await runStep('npm', ['install', '--include=dev'], projectRoot);
 
                 send('🔨 Building application...');
                 await runStep('npm', ['run', 'build'], projectRoot);
