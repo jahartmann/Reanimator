@@ -30,6 +30,7 @@ export function parseNetworkInterfaces(content: string): NetworkInterface[] {
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
+        const parts = line.split(/\s+/);
 
         // Skip empty lines if no current content
         if (!line && !current) continue;
