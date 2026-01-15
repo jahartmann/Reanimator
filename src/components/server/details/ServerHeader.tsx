@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowLeft, Server, Tags } from "lucide-react";
+import { ArrowLeft, Server, Tags, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import TagManagement from '@/components/ui/TagManagement';
