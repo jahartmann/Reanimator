@@ -24,7 +24,7 @@ export function VirtualMachineList({ vms, currentServerId, otherServers, availab
 
     // AI Health Check
     const [healthCheckLoading, setHealthCheckLoading] = useState<Record<string, boolean>>({});
-    const [healthResult, setHealthResult] = useState<string | null>(null);
+    const [healthResult, setHealthResult] = useState<HealthResult | null>(null);
 
     const handleHealthCheck = async (vm: VirtualMachine) => {
         setHealthCheckLoading(prev => ({ ...prev, [vm.vmid]: true }));
