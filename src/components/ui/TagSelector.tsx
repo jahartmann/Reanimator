@@ -1,9 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import { Check, ChevronsUpDown, Loader2 } from 'lucide-react';
+import { Check, ChevronsUpDown, Loader2, X, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
     Command,
     CommandEmpty,
@@ -24,9 +25,18 @@ interface TagSelectorProps {
     selectedTags: string[]; // array of tag names
     onTagsChange: (tags: string[]) => void;
     isLoading?: boolean;
+    maxVisibleTags?: number; // Maximum tags to show before "+X more"
+    compact?: boolean; // Compact mode for tight spaces
 }
 
-export function TagSelector({ availableTags, selectedTags, onTagsChange, isLoading }: TagSelectorProps) {
+export function TagSelector({
+    availableTags,
+    selectedTags,
+    onTagsChange,
+    isLoading,
+    maxVisibleTags = 3,
+    compact = false
+}: TagSelectorProps) {
     const [open, setOpen] = React.useState(false);
 
     const toggleTag = (tagName: string) => {
@@ -36,6 +46,18 @@ export function TagSelector({ availableTags, selectedTags, onTagsChange, isLoadi
         onTagsChange(newTags);
     };
 
+    const clearAll = () => {
+        onTagsChange([]);
+    };
+
+    const getTagColor = (tagName: string) => {
+        const tag = availableTags.find(t => t.name === tagName);
+        return tag ? (tag.color.startsWith('#') ? tag.color : `#${tag.color}`) : '#888';
+    };
+
+    const visibleTags = selectedTags.slice(0, maxVisibleTags);
+    const hiddenCount = selectedTags.length - maxVisibleTags;
+
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
@@ -43,47 +65,58 @@ export function TagSelector({ availableTags, selectedTags, onTagsChange, isLoadi
                     variant="outline"
                     role="combobox"
                     aria-expanded={open}
-                    className="w-full justify-between"
+                    className={cn(
+                        "justify-between min-w-0",
+                        compact ? "h-8 text-xs px-2" : "w-full"
+                    )}
                     disabled={isLoading}
                 >
                     {isLoading ? (
                         <span className="flex items-center">
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Loading...
+                            <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                            Laden...
                         </span>
                     ) : selectedTags.length > 0 ? (
-                        <div className="flex gap-1 flex-wrap overflow-hidden">
-                            {selectedTags.map(tagName => {
-                                const tag = availableTags.find(t => t.name === tagName);
-                                const color = tag ? (tag.color.startsWith('#') ? tag.color : `#${tag.color}`) : '#ccc';
-                                return (
-                                    <span
-                                        key={tagName}
-                                        className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary text-secondary-foreground"
-                                        style={{ borderLeft: `4px solid ${color}` }}
-                                    >
-                                        {tagName}
-                                    </span>
-                                );
-                            })}
+                        <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden">
+                            {visibleTags.map(tagName => (
+                                <Badge
+                                    key={tagName}
+                                    variant="secondary"
+                                    className="text-[10px] px-1.5 py-0 shrink-0"
+                                    style={{ borderLeft: `3px solid ${getTagColor(tagName)}` }}
+                                >
+                                    {tagName}
+                                </Badge>
+                            ))}
+                            {hiddenCount > 0 && (
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">
+                                    +{hiddenCount}
+                                </Badge>
+                            )}
                         </div>
                     ) : (
-                        "Select tags..."
+                        <span className="text-muted-foreground">
+                            {compact ? "Tags..." : "Tags auswählen..."}
+                        </span>
                     )}
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    <ChevronsUpDown className="ml-1 h-3 w-3 shrink-0 opacity-50" />
                 </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-[300px] p-0">
+            <PopoverContent className="w-[280px] p-0" align="start">
                 <Command>
-                    <CommandInput placeholder="Search tags..." />
-                    <CommandList>
-                        <CommandEmpty>No tags found.</CommandEmpty>
+                    <div className="flex items-center border-b px-3">
+                        <Search className="h-4 w-4 shrink-0 opacity-50" />
+                        <CommandInput placeholder="Tags suchen..." className="border-0" />
+                    </div>
+                    <CommandList className="max-h-[200px]">
+                        <CommandEmpty>Keine Tags gefunden.</CommandEmpty>
                         <CommandGroup>
                             {availableTags.map((tag) => (
                                 <CommandItem
                                     key={tag.id}
                                     value={tag.name}
                                     onSelect={() => toggleTag(tag.name)}
+                                    className="cursor-pointer"
                                 >
                                     <Check
                                         className={cn(
@@ -92,14 +125,30 @@ export function TagSelector({ availableTags, selectedTags, onTagsChange, isLoadi
                                         )}
                                     />
                                     <div
-                                        className="w-3 h-3 rounded-full mr-2"
+                                        className="w-3 h-3 rounded-full mr-2 shrink-0"
                                         style={{ backgroundColor: tag.color.startsWith('#') ? tag.color : `#${tag.color}` }}
                                     />
-                                    {tag.name}
+                                    <span className="truncate">{tag.name}</span>
                                 </CommandItem>
                             ))}
                         </CommandGroup>
                     </CommandList>
+                    {selectedTags.length > 0 && (
+                        <div className="border-t p-2">
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="w-full text-xs h-7"
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    clearAll();
+                                }}
+                            >
+                                <X className="h-3 w-3 mr-1" />
+                                Alle entfernen ({selectedTags.length})
+                            </Button>
+                        </div>
+                    )}
                 </Command>
             </PopoverContent>
         </Popover>

@@ -1,20 +1,33 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Tag, getTags, createTag, deleteTag, syncTagsFromProxmox, pushTagsToServer } from '@/app/actions/tags';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, RefreshCw, Plus, Trash2, Upload } from 'lucide-react';
+import { Loader2, RefreshCw, Plus, Trash2, Upload, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { ScrollArea } from '@/components/ui/scroll-area';
+
+function getContrastColor(hexColor: string) {
+    if (!hexColor) return 'white';
+    const hex = hexColor.replace('#', '');
+    if (hex.length !== 6) return 'white';
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+    return (yiq >= 128) ? 'black' : 'white';
+}
 
 export default function TagManagement({ serverId }: { serverId: number }) {
     const [tags, setTags] = useState<Tag[]>([]);
     const [loading, setLoading] = useState(false);
     const [newTagName, setNewTagName] = useState('');
-    const [newTagColor, setNewTagColor] = useState('#EF4444'); // Default red
+    const [newTagColor, setNewTagColor] = useState('#EF4444');
     const [syncing, setSyncing] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
 
     useEffect(() => {
         loadTags();
@@ -26,11 +39,28 @@ export default function TagManagement({ serverId }: { serverId: number }) {
             const fetchedTags = await getTags();
             setTags(fetchedTags);
         } catch (e) {
-            toast.error('Failed to load tags');
+            toast.error('Fehler beim Laden der Tags');
         } finally {
             setLoading(false);
         }
     }
+
+    const filteredTags = useMemo(() => {
+        if (!searchQuery.trim()) return tags;
+        const q = searchQuery.toLowerCase();
+        return tags.filter(t => t.name.toLowerCase().includes(q));
+    }, [tags, searchQuery]);
+
+    // Group tags alphabetically
+    const groupedTags = useMemo(() => {
+        const groups: Record<string, Tag[]> = {};
+        filteredTags.forEach(tag => {
+            const firstLetter = tag.name[0]?.toUpperCase() || '#';
+            if (!groups[firstLetter]) groups[firstLetter] = [];
+            groups[firstLetter].push(tag);
+        });
+        return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
+    }, [filteredTags]);
 
     async function handleCreateTag() {
         if (!newTagName) return;
@@ -39,23 +69,23 @@ export default function TagManagement({ serverId }: { serverId: number }) {
             if (res.success && res.tag) {
                 setTags([...tags, res.tag]);
                 setNewTagName('');
-                toast.success('Tag created');
+                toast.success('Tag erstellt');
             } else {
-                toast.error(res.error || 'Failed to create tag');
+                toast.error(res.error || 'Fehler beim Erstellen');
             }
         } catch (e) {
-            toast.error('Failed to create tag');
+            toast.error('Fehler beim Erstellen');
         }
     }
 
     async function handleDeleteTag(id: number) {
-        if (!confirm('Are you sure? This will only delete the tag from the local database.')) return;
+        if (!confirm('Tag löschen? Dies entfernt nur den lokalen Eintrag.')) return;
         try {
             await deleteTag(id);
             setTags(tags.filter(t => t.id !== id));
-            toast.success('Tag deleted');
+            toast.success('Tag gelöscht');
         } catch (e) {
-            toast.error('Failed to delete tag');
+            toast.error('Fehler beim Löschen');
         }
     }
 
@@ -70,7 +100,7 @@ export default function TagManagement({ serverId }: { serverId: number }) {
                 toast.error(res.message);
             }
         } catch (e) {
-            toast.error('Sync failed');
+            toast.error('Sync fehlgeschlagen');
         } finally {
             setSyncing(false);
         }
@@ -81,12 +111,12 @@ export default function TagManagement({ serverId }: { serverId: number }) {
         try {
             const res = await pushTagsToServer(serverId, tags);
             if (res.success) {
-                toast.success('Tags pushed to server');
+                toast.success('Tags an Server übertragen');
             } else {
                 toast.error(res.message);
             }
         } catch (e) {
-            toast.error('Push failed');
+            toast.error('Push fehlgeschlagen');
         } finally {
             setSyncing(false);
         }
@@ -94,84 +124,117 @@ export default function TagManagement({ serverId }: { serverId: number }) {
 
     return (
         <Card className="w-full">
-            <CardHeader>
+            <CardHeader className="pb-3">
                 <CardTitle className="flex justify-between items-center">
                     <span>Tag Management</span>
                     <div className="flex gap-2">
                         <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
                             {syncing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-                            Sync from Proxmox
+                            Sync
                         </Button>
                         <Button variant="secondary" size="sm" onClick={handlePush} disabled={syncing}>
                             {syncing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
-                            Push to Proxmox
+                            Push
                         </Button>
                     </div>
                 </CardTitle>
                 <CardDescription>
-                    Manage tags locally and sync with Proxmox.
+                    Tags lokal verwalten und mit Proxmox synchronisieren
                 </CardDescription>
             </CardHeader>
-            <CardContent>
-                <div className="flex flex-col gap-4">
-                    {/* Create New Tag */}
-                    <div className="flex gap-2 items-end">
-                        <div className="grid w-full max-w-sm items-center gap-1.5">
-                            <label htmlFor="tagName" className="text-sm font-medium">Name</label>
-                            <Input
-                                id="tagName"
-                                placeholder="e.g. production"
-                                value={newTagName}
-                                onChange={(e) => setNewTagName(e.target.value)}
-                            />
-                        </div>
-                        <div className="grid items-center gap-1.5">
-                            <label htmlFor="tagColor" className="text-sm font-medium">Color</label>
-                            <Input
-                                id="tagColor"
-                                type="color"
-                                className="w-12 h-10 p-1 cursor-pointer"
-                                value={newTagColor}
-                                onChange={(e) => setNewTagColor(e.target.value)}
-                            />
-                        </div>
-                        <Button onClick={handleCreateTag} disabled={!newTagName}>
-                            <Plus className="h-4 w-4 mr-2" />
-                            Create
-                        </Button>
+            <CardContent className="space-y-4">
+                {/* Create New Tag */}
+                <div className="flex gap-2 items-end">
+                    <div className="flex-1">
+                        <Input
+                            placeholder="Neuer Tag (z.B. production)"
+                            value={newTagName}
+                            onChange={(e) => setNewTagName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleCreateTag()}
+                        />
                     </div>
+                    <Input
+                        type="color"
+                        className="w-10 h-10 p-1 cursor-pointer"
+                        value={newTagColor}
+                        onChange={(e) => setNewTagColor(e.target.value)}
+                    />
+                    <Button onClick={handleCreateTag} disabled={!newTagName} size="icon">
+                        <Plus className="h-4 w-4" />
+                    </Button>
+                </div>
 
-                    <div className="border rounded-md p-4 min-h-[100px]">
-                        {loading ? (
-                            <div className="flex justify-center p-4">
-                                <Loader2 className="h-6 w-6 animate-spin" />
-                            </div>
-                        ) : tags.length === 0 ? (
-                            <div className="text-center text-muted-foreground p-4">
-                                No tags found.
-                            </div>
-                        ) : (
-                            <div className="flex flex-wrap gap-2">
-                                {tags.map(tag => (
-                                    <div key={tag.id} className="flex items-center gap-1 bg-secondary rounded-full pl-3 pr-1 py-1">
-                                        <div
-                                            className="w-3 h-3 rounded-full"
-                                            style={{ backgroundColor: tag.color.startsWith('#') ? tag.color : `#${tag.color}` }}
-                                        />
-                                        <span className="text-sm font-medium mr-1">{tag.name}</span>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-6 w-6 rounded-full hover:bg-destructive/20 hover:text-destructive"
-                                            onClick={() => handleDeleteTag(tag.id)}
-                                        >
-                                            <Trash2 className="h-3 w-3" />
-                                        </Button>
+                {/* Search */}
+                <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                        placeholder="Tags suchen..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="pl-9"
+                    />
+                    {searchQuery && (
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6"
+                            onClick={() => setSearchQuery('')}
+                        >
+                            <X className="h-3 w-3" />
+                        </Button>
+                    )}
+                </div>
+
+                {/* Tags List */}
+                <ScrollArea className="h-[300px] border rounded-md p-2">
+                    {loading ? (
+                        <div className="flex justify-center p-4">
+                            <Loader2 className="h-6 w-6 animate-spin" />
+                        </div>
+                    ) : filteredTags.length === 0 ? (
+                        <div className="text-center text-muted-foreground p-4">
+                            {searchQuery ? 'Keine passenden Tags gefunden.' : 'Keine Tags vorhanden. Starten Sie einen Scan.'}
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {groupedTags.map(([letter, letterTags]) => (
+                                <div key={letter}>
+                                    <div className="sticky top-0 bg-background/95 px-2 py-1 text-xs font-medium text-muted-foreground border-b mb-2">
+                                        {letter}
                                     </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                                    <div className="flex flex-wrap gap-2 px-1">
+                                        {letterTags.map(tag => {
+                                            const bgColor = tag.color.startsWith('#') ? tag.color : `#${tag.color}`;
+                                            return (
+                                                <Badge
+                                                    key={tag.id}
+                                                    className="group relative pr-6 cursor-default"
+                                                    style={{
+                                                        backgroundColor: bgColor,
+                                                        color: getContrastColor(tag.color)
+                                                    }}
+                                                >
+                                                    {tag.name}
+                                                    <button
+                                                        onClick={() => handleDeleteTag(tag.id)}
+                                                        className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-black/20 rounded"
+                                                    >
+                                                        <X className="h-3 w-3" />
+                                                    </button>
+                                                </Badge>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </ScrollArea>
+
+                {/* Stats */}
+                <div className="text-xs text-muted-foreground text-right">
+                    {tags.length} Tags insgesamt
+                    {searchQuery && ` • ${filteredTags.length} gefiltert`}
                 </div>
             </CardContent>
         </Card>

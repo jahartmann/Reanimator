@@ -156,5 +156,149 @@ db.exec(`
   );
 `);
 
+// VMs table for sync
+db.exec(`
+  CREATE TABLE IF NOT EXISTS vms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vmid INTEGER NOT NULL,
+    name TEXT,
+    server_id INTEGER NOT NULL,
+    type TEXT CHECK(type IN ('qemu', 'lxc')),
+    status TEXT,
+    tags TEXT DEFAULT '[]',
+    UNIQUE(vmid, server_id),
+    FOREIGN KEY(server_id) REFERENCES servers(id)
+  );
+`);
+
+// ====== USER AUTHENTICATION SYSTEM ======
+
+// Users table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    email TEXT,
+    is_admin INTEGER DEFAULT 0,
+    is_active INTEGER DEFAULT 1,
+    force_password_change INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_login TEXT
+  );
+`);
+
+// Roles table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS roles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    description TEXT
+  );
+`);
+
+// Permissions table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS permissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    description TEXT
+  );
+`);
+
+// Role-Permission mapping
+db.exec(`
+  CREATE TABLE IF NOT EXISTS role_permissions (
+    role_id INTEGER,
+    permission_id INTEGER,
+    PRIMARY KEY (role_id, permission_id),
+    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+    FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+  );
+`);
+
+// User-Role mapping
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_roles (
+    user_id INTEGER,
+    role_id INTEGER,
+    PRIMARY KEY (user_id, role_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+  );
+`);
+
+// User-Server Access (server-specific permissions)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_server_access (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    server_id INTEGER NOT NULL,
+    can_view INTEGER DEFAULT 1,
+    can_manage INTEGER DEFAULT 0,
+    can_migrate INTEGER DEFAULT 0,
+    UNIQUE(user_id, server_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+  );
+`);
+
+// Sessions table for login tracking
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+`);
+
+// Insert default permissions if not exists
+const defaultPermissions = [
+  ['servers.view', 'View servers'],
+  ['servers.manage', 'Add/Edit/Delete servers'],
+  ['vms.view', 'View VMs'],
+  ['vms.migrate', 'Migrate VMs'],
+  ['backups.view', 'View backups'],
+  ['backups.manage', 'Create/Restore backups'],
+  ['configs.view', 'View configs'],
+  ['configs.manage', 'Manage configs'],
+  ['users.view', 'View users'],
+  ['users.manage', 'Manage users'],
+  ['tags.view', 'View tags'],
+  ['tags.manage', 'Manage tags'],
+];
+
+const insertPerm = db.prepare('INSERT OR IGNORE INTO permissions (name, description) VALUES (?, ?)');
+for (const [name, desc] of defaultPermissions) {
+  insertPerm.run(name, desc);
+}
+
+// Insert default roles if not exists
+const defaultRoles = [
+  ['Administrator', 'Full access to all features'],
+  ['Operator', 'VM and Backup operations'],
+  ['Viewer', 'Read-only access'],
+];
+
+const insertRole = db.prepare('INSERT OR IGNORE INTO roles (name, description) VALUES (?, ?)');
+for (const [name, desc] of defaultRoles) {
+  insertRole.run(name, desc);
+}
+
+// Create default admin user if not exists (password: admin - must be changed on first login!)
+// Using bcrypt hash for "admin" - $2b$10$X8x3hs6zQB2eIJP3qR5qPOxZ1QKJY3jEwXR7k4r5xCJGWv0.1mnK.
+const adminExists = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
+if (!adminExists) {
+  // Pre-computed bcrypt hash for "admin" with cost 10
+  db.prepare(`
+    INSERT INTO users (username, password_hash, is_admin, force_password_change)
+    VALUES ('admin', '$2b$10$dGJhOHU1d0N5cmFiNDNxZu.kNvhKPV8RGZmPNHYxN7oZxN0xZx1G6', 1, 1)
+  `).run();
+  console.log('Created default admin user (username: admin, password: admin)');
+}
+
 console.log('Database migrations completed.');
 db.close();
+

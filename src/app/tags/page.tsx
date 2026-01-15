@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { getTags, createTag, deleteTag, scanAllClusterTags, Tag, pushTagsToServer, assignTagsToResource } from '@/app/actions/tags';
 import { getServers, Server } from '@/app/actions/server';
 import { getVMs, VirtualMachine } from '@/app/actions/vm';
@@ -18,9 +18,10 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { Loader2, Plus, RefreshCw, Trash2, Tag as TagIcon, Server as ServerIcon, Calculator } from "lucide-react";
+import { Loader2, Plus, RefreshCw, Trash2, Tag as TagIcon, Server as ServerIcon, Calculator, Search, X } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from 'sonner';
 
 
 function getContrastColor(hexColor: string) {
@@ -51,6 +52,10 @@ export default function TagsPage() {
     const [selectedVMs, setSelectedVMs] = useState<Set<string>>(new Set()); // "serverId-vmid"
     const [selectedTags, setSelectedTags] = useState<Set<number>>(new Set());
     const [assigning, setAssigning] = useState(false);
+
+    // Search filters
+    const [tagSearch, setTagSearch] = useState('');
+    const [vmSearch, setVmSearch] = useState('');
 
     useEffect(() => {
         loadData();
@@ -169,9 +174,26 @@ export default function TagsPage() {
         setSelectedTags(new Set());
     }
 
+    // Filtered tags and VMs for search
+    const filteredTags = useMemo(() => {
+        if (!tagSearch.trim()) return tags;
+        const q = tagSearch.toLowerCase();
+        return tags.filter(t => t.name.toLowerCase().includes(q));
+    }, [tags, tagSearch]);
+
+    const filteredVMs = useMemo(() => {
+        if (!vmSearch.trim()) return allVMs;
+        const q = vmSearch.toLowerCase();
+        return allVMs.filter(vm =>
+            vm.name?.toLowerCase().includes(q) ||
+            vm.vmid.toString().includes(q) ||
+            vm.serverName.toLowerCase().includes(q)
+        );
+    }, [allVMs, vmSearch]);
+
     // Group VMs by server for display
     const vmsByServer = servers.reduce((acc, s) => {
-        acc[s.id] = allVMs.filter(v => v.serverId === s.id);
+        acc[s.id] = filteredVMs.filter(v => v.serverId === s.id);
         return acc;
     }, {} as Record<number, typeof allVMs>);
 
