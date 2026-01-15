@@ -512,4 +512,6 @@ function AIAutoTagButton({ allVMs, onTagsApplied, existingTags }: { allVMs: any[
                 </DialogContent>
             </Dialog>
         </>
+    );
+}
 
