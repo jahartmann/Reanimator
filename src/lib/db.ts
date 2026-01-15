@@ -16,6 +16,7 @@ if (!fs.existsSync(BACKUP_DIR)) {
 }
 
 const db = new Database(DB_PATH);
+console.log('[DB] Initialized database at:', path.resolve(DB_PATH));
 
 // Enable WAL mode for better concurrency
 db.pragma('journal_mode = WAL');
