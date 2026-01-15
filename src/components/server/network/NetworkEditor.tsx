@@ -1,3 +1,8 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { NetworkInterface } from '@/lib/network-parser';
+import { getNetworkConfig, saveNetworkConfig } from '@/app/actions/network';
 import { explainNetworkConfig } from '@/app/actions/ai';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
