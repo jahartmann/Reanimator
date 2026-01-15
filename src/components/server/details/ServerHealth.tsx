@@ -23,7 +23,7 @@ export function ServerHealth({ initialResults, serverId }: ServerHealthProps) {
 
     // Filter results
     const hostResult = results.find(r => r.type === 'host');
-    const vmResults = results.filter(r => r.type === 'vm' || r.type === 'lxc');
+    const vmResults = results.filter(r => r.type === 'qemu' || r.type === 'lxc');
 
     // Stats
     const totalIssues = results.reduce((acc, r) => acc + r.result.issues.length, 0);
