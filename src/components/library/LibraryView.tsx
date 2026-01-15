@@ -10,17 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import Link from 'next/link';
 import { SyncDialog } from '@/components/library/SyncDialog';
-
-interface LibraryItem {
-    name: string;
-    format: string;
-    size: number;
-    type: 'iso' | 'vztmpl';
-    locations: {
-        serverName: string;
-        storage: string;
-    }[];
-}
+import { LibraryItem } from '@/app/actions/library';
 
 interface LibraryViewProps {
     initialItems: LibraryItem[];
