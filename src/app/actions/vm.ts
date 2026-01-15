@@ -1072,3 +1072,28 @@ export async function getTargetResources(serverId: number) {
         await ssh.disconnect();
     }
 }
+
+
+export async function getVMConfig(serverId: number, vmid: string, type: 'qemu' | 'lxc') {
+    const server = await getServer(serverId);
+    const ssh = createSSHClient(server);
+    try {
+        await ssh.connect();
+        const nodeName = await determineNodeName(ssh);
+
+        let configPath = '';
+        if (type === 'qemu') {
+            configPath = `/etc/pve/nodes/${nodeName}/qemu-server/${vmid}.conf`;
+        } else {
+            configPath = `/etc/pve/nodes/${nodeName}/lxc/${vmid}.conf`;
+        }
+
+        const content = await ssh.exec(`cat ${configPath} 2>/dev/null`);
+        return content;
+    } catch (e) {
+        console.error('Failed to get VM config:', e);
+        return '';
+    } finally {
+        await ssh.disconnect();
+    }
+}

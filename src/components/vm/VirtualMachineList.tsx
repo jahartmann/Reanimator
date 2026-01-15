@@ -22,6 +22,23 @@ export function VirtualMachineList({ vms, currentServerId, otherServers, availab
     const [selectedVm, setSelectedVm] = useState<VirtualMachine | null>(null);
     const [loadingTags, setLoadingTags] = useState<Record<string, boolean>>({});
 
+    // AI Health Check
+    const [healthCheckLoading, setHealthCheckLoading] = useState<Record<string, boolean>>({});
+    const [healthResult, setHealthResult] = useState<string | null>(null);
+
+    const handleHealthCheck = async (vm: VirtualMachine) => {
+        setHealthCheckLoading(prev => ({ ...prev, [vm.vmid]: true }));
+        try {
+            const config = await getVMConfig(currentServerId, vm.vmid, vm.type);
+            const analysis = await analyzeConfigWithAI(config, vm.type);
+            setHealthResult(analysis);
+        } catch (e) {
+            toast.error('AI Check Failed');
+        } finally {
+            setHealthCheckLoading(prev => ({ ...prev, [vm.vmid]: false }));
+        }
+    };
+
     const handleTagsChange = async (vm: VirtualMachine, newTags: string[]) => {
         setLoadingTags(prev => ({ ...prev, [vm.vmid]: true }));
         try {
@@ -104,14 +121,26 @@ export function VirtualMachineList({ vms, currentServerId, otherServers, availab
                                             )}
                                         </div>
                                     </div>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        onClick={() => setSelectedVm(vm)}
-                                        title="Migrieren"
-                                    >
-                                        <ArrowRightLeft className="h-4 w-4" />
-                                    </Button>
+                                    <div className="flex gap-1">
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={() => handleHealthCheck(vm)}
+                                            disabled={healthCheckLoading[vm.vmid]}
+                                            title="AI Health Check"
+                                            className="text-purple-500 hover:text-purple-600 hover:bg-purple-500/10"
+                                        >
+                                            {healthCheckLoading[vm.vmid] ? <Loader2 className="h-4 w-4 animate-spin" /> : <Stethoscope className="h-4 w-4" />}
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={() => setSelectedVm(vm)}
+                                            title="Migrieren"
+                                        >
+                                            <ArrowRightLeft className="h-4 w-4" />
+                                        </Button>
+                                    </div>
                                 </div>
                                 <div className="pl-11">
                                     <TagSelector
@@ -138,6 +167,43 @@ export function VirtualMachineList({ vms, currentServerId, otherServers, availab
                     onOpenChange={(open) => !open && setSelectedVm(null)}
                 />
             )}
+
+            <HealthCheckDialog
+                open={!!healthResult}
+                onOpenChange={(open) => !open && setHealthResult(null)}
+                result={healthResult}
+            />
         </Card>
+    );
+}
+
+// --- Health Check Components ---
+
+import { getVMConfig } from '@/app/actions/vm';
+import { analyzeConfigWithAI } from '@/app/actions/ai';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Stethoscope, Sparkles } from "lucide-react"; // Make sure Stethoscope is imported
+
+function HealthCheckDialog({ open, onOpenChange, result }: { open: boolean, onOpenChange: (o: boolean) => void, result: string | null }) {
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                        <Stethoscope className="h-5 w-5 text-purple-500" />
+                        AI Config Doctor
+                    </DialogTitle>
+                    <DialogDescription>
+                        Analyse der VM-Konfiguration auf Best Practices.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="mt-4 p-4 bg-muted/30 rounded-lg border leading-relaxed text-sm whitespace-pre-wrap">
+                    {result}
+                </div>
+                <DialogFooter>
+                    <Button onClick={() => onOpenChange(false)}>Schließen</Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
     );
 }

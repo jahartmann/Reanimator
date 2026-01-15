@@ -185,20 +185,25 @@ export default function MigrationDetailPage({ params }: { params: Promise<{ id: 
                 </div>
 
                 {/* Right Column: Terminal/Logs (3/5 width) */}
-                <Card className="lg:col-span-3 flex flex-col overflow-hidden bg-[#0c0c0c] border-zinc-800 shadow-2xl">
+                <Card className="lg:col-span-3 flex flex-col overflow-hidden bg-[#0c0c0c] border-zinc-800 shadow-2xl relative">
                     <CardHeader className="py-3 px-4 border-b border-zinc-800 bg-zinc-900/50 shrink-0 flex flex-row items-center justify-between">
                         <div className="flex items-center gap-2">
                             <Terminal className="h-4 w-4 text-zinc-400" />
                             <CardTitle className="text-sm font-mono text-zinc-300">Live Protokoll</CardTitle>
                         </div>
-                        <div className="flex gap-1.5">
-                            <div className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
-                            <div className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
-                            <div className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
+                        <div className="flex items-center gap-3">
+                            {task.status === 'failed' && (
+                                <AIAnalysisButton log={task.log || ''} />
+                            )}
+                            <div className="flex gap-1.5">
+                                <div className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
+                                <div className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
+                                <div className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
+                            </div>
                         </div>
                     </CardHeader>
                     <ScrollArea className="flex-1">
-                        <div className="p-4 font-mono text-sm text-zinc-300 whitespace-pre-wrap leading-relaxed">
+                        <div className="p-4 font-mono text-sm text-zinc-300 whitespace-pre-wrap leading-relaxed relative">
                             {task.log ? (
                                 <>
                                     <span className="text-green-500">root@proxhost:~$</span> starting migration task...
@@ -216,3 +221,57 @@ export default function MigrationDetailPage({ params }: { params: Promise<{ id: 
         </div>
     );
 }
+
+import { analyzeLogWithAI } from '@/app/actions/ai';
+import { Sparkles } from "lucide-react";
+
+function AIAnalysisButton({ log }: { log: string }) {
+    const [analyzing, setAnalyzing] = useState(false);
+    const [result, setResult] = useState<string | null>(null);
+
+    async function handleAnalyze() {
+        setAnalyzing(true);
+        try {
+            const data = await analyzeLogWithAI(log);
+            setResult(data);
+        } catch (e: any) {
+            toast.error(e.message);
+        } finally {
+            setAnalyzing(false);
+        }
+    }
+
+    return (
+        <div className="flex items-center">
+            {result ? (
+                <div className="absolute top-14 left-4 right-4 z-20 bg-zinc-900/95 border border-purple-500/30 rounded-lg p-4 shadow-2xl backdrop-blur-sm animate-in fade-in slide-in-from-top-2">
+                    <div className="flex justify-between items-start mb-2">
+                        <h4 className="text-purple-400 text-sm font-bold flex items-center gap-2">
+                            <Sparkles className="h-4 w-4" /> AI Analyse
+                        </h4>
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-zinc-500" onClick={() => setResult(null)}>
+                            <XCircle className="h-4 w-4" />
+                        </Button>
+                    </div>
+                    <p className="text-zinc-300 text-sm leading-relaxed border-l-2 border-purple-500 pl-3">
+                        {result}
+                    </p>
+                </div>
+            ) : (
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleAnalyze}
+                    disabled={analyzing}
+                    className="h-7 text-xs bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 hover:text-purple-300 border border-purple-500/20"
+                >
+                    {analyzing ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : <Sparkles className="h-3 w-3 mr-1.5" />}
+                    KI Analyse
+                </Button>
+            )}
+        </div>
+    );
+}
+
+// Ensure toast is imported or available globally. If not, import it.
+import { toast } from "sonner";

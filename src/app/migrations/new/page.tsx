@@ -430,6 +430,21 @@ export default function NewMigrationPage() {
                                                         <td className="p-3">
                                                             <div className="font-medium">{vm.name}</div>
                                                             <div className="text-xs text-muted-foreground">{vm.vmid}</div>
+
+                                                            {(vm.storages?.length > 0 || vm.networks?.length > 0) && (
+                                                                <div className="flex flex-wrap gap-1 mt-1.5">
+                                                                    {vm.storages?.map(s => (
+                                                                        <Badge key={s} variant="outline" className="text-[10px] h-4 px-1 border-muted-foreground/40 text-muted-foreground">
+                                                                            <HardDrive className="h-3 w-3 mr-1" /> {s}
+                                                                        </Badge>
+                                                                    ))}
+                                                                    {vm.networks?.map(n => (
+                                                                        <Badge key={n} variant="outline" className="text-[10px] h-4 px-1 border-muted-foreground/40 text-muted-foreground">
+                                                                            <Network className="h-3 w-3 mr-1" /> {n}
+                                                                        </Badge>
+                                                                    ))}
+                                                                </div>
+                                                            )}
                                                         </td>
                                                         <td className="p-2">
                                                             <Select value={mappings[vm.vmid]?.targetStorage || 'auto'} onValueChange={(v) => {

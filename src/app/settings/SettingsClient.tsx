@@ -3,7 +3,11 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Settings, RefreshCw, Download, CheckCircle2, AlertCircle, Loader2, Terminal, GitBranch, Copy, Database, Server, Info, Power, HardDrive } from "lucide-react";
+import { Settings, RefreshCw, Download, CheckCircle2, AlertCircle, Loader2, Terminal, GitBranch, Copy, Database, Server, Info, Power, HardDrive, Sparkles, BrainCircuit } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { getAISettings, saveAISettings, checkOllamaConnection, type OllamaModel } from "@/app/actions/ai";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 
@@ -239,6 +243,9 @@ export default function SettingsClient() {
                             )}
                         </CardContent>
                     </Card>
+
+                    {/* AI INTEGRATION CARD */}
+                    <AICard />
                 </div>
 
                 {/* RIGHT COLUMN: MAINTENANCE & INFO */}
@@ -325,5 +332,119 @@ export default function SettingsClient() {
                 </div>
             </div>
         </div>
+    );
+}
+
+function AICard() {
+    const [url, setUrl] = useState('http://localhost:11434');
+    const [model, setModel] = useState('');
+    const [models, setModels] = useState<OllamaModel[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [connected, setConnected] = useState(false);
+
+    useEffect(() => {
+        getAISettings().then(s => {
+            if (s.url) setUrl(s.url);
+            if (s.model) setModel(s.model);
+            if (s.url) checkConnection(s.url, false);
+        });
+    }, []);
+
+    async function checkConnection(checkUrl: string, showToast = true) {
+        setLoading(true);
+        const res = await checkOllamaConnection(checkUrl);
+        setLoading(false);
+
+        if (res.success && res.models) {
+            setConnected(true);
+            setModels(res.models);
+            if (showToast) toast.success(`Verbunden! ${res.models.length} Modelle gefunden.`);
+        } else {
+            setConnected(false);
+            setModels([]);
+            if (showToast) toast.error(`Verbindung fehlgeschlagen: ${res.message}`);
+        }
+    }
+
+    async function handleSave() {
+        if (!model) {
+            toast.error('Bitte wählen Sie ein Modell aus.');
+            return;
+        }
+        setSaving(true);
+        await saveAISettings(url, model);
+        setSaving(false);
+        toast.success('AI Einstellungen gespeichert');
+    }
+
+    return (
+        <Card className="overflow-hidden border-muted/60 shadow-sm">
+            <CardHeader className="bg-gradient-to-r from-purple-500/5 to-transparent pb-4">
+                <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2">
+                        <Sparkles className="h-5 w-5 text-purple-500" />
+                        AI Assistent (Ollama)
+                    </CardTitle>
+                    {connected && (
+                        <span className="text-xs px-2 py-1 rounded-full font-medium border bg-green-500/10 text-green-600 border-green-200">
+                            Verbunden
+                        </span>
+                    )}
+                </div>
+                <CardDescription>
+                    Lokale KI-Integration für Log-Analyse und Smart Tags.
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6 space-y-4">
+                <div className="space-y-2">
+                    <Label>Ollama URL</Label>
+                    <div className="flex gap-2">
+                        <Input
+                            value={url}
+                            onChange={(e) => setUrl(e.target.value)}
+                            placeholder="http://localhost:11434"
+                            className="font-mono"
+                        />
+                        <Button
+                            variant="secondary"
+                            onClick={() => checkConnection(url)}
+                            disabled={loading}
+                        >
+                            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                        </Button>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">Standard Port ist 11434. Stellen Sie sicher, dass Ollama läuft (0.0.0.0 für Container).</p>
+                </div>
+
+                <div className="space-y-2">
+                    <Label>Modell wählen</Label>
+                    <Select value={model} onValueChange={setModel} disabled={!connected || models.length === 0}>
+                        <SelectTrigger>
+                            <SelectValue placeholder={connected ? "Modell wählen..." : "Erst verbinden..."} />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {models.map(m => (
+                                <SelectItem key={m.digest} value={m.name}>
+                                    <div className="flex items-center justify-between w-full min-w-[200px]">
+                                        <span className="font-medium">{m.name}</span>
+                                        <span className="text-xs text-muted-foreground ml-2">
+                                            {Math.round(m.size / 1024 / 1024 / 1024 * 10) / 10} GB
+                                        </span>
+                                    </div>
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                <div className="pt-2 flex justify-end">
+                    <Button onClick={handleSave} disabled={saving || !connected || !model} className="bg-purple-600 hover:bg-purple-700 text-white">
+                        <BrainCircuit className="h-4 w-4 mr-2" />
+                        Einstellungen Speichern
+                    </Button>
+                </div>
+            </CardContent>
+        </Card>
     );
 }
