@@ -10,7 +10,7 @@ export interface ScanResult {
     id: number;
     server_id: number;
     vmid: string | null; // NULL for host
-    type: 'vm' | 'lxc' | 'host';
+    type: 'qemu' | 'lxc' | 'host';
     result: HealthResult;
     created_at: string;
 }
