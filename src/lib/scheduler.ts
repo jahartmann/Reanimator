@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import db from './db';
 import { performFullBackup } from './backup-logic';
+import { scanAllVMs, scanHost } from '@/app/actions/scan';
 
 export function initScheduler() {
     console.log('[Scheduler] Initializing...');
