@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
@@ -76,7 +76,29 @@ export async function POST(request: NextRequest) {
     const stream = new ReadableStream({
         async start(controller) {
             const send = (message: string) => {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ message })}\n\n`));
+                // Sanitize output slightly to avoid JSON breakages if raw buffer
+                const safeMsg = message.trim();
+                if (safeMsg) {
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ message: safeMsg })}\n\n`));
+                }
+            };
+
+            // Helper for spawning long-running processes without buffer limits
+            const runStep = (cmd: string, args: string[], cwd: string): Promise<void> => {
+                return new Promise((resolve, reject) => {
+                    // Use 'npm' (without .cmd/etc) and shell: true for cross-platform ease here, 
+                    // though mainly Linux expected.
+                    const child = spawn(cmd, args, { cwd, shell: true });
+
+                    child.stdout.on('data', (data) => send(data.toString()));
+                    child.stderr.on('data', (data) => send(data.toString())); // Treat stderr as log output
+
+                    child.on('error', (err) => reject(err));
+                    child.on('close', (code) => {
+                        if (code === 0) resolve();
+                        else reject(new Error(`Command ${cmd} ${args.join(' ')} failed with code ${code}`));
+                    });
+                });
             };
 
             try {
@@ -84,103 +106,72 @@ export async function POST(request: NextRequest) {
                 const dbPath = path.join(projectRoot, 'data/proxhost.db');
                 const dbBackupPath = path.join(os.tmpdir(), `proxhost-backup-${Date.now()}.db`);
 
-                send('🔄 Starting update process...');
+                send('🔄 Starting update process (Robust Mode)...');
 
                 // 1. Backup Database
                 if (fs.existsSync(dbPath)) {
                     send('💾 Backing up database...');
                     fs.copyFileSync(dbPath, dbBackupPath);
                     send(`✅ Database backed up to ${dbBackupPath}`);
-                } else {
-                    send('⚠️ No database found to backup.');
                 }
 
-                // 2. Git Stash (handle local changes)
+                // 2. Git Stash
                 send('📥 Stashing local changes...');
                 try {
-                    await execAsync('git stash', { cwd: projectRoot });
-                    send('✅ Local changes stashed');
-                } catch (e) {
-                    send('ℹ️ No local changes to stash or stash failed (ignoring)');
+                    await runStep('git', ['stash'], projectRoot);
+                } catch {
+                    send('ℹ️ Stash skipped or failed (ignoring)');
                 }
 
                 // 3. Git Pull
-                send('⬇️ Pulling latest changes from git...');
-                const { stdout: pullOut, stderr: pullErr } = await execAsync(
-                    'git pull origin main',
-                    { cwd: projectRoot }
-                );
-                send(pullOut || pullErr || 'Git pull complete');
+                send('⬇️ Pulling latest changes...');
+                await runStep('git', ['pull', 'origin', 'main'], projectRoot);
 
-                // 4. Restore Database (Vital Step!)
-                // If git pull overwrote the DB with a "dummy" one, we overwrite it back with our backup
+                // 4. Restore Data
                 if (fs.existsSync(dbBackupPath)) {
-                    send('♻️ Restoring database from backup...');
-                    try {
-                        // Check if file exists and remove it to ensure clean copy
-                        if (fs.existsSync(dbPath)) {
-                            fs.unlinkSync(dbPath);
-                        }
-                        fs.copyFileSync(dbBackupPath, dbPath);
-
-                        // Also restore config backups folder if needed? 
-                        // Usually config backups are untracked so they are safe, 
-                        // but if we want to be paranoid we could have backed them up too.
-                        // For now, focusing on the main DB.
-
-                        send('✅ Database restored successfully');
-                    } catch (e) {
-                        send(`❌ Failed to restore database: ${e}`);
-                        // Critical error, but we continue to try and build
-                    }
+                    send('♻️ Restoring database...');
+                    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+                    fs.copyFileSync(dbBackupPath, dbPath);
+                    send('✅ Database restored');
                 }
 
                 // 5. Build
-                send('📦 Installing dependencies...');
-                await execAsync('npm install', { cwd: projectRoot }); // Removed --include=dev for speed if unnecessary, put back if needed
-                send('✅ Dependencies installed');
+                send('📦 Installing dependencies (this may take a while)...');
+                await runStep('npm', ['install'], projectRoot);
 
                 send('🔨 Building application...');
-                await execAsync('npm run build', { cwd: projectRoot });
-                send('✅ Build complete');
+                await runStep('npm', ['run', 'build'], projectRoot);
+
+                send('✅ Build complete!');
 
                 // 6. Restart
-                send('🔄 Restarting service...');
+                send('🔄 Scheduling service restart...');
 
-                // Try systemd restart 
-                try {
-                    // Start in background to allow response to finish? 
-                    // No, usually we want to see the command succeed.
-                    // But if we restart THIS process, the connection closes.
-                    // We'll schedule the restart in a slightly detached way if possible,
-                    // or just run it and expect the connection to drop.
+                // Detached restart
+                const restartCmd = 'sleep 2 && sudo systemctl restart proxhost-backup';
+                const child = spawn(restartCmd, [], {
+                    cwd: projectRoot,
+                    shell: true,
+                    detached: true,
+                    stdio: 'ignore'
+                });
+                child.unref();
 
-                    send('Scheduling restart in 2 seconds...');
-                    setTimeout(() => {
-                        exec('sudo systemctl restart proxhost-backup', { cwd: projectRoot }, (error) => {
-                            if (error) {
-                                console.error('Restart failed:', error);
-                            }
-                        });
-                    }, 2000);
-
-                    send('✅ Restart command issued. Refresh page in ~15 seconds.');
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`));
-                } catch (e) {
-                    send('⚠️ Could not restart service automatically.');
-                    send('Please run: sudo systemctl restart proxhost-backup');
-                    console.error('Restart error:', e);
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: 'Restart failed' })}\n\n`));
-                }
+                send('✅ Restart command issued. Service will reboot in 2 seconds.');
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`));
 
             } catch (error) {
                 const errorMsg = error instanceof Error ? error.message : String(error);
-                send(`❌ Error: ${errorMsg}`);
+                send(`❌ Critical Error: ${errorMsg}`);
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: errorMsg })}\n\n`));
+            } finally {
+                // Ensure stream doesn't hang forever if we missed a closure, 
+                // but usually the client closes.
+                // We keep it open a bit to ensure last message sends.
+                setTimeout(() => {
+                    try { controller.close(); } catch { }
+                }, 1000);
             }
-
-            // Don't close immediately if we are restarting, but effectively we are done
-            // controller.close(); // Let the frontend close or timeout
         }
     });
 
