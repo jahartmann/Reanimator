@@ -193,3 +193,18 @@ ${files.map(f => `=== ${f.filename} ===\n${f.content}\n`).join('\n')}
     const response = await generateAIResponse(context, '');
     return parseAIJSON(response) || { score: 100, issues: [], summary: 'KI-Parsing fehlgeschlagen' };
 }
+
+export async function explainNetworkConfig(interfaces: any[]): Promise<string> {
+    const context = `
+Du bist ein Netzwerk-Experte.
+Erkläre einem Junior-Admin den folgenden Netzwerk-Aufbau verständlich auf Deutsch.
+Fasse zusammen:
+- Welche Bridges gibt es und was verbinden sie? (VMs, Physische Ports)
+- Gibt es Redundanz (Bonds)?
+- Was ist die Management-IP?
+
+Antworte direkt mit der Erklärung in Markdown/Text. Keine JSON-Struktur nötig, einfach ein guter Text.
+    `.trim();
+
+    return generateAIResponse(`Hier die Config:\n${JSON.stringify(interfaces, null, 2)}`, context);
+}

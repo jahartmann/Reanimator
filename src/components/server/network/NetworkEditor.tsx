@@ -1,8 +1,4 @@
-'use client';
-
-import { useState, useEffect } from 'react';
-import { NetworkInterface } from '@/lib/network-parser';
-import { getNetworkConfig, saveNetworkConfig } from '@/app/actions/network';
+import { explainNetworkConfig } from '@/app/actions/ai';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Plus, Save, Trash2, Network, RefreshCw, AlertTriangle, Undo } from "lucide-react";
+import { Loader2, Plus, Save, Trash2, Network, RefreshCw, Undo, MessageSquare, Bot } from "lucide-react";
 import { toast } from 'sonner';
 
 interface NetworkEditorProps {
@@ -25,6 +21,10 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [hasChanges, setHasChanges] = useState(false);
+
+    // AI
+    const [explaining, setExplaining] = useState(false);
+    const [explanation, setExplanation] = useState<string | null>(null);
 
     useEffect(() => {
         loadConfig();
@@ -41,6 +41,18 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
             toast.error('Fehler beim Laden der Netzwerkkonfiguration: ' + res.error);
         }
         setLoading(false);
+    }
+
+    async function handleExplain() {
+        setExplaining(true);
+        try {
+            const text = await explainNetworkConfig(interfaces);
+            setExplanation(text);
+        } catch (e) {
+            toast.error("KI-Erklärung fehlgeschlagen");
+        } finally {
+            setExplaining(false);
+        }
     }
 
     async function handleSave(apply: boolean) {
@@ -94,6 +106,29 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
                     </CardDescription>
                 </div>
                 <div className="flex gap-2">
+                    <Dialog>
+                        <DialogTrigger asChild>
+                            <Button variant="outline" size="sm" onClick={handleExplain}>
+                                <Bot className="mr-2 h-4 w-4" />
+                                {explaining ? 'Analysiere...' : 'KI Erklärung'}
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-2xl">
+                            <DialogHeader>
+                                <DialogTitle>Netzwerk-Aufbau Erklärung</DialogTitle>
+                            </DialogHeader>
+                            <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                                {explaining ? (
+                                    <div className="flex items-center gap-2 text-muted-foreground">
+                                        <Loader2 className="animate-spin" /> Analysiere Konfiguration...
+                                    </div>
+                                ) : (
+                                    explanation || "Keine Erklärung verfügbar."
+                                )}
+                            </div>
+                        </DialogContent>
+                    </Dialog>
+
                     {hasChanges && (
                         <Button variant="outline" size="sm" onClick={handleRevert} disabled={saving}>
                             <Undo className="mr-2 h-4 w-4" /> Verwerfen
@@ -120,6 +155,7 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
                                     <TableHead className="w-[150px]">CIDR / IP</TableHead>
                                     <TableHead className="w-[150px]">Gateway</TableHead>
                                     <TableHead>Ports / Slaves</TableHead>
+                                    <TableHead>Kommentar</TableHead>
                                     <TableHead className="w-[80px]">Autostart</TableHead>
                                     <TableHead className="w-[100px] text-right">Actions</TableHead>
                                 </TableRow>
@@ -135,6 +171,9 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
                                         <TableCell>{iface.gateway || '-'}</TableCell>
                                         <TableCell className="font-mono text-xs">
                                             {iface.bridge_ports || iface.bond_slaves || '-'}
+                                        </TableCell>
+                                        <TableCell className="text-xs text-muted-foreground italic">
+                                            {iface.comments.length > 0 ? iface.comments[0].replace(/^#\s*/, '') : '-'}
                                         </TableCell>
                                         <TableCell>
                                             {iface.auto ? <CheckIcon /> : '-'}
@@ -188,6 +227,17 @@ interface EditDialogProps {
 
 function InterfaceDialog({ mode, initialData, onSave }: EditDialogProps) {
     const [open, setOpen] = useState(false);
+
+    // Helper to guess type
+    const guessType = (i?: NetworkInterface) => {
+        if (!i) return 'eth';
+        if (i.bridge_ports) return 'bridge';
+        if (i.bond_slaves) return 'bond';
+        if (i.method === 'loopback') return 'loopback';
+        return 'eth';
+    };
+
+    const [type, setType] = useState<'eth' | 'bridge' | 'bond' | 'loopback'>('eth');
     const [data, setData] = useState<NetworkInterface>(initialData || {
         name: '',
         method: 'static',
@@ -197,21 +247,26 @@ function InterfaceDialog({ mode, initialData, onSave }: EditDialogProps) {
         rawLines: []
     });
 
+    useEffect(() => {
+        if (open && initialData) {
+            setData(initialData);
+            setType(guessType(initialData));
+        } else if (open && mode === 'create') {
+            setData({ name: '', method: 'static', family: 'inet', auto: true, comments: [], rawLines: [] });
+            setType('eth');
+        }
+    }, [open, initialData, mode]);
+
     const handleChange = (field: keyof NetworkInterface, value: any) => {
         setData(prev => ({ ...prev, [field]: value }));
     };
 
     const handleSave = () => {
+        // Clean up fields based on type? Or keep them?
+        // Let's keep them simply, but maybe ensure name matches convention?
         onSave(data);
         setOpen(false);
-        if (mode === 'create') {
-            // Reset
-            setData({ name: '', method: 'static', family: 'inet', auto: true, comments: [], rawLines: [] });
-        }
     };
-
-    // Determine type for UI logic
-    const type = data.bridge_ports ? 'bridge' : (data.bond_slaves ? 'bond' : 'eth');
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -230,19 +285,25 @@ function InterfaceDialog({ mode, initialData, onSave }: EditDialogProps) {
                 </DialogHeader>
 
                 <div className="grid gap-4 py-4">
+                    {/* Basic Settings */}
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                             <Label>Name</Label>
                             <Input value={data.name} onChange={e => handleChange('name', e.target.value)} placeholder="vmbr0" disabled={mode === 'edit'} />
                         </div>
                         <div className="space-y-2">
-                            <Label>Autostart</Label>
-                            <div className="flex items-center space-x-2 pt-3">
-                                <Checkbox id="auto" checked={data.auto} onCheckedChange={(c) => handleChange('auto', c === true)} />
-                                <label htmlFor="auto" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                    Start at boot
-                                </label>
-                            </div>
+                            <Label>Type</Label>
+                            <Select value={type} onValueChange={(v: any) => setType(v)} disabled={mode === 'edit'}>
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="eth">Ethernet (Physical/VLAN)</SelectItem>
+                                    <SelectItem value="bridge">Linux Bridge</SelectItem>
+                                    <SelectItem value="bond">Linux Bond</SelectItem>
+                                    <SelectItem value="loopback">Loopback</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
                     </div>
 
@@ -257,35 +318,65 @@ function InterfaceDialog({ mode, initialData, onSave }: EditDialogProps) {
                         </div>
                     </div>
 
-                    {/* Bridge Specific */}
-                    <div className="space-y-2 border-t pt-2 mt-2">
-                        <Label className="text-muted-foreground text-xs uppercase tracking-wider">Bridge Settings</Label>
-                        <div className="grid grid-cols-1 gap-2">
-                            <Label>Bridge Ports</Label>
-                            <Input value={data.bridge_ports || ''} onChange={e => handleChange('bridge_ports', e.target.value)} placeholder="eno1" />
-                            <p className="text-xs text-muted-foreground">Space separated list of interfaces.</p>
-                        </div>
+                    <div className="flex items-center space-x-2">
+                        <Checkbox id="auto" checked={data.auto} onCheckedChange={(c) => handleChange('auto', c === true)} />
+                        <label htmlFor="auto" className="text-sm font-medium leading-none">
+                            Start at boot (auto)
+                        </label>
                     </div>
 
-                    {/* Bond Specific - Only show if bond props exist or user wants bond? Simplification: Just show raw inputs if populated */}
-                    {(data.bond_slaves || type === 'bond') && (
-                        <div className="space-y-2 border-t pt-2 mt-2">
-                            <Label className="text-muted-foreground text-xs uppercase tracking-wider">Bond Settings</Label>
-                            <div className="grid grid-cols-2 gap-2">
+                    {/* Bridge Specific */}
+                    {type === 'bridge' && (
+                        <div className="space-y-2 border-t pt-2 mt-2 bg-muted/20 p-2 rounded">
+                            <Label className="uppercase text-xs font-bold text-muted-foreground">Bridge Config</Label>
+                            <div className="space-y-2">
+                                <Label>Bridge Ports</Label>
+                                <Input value={data.bridge_ports || ''} onChange={e => handleChange('bridge_ports', e.target.value)} placeholder="eno1 eno2 ... or none" />
+                                <p className="text-xs text-muted-foreground">Space separated interfaces</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Bond Specific */}
+                    {type === 'bond' && (
+                        <div className="space-y-2 border-t pt-2 mt-2 bg-muted/20 p-2 rounded">
+                            <Label className="uppercase text-xs font-bold text-muted-foreground">Bond Config</Label>
+                            <div className="grid gap-2">
                                 <div>
                                     <Label>Slaves</Label>
-                                    <Input value={data.bond_slaves || ''} onChange={e => handleChange('bond_slaves', e.target.value)} />
+                                    <Input value={data.bond_slaves || ''} onChange={e => handleChange('bond_slaves', e.target.value)} placeholder="eno1 eno2" />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <Label>Mode</Label>
+                                        <Select value={data.bond_mode || 'balance-rr'} onValueChange={v => handleChange('bond_mode', v)}>
+                                            <SelectTrigger><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="balance-rr">balance-rr (Round Robin)</SelectItem>
+                                                <SelectItem value="active-backup">active-backup</SelectItem>
+                                                <SelectItem value="balance-xor">balance-xor</SelectItem>
+                                                <SelectItem value="broadcast">broadcast</SelectItem>
+                                                <SelectItem value="802.3ad">802.3ad (LACP)</SelectItem>
+                                                <SelectItem value="balance-tlb">balance-tlb</SelectItem>
+                                                <SelectItem value="balance-alb">balance-alb</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div>
+                                        <Label>Hash Policy</Label>
+                                        <Input value={data.bond_xmit_hash_policy || ''} onChange={e => handleChange('bond_xmit_hash_policy', e.target.value)} placeholder="layer2+3" />
+                                    </div>
                                 </div>
                                 <div>
-                                    <Label>Mode</Label>
-                                    <Input value={data.bond_mode || ''} onChange={e => handleChange('bond_mode', e.target.value)} placeholder="802.3ad" />
+                                    <Label>Miimon</Label>
+                                    <Input value={String(data.bond_miimon || '100')} type="number" onChange={e => handleChange('bond_miimon', parseInt(e.target.value))} />
                                 </div>
                             </div>
                         </div>
                     )}
 
                     <div className="space-y-2">
-                        <Label>Comments</Label>
+                        <Label>Kommentar</Label>
                         <Input value={data.comments.join(' ')} onChange={e => handleChange('comments', [e.target.value])} placeholder="# Description" />
                     </div>
 
