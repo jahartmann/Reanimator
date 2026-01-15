@@ -141,7 +141,7 @@ export function ServerJobsDialog({ serverId, serverName }: ServerJobsDialogProps
 
                         <div className="space-y-2">
                             <Label>Cron Ausdruck (Manuell)</Label>
-                            <Input value={scheduleStr} onChange={e => setScheduleStr(e.target.value)} placeholder="* * * * *" fontMono />
+                            <Input value={scheduleStr} onChange={e => setScheduleStr(e.target.value)} placeholder="* * * * *" className="font-mono" />
                         </div>
 
                         <div className="space-y-2">
