@@ -1,6 +1,7 @@
 'use server';
 
 import db from '@/lib/db';
+import { cancelMigration } from '@/app/actions/migration';
 
 export interface TaskItem {
     id: string; // "job-123" or "mig-456"
@@ -8,7 +9,7 @@ export interface TaskItem {
     source: 'job' | 'migration';
     type: string; // 'scan', 'config', 'migration', etc.
     description: string;
-    status: 'running' | 'completed' | 'failed' | 'pending' | 'cancelled';
+    status: 'running' | 'completed' | 'failed' | 'pending' | 'cancelled' | 'warning';
     startTime: string;
     endTime?: string;
     duration?: string;
@@ -20,8 +21,6 @@ export async function getAllTasks(limit: number = 50, filterType?: string, filte
     // We fetch jobs and migrations and union them in JS or SQL. SQL is better for sorting/limiting.
     // However, they are in different tables with different columns. 
     // Let's use a nice Union query.
-
-    // Note: SQLite UNION limits might apply, but 50 records is fine.
 
     const sql = `
         SELECT 
@@ -99,4 +98,24 @@ export async function getAllTasks(limit: number = 50, filterType?: string, filte
         if (filterStatus && t.status !== filterStatus) return false;
         return true;
     });
+}
+
+export async function cancelTask(id: string): Promise<{ success: boolean; message?: string }> {
+    const [source, rawIdStr] = id.split('-');
+    const rawId = parseInt(rawIdStr);
+
+    if (source === 'migration') {
+        return await cancelMigration(rawId);
+    } else if (source === 'job') {
+        const stmt = db.prepare(`
+            UPDATE history 
+            SET status = 'cancelled', end_time = datetime('now')
+            WHERE id = ? AND status = 'running'
+        `);
+        const info = stmt.run(rawId);
+        if (info.changes > 0) return { success: true };
+        return { success: false, message: 'Task not running or not found' };
+    }
+
+    return { success: false, message: 'Unknown task type' };
 }

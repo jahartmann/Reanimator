@@ -159,6 +159,13 @@ export async function scanEntireInfrastructure() {
         updateLog(`Found ${servers.length} servers to scan.`);
 
         for (const server of servers) {
+            // Check for cancellation
+            const currentJob = db.prepare('SELECT status FROM history WHERE id = ?').get(historyId) as any;
+            if (currentJob.status === 'cancelled') {
+                updateLog('Scan cancelled by user.');
+                return { success: false, error: 'Cancelled' };
+            }
+
             try {
                 updateLog(`Scanning Server: ${server.name}...`);
                 // Scan Host
