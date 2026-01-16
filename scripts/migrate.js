@@ -106,6 +106,16 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT
   );
+
+  -- AI Analysis Results
+  CREATE TABLE IF NOT EXISTS server_ai_analysis (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id INTEGER NOT NULL,
+    type TEXT NOT NULL, -- 'network', 'security'
+    content TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(server_id) REFERENCES servers(id)
+  );
 `);
 
 // Run migrations for existing databases

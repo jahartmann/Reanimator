@@ -3,8 +3,33 @@ import db from './db';
 import { performFullBackup } from './backup-logic';
 import { scanAllVMs, scanHost } from '@/app/actions/scan';
 import { migrateVM } from '@/app/actions/vm';
+import { runNetworkAnalysis } from '@/app/actions/network_analysis';
 
 let scheduledTasks: any[] = [];
+
+async function initNetworkAnalysisJobs() {
+    try {
+        const servers = db.prepare('SELECT id, name FROM servers').all() as any[];
+
+        for (const server of servers) {
+            const jobName = `Nightly Network Analysis - ${server.name}`;
+            const exists = db.prepare('SELECT id FROM jobs WHERE name = ? AND job_type = ?').get(jobName, 'network_analysis');
+
+            if (!exists) {
+                console.log(`[Scheduler] Creating default network analysis job for ${server.name}`);
+                db.prepare(`
+                    INSERT INTO jobs (name, job_type, source_server_id, schedule, enabled)
+                    VALUES (?, 'network_analysis', ?, '0 3 * * *', 1)
+                 `).run(jobName, server.id); // 3:00 AM
+
+                // Run ONCE on startup
+                runNetworkAnalysis(server.id).catch(e => console.error(`[Startup Analysis] Failed for ${server.name}:`, e));
+            }
+        }
+    } catch (e) {
+        console.error('[Scheduler] Failed to init network jobs:', e);
+    }
+}
 
 export function initScheduler() {
     console.log('[Scheduler] Initializing...');
@@ -13,6 +38,13 @@ export function initScheduler() {
     scheduledTasks.forEach(task => task.stop());
     scheduledTasks = [];
 
+    // Auto-create system jobs
+    initNetworkAnalysisJobs().then(() => {
+        loadJobs();
+    });
+}
+
+function loadJobs() {
     try {
         const jobs = db.prepare('SELECT * FROM jobs WHERE enabled = 1').all() as any[];
 
@@ -31,7 +63,7 @@ export function initScheduler() {
 }
 
 export function reloadScheduler() {
-    initScheduler();
+    loadJobs(); // We don't re-init defaults on reload to avoid spam
 }
 
 async function runJob(job: any) {
@@ -87,7 +119,6 @@ async function runJob(job: any) {
             const logs: string[] = [];
             const onLog = (msg: string) => {
                 logs.push(`[${new Date().toISOString()}] ${msg}`);
-                // Optional: Update DB periodically here if needed
             };
 
             const res = await migrateVM(job.source_server_id, vmid, type, migrationOptions, onLog);
@@ -99,6 +130,16 @@ async function runJob(job: any) {
                 .run(status, new Date().toISOString(), finalLog, historyId);
 
             console.log(`[Scheduler] Migration job ${job.name} finished: ${status}`);
+
+        } else if (job.job_type === 'network_analysis') {
+            // Network Analysis Job
+            console.log(`[Scheduler] Starting Network Analysis for Server ${job.source_server_id}`);
+            const result = await runNetworkAnalysis(job.source_server_id);
+
+            db.prepare('UPDATE history SET status = ?, end_time = ?, log = ? WHERE id = ?')
+                .run('success', new Date().toISOString(), `Analysis completed. Length: ${result.length}`, historyId);
+
+            console.log(`[Scheduler] Network Analysis job ${job.name} finished.`);
 
         } else {
             // Default mock for other job types
