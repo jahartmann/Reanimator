@@ -218,15 +218,49 @@ export async function getEligibleStorages(serverId: number, type: 'iso' | 'vztmp
 }
 
 export async function syncLibraryItem(sourceServerId: number, targetServerId: number, sourceVolid: string, targetStorage: string, type: 'iso' | 'vztmpl') {
-    const sourceServer = db.prepare('SELECT * FROM servers WHERE id = ?').get(sourceServerId) as Server;
-    const targetServer = db.prepare('SELECT * FROM servers WHERE id = ?').get(targetServerId) as Server;
+    // 1. Create Background Task
+    const stmt = db.prepare(`
+        INSERT INTO background_tasks (type, source_server_id, target_server_id, description, status, current_speed, log)
+        VALUES (?, ?, ?, ?, 'pending', '0 MB/s', 'Task initiated...')
+    `);
 
-    if (!sourceServer?.ssh_key || !targetServer?.ssh_key) throw new Error("Missing SSH Credentials");
+    // Get server names for description
+    const s1 = db.prepare('SELECT name FROM servers WHERE id = ?').get(sourceServerId) as any;
+    const s2 = db.prepare('SELECT name FROM servers WHERE id = ?').get(targetServerId) as any;
+    const desc = `Sync ${type.toUpperCase()}: ${sourceVolid.split('/').pop()} (${s1?.name} -> ${s2?.name})`;
 
-    let sourceSSH, targetSSH;
+    const res = stmt.run('iso_sync', sourceServerId, targetServerId, desc);
+    const taskId = res.lastInsertRowid as number;
+
+    // 2. Start Background Process (Fire & Forget)
+    // We don't await this, ensuring the UI returns immediately
+    processBackgroundTask(taskId, sourceServerId, targetServerId, sourceVolid, targetStorage, type).catch(err => {
+        console.error("Background Task Fatal Error", err);
+        db.prepare("UPDATE background_tasks SET status = 'failed', error = ? WHERE id = ?").run(String(err), taskId);
+    });
+
+    return { success: true, taskId };
+}
+
+// Background Worker
+async function processBackgroundTask(taskId: number, sourceServerId: number, targetServerId: number, sourceVolid: string, targetStorage: string, type: 'iso' | 'vztmpl') {
+    const log = (msg: string) => {
+        console.log(`[Task ${taskId}] ${msg}`);
+        db.prepare("UPDATE background_tasks SET log = log || ? || '\n' WHERE id = ?").run(`[${new Date().toLocaleTimeString()}] ${msg}`, taskId);
+    };
+
     try {
-        // 1. Connect Source & Get Path
-        sourceSSH = createSSHClient({
+        log('Starting background sync...');
+        db.prepare("UPDATE background_tasks SET status = 'running' WHERE id = ?").run(taskId);
+
+        const sourceServer = db.prepare('SELECT * FROM servers WHERE id = ?').get(sourceServerId) as Server;
+        const targetServer = db.prepare('SELECT * FROM servers WHERE id = ?').get(targetServerId) as Server;
+
+        if (!sourceServer?.ssh_key || !targetServer?.ssh_key) throw new Error("Missing SSH Credentials");
+
+        // 1. Connect Source
+        log(`Connecting to Source: ${sourceServer.name}...`);
+        const sourceSSH = createSSHClient({
             ssh_host: sourceServer.ssh_host || new URL(sourceServer.url).hostname,
             ssh_port: sourceServer.ssh_port || 22,
             ssh_user: sourceServer.ssh_user || 'root',
@@ -234,11 +268,23 @@ export async function syncLibraryItem(sourceServerId: number, targetServerId: nu
         });
         await sourceSSH.connect();
 
+        // Resolve Source Path
         const sourcePath = (await sourceSSH.exec(`pvesm path ${sourceVolid}`, 5000)).trim();
-        if (!sourcePath || sourcePath.includes('Error')) throw new Error(`Could not resolve source path for ${sourceVolid}`);
+        log(`Resolved source path: ${sourcePath}`);
 
-        // 2. Connect Target & Determine Path
-        targetSSH = createSSHClient({
+        // Get File Size for Progress
+        let totalSize = 0;
+        try {
+            const sizeOut = await sourceSSH.exec(`stat -c%s "${sourcePath}"`, 5000);
+            totalSize = parseInt(sizeOut.trim()) || 0;
+            db.prepare("UPDATE background_tasks SET total_size = ? WHERE id = ?").run(totalSize, taskId);
+            log(`File size: ${(totalSize / 1024 / 1024).toFixed(2)} MB`);
+        } catch (e) { log('Warning: Could not determine file size'); }
+
+
+        // 2. Connect Target
+        log(`Connecting to Target: ${targetServer.name}...`);
+        const targetSSH = createSSHClient({
             ssh_host: targetServer.ssh_host || new URL(targetServer.url).hostname,
             ssh_port: targetServer.ssh_port || 22,
             ssh_user: targetServer.ssh_user || 'root',
@@ -246,53 +292,82 @@ export async function syncLibraryItem(sourceServerId: number, targetServerId: nu
         });
         await targetSSH.connect();
 
-        // Get Mountpoint of target storage
-        // We can use a trick: `pvesm path <storage>:iso/test` might fail if file doesn't exist.
-        // Parse storage.cfg to find 'path'.
+        // Resolve Target Path
         const cfgOutput = await targetSSH.exec('cat /etc/pve/storage.cfg', 5000);
         const storagePath = parseStoragePath(cfgOutput, targetStorage);
         if (!storagePath) throw new Error(`Could not find path for storage ${targetStorage} on target`);
 
         const filename = sourceVolid.split('/').pop()?.split(':')[1] || sourceVolid.split('/').pop() || 'image';
-        // subdir: template/iso for ISO, template/cache for VZTMPL
         const subdir = type === 'iso' ? 'template/iso' : 'template/cache';
         const targetFullPath = `${storagePath}/${subdir}/${filename}`;
 
-        // 3. Execute Copy (Stream)
-        console.log(`[Sync] Starting stream from ${sourcePath} to ${targetFullPath}`);
+        log(`Target path: ${targetFullPath}`);
 
+        // 3. Check Cancellation before start
+        let taskState = db.prepare("SELECT status FROM background_tasks WHERE id = ?").get(taskId) as any;
+        if (taskState.status === 'cancelled') throw new Error("Cancelled by user");
+
+        // 4. Stream Copy
+        log('Starting data stream...');
         const sourceStream = await sourceSSH.getExecStream(`cat "${sourcePath}"`);
         const targetStream = await targetSSH.getExecStream(`cat > "${targetFullPath}"`);
 
+        let processed = 0;
+        let lastUpdate = Date.now();
+        let bytesSinceLast = 0;
+
         await new Promise<void>((resolve, reject) => {
-            targetStream.on('close', () => {
-                console.log('[Sync] Stream finished');
-                resolve();
+            sourceStream.on('data', (chunk: Buffer) => {
+                // Check cancellation periodically (every 100MB or 2s?)
+                // Doing DB check on every chunk is too expensive.
+                // Do it on time interval.
+                const now = Date.now();
+                processed += chunk.length;
+                bytesSinceLast += chunk.length;
+
+                if (now - lastUpdate > 1000) { // Every second
+                    // Calculate speed
+                    const speedBps = (bytesSinceLast / (now - lastUpdate)) * 1000;
+                    const speedMBps = (speedBps / 1024 / 1024).toFixed(1) + ' MB/s';
+
+                    // Update DB
+                    try {
+                        const current = db.prepare("SELECT status FROM background_tasks WHERE id = ?").get(taskId) as any;
+                        if (current.status === 'cancelled') {
+                            sourceStream.destroy(); // Kill stream
+                            targetStream.destroy();
+                            reject(new Error("Cancelled by user"));
+                            return;
+                        }
+
+                        db.prepare("UPDATE background_tasks SET progress = ?, current_speed = ? WHERE id = ?").run(processed, speedMBps, taskId);
+                    } catch (e) { }
+
+                    lastUpdate = now;
+                    bytesSinceLast = 0;
+                }
             });
 
-            targetStream.on('error', (err: any) => {
-                console.error('[Sync] Target stream error:', err);
-                reject(err);
-            });
+            targetStream.on('close', resolve);
+            targetStream.on('error', reject);
+            sourceStream.on('error', reject);
 
-            sourceStream.on('error', (err: any) => {
-                console.error('[Sync] Source stream error:', err);
-                reject(err);
-            });
-
-            // Pipe source stdout to target stdin
             sourceStream.pipe(targetStream);
         });
 
+        log('Transfer completed successfully.');
+        db.prepare("UPDATE background_tasks SET status = 'completed', completed_at = datetime('now'), progress = ? WHERE id = ?").run(totalSize, taskId);
+
         sourceSSH.disconnect();
         targetSSH.disconnect();
-        return { success: true };
 
     } catch (e: any) {
-        if (sourceSSH) sourceSSH.disconnect();
-        if (targetSSH) targetSSH.disconnect();
-        console.error("Sync Failed", e);
-        throw new Error(e.message || "Sync Failed");
+        log(`Error: ${e.message}`);
+        // If already cancelled, don't overwrite with failed
+        const current = db.prepare("SELECT status FROM background_tasks WHERE id = ?").get(taskId) as any;
+        if (current.status !== 'cancelled') {
+            db.prepare("UPDATE background_tasks SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?").run(e.message, taskId);
+        }
     }
 }
 
@@ -300,25 +375,20 @@ function parseStoragePath(cfg: string, storage: string): string | null {
     let currentStorage: string | null = null;
     let path: string | null = null;
 
-    // Simple parser
     const lines = cfg.split('\n');
     for (const line of lines) {
         if (line.match(/^[a-z]+:\s+\S+/)) {
-            // New block
             const name = line.split(':')[1].trim();
             if (currentStorage === storage) {
-                // We were in the block and finished it? No, checking properties.
-                // If we found path before, return it.
                 if (path) return path;
-                // If not, maybe we missed it.
             }
             currentStorage = name;
-            path = null; // reset for new block
+            path = null;
         }
         if (currentStorage === storage) {
             if (line.trim().startsWith('path')) {
                 path = line.trim().split(/\s+/)[1];
-                return path; // Found it!
+                return path;
             }
         }
     }

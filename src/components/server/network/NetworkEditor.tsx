@@ -134,7 +134,7 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
                                 {explaining ? 'Analysiere...' : 'KI Analyse'}
                             </Button>
                         </DialogTrigger>
-                        <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
+                        <DialogContent className="max-w-[90vw] w-full max-h-[90vh] flex flex-col">
                             <DialogHeader>
                                 <DialogTitle className="flex items-center justify-between">
                                     <span>Netzwerk Integritäts-Analyse</span>

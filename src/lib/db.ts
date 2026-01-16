@@ -34,6 +34,30 @@ try {
   // Ignore if table doesn't exist (init script handles it)
 }
 
+// Auto-migrate: background_tasks table
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS background_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,         -- 'iso_sync', 'template_sync', 'backup_upload'
+      status TEXT DEFAULT 'pending', -- pending, running, completed, failed, cancelled
+      description TEXT,
+      source_server_id INTEGER,
+      target_server_id INTEGER,
+      progress INTEGER DEFAULT 0,
+      total_size INTEGER DEFAULT 0,
+      current_speed TEXT,
+      log TEXT DEFAULT '',
+      error TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      completed_at DATETIME
+    );
+  `);
+} catch (e) {
+  console.error('[DB] Failed to create background_tasks table:', e);
+}
+
 export default db;
 export function getBackupDir() {
   // Return relative path string to avoid Turbopack resolving it as a glob

@@ -52,6 +52,22 @@ export async function getAllTasks(limit: number = 50, filterType?: string, filte
         FROM migration_tasks mt
         LEFT JOIN servers s1 ON mt.source_server_id = s1.id
         LEFT JOIN servers s2 ON mt.target_server_id = s2.id
+
+        UNION ALL
+
+        SELECT
+            'background' as source,
+            bt.id as rawId,
+            bt.type as type,
+            bt.description,
+            bt.status,
+            bt.created_at as startTime,
+            bt.completed_at as endTime,
+            bt.log,
+            COALESCE(s1.name, 'System') || ' -> ' || COALESCE(s2.name, 'Target') as node_name
+        FROM background_tasks bt
+        LEFT JOIN servers s1 ON bt.source_server_id = s1.id
+        LEFT JOIN servers s2 ON bt.target_server_id = s2.id
         
         ORDER BY startTime DESC
         LIMIT ?
@@ -110,6 +126,16 @@ export async function cancelTask(id: string): Promise<{ success: boolean; messag
         const stmt = db.prepare(`
             UPDATE history 
             SET status = 'cancelled', end_time = datetime('now')
+            WHERE id = ? AND status = 'running'
+        `);
+        const info = stmt.run(rawId);
+        if (info.changes > 0) return { success: true };
+        return { success: false, message: 'Task not running or not found' };
+    } else if (source === 'background') {
+        // Mark as cancelled in DB. The running process must query this.
+        const stmt = db.prepare(`
+            UPDATE background_tasks 
+            SET status = 'cancelled', completed_at = datetime('now'), error = 'Cancelled by user'
             WHERE id = ? AND status = 'running'
         `);
         const info = stmt.run(rawId);
