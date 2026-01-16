@@ -11,7 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { AlertCircle, CheckCircle2, AlertTriangle, Activity, FileText } from "lucide-react";
 import { ScanResult, scanAllVMs, scanHost } from '@/app/actions/scan';
 import { createScanSchedule } from '@/app/actions/schedule';
-import { Loader2, ShieldCheck, Server, Monitor, Info, RefreshCw, Smartphone, Clock } from "lucide-react";
+import { Loader2, ShieldCheck, Server, Monitor, Info, RefreshCw, Smartphone, Clock, CheckCircle } from "lucide-react";
 import { toast } from 'sonner';
 import { HealthResult, HealthIssue } from '@/app/actions/ai';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
