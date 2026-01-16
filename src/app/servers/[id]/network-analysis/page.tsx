@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { runNetworkAnalysis, getLatestNetworkAnalysis } from '@/app/actions/network_analysis';
@@ -21,11 +21,7 @@ export default function NetworkAnalysisPage() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
-    useEffect(() => {
-        loadAnalysis();
-    }, [serverId]);
-
-    async function loadAnalysis() {
+    const loadAnalysis = useCallback(async () => {
         setLoading(true);
         try {
             const result = await getLatestNetworkAnalysis(serverId);
@@ -38,7 +34,11 @@ export default function NetworkAnalysisPage() {
         } finally {
             setLoading(false);
         }
-    }
+    }, [serverId]);
+
+    useEffect(() => {
+        loadAnalysis();
+    }, [loadAnalysis]);
 
     async function handleRefresh() {
         setRefreshing(true);

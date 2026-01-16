@@ -564,30 +564,55 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         const pid = pidStr.trim();
         log(`[vzdump] Started background process PID: ${pid}`);
 
-        // Polling loop
+        // Polling loop with timeouts
         let running = true;
+        const maxPollingTime = 2 * 60 * 60 * 1000; // 2 hours max
+        const staleTimeout = 10 * 60 * 1000; // 10 minutes without log change = stale
+        const pollStartTime = Date.now();
+        let lastLogContent = '';
+        let lastLogChangeTime = Date.now();
+        let consecutiveErrors = 0;
 
         while (running) {
             await new Promise(r => setTimeout(r, 3000)); // Sleep 3s
 
+            // Check global timeout
+            if (Date.now() - pollStartTime > maxPollingTime) {
+                throw new Error('vzdump Timeout: Backup dauert länger als 2 Stunden');
+            }
+
             // Check if process still exists
             try {
                 await sourceSsh.exec(`ps -p ${pid}`);
+                consecutiveErrors = 0;
             } catch {
                 running = false; // Process gone
+                continue;
             }
 
             // Read recent log lines for progress
-            if (running) {
-                try {
-                    const tail = await sourceSsh.exec(`tail -n 2 ${logFile}`);
-                    if (tail.trim()) {
-                        const lines = tail.split('\n');
-                        lines.forEach(l => {
-                            if (l.includes('%') || l.includes('INFO')) log(`[vzdump] ${l.trim()}`);
-                        });
+            try {
+                const tail = await sourceSsh.exec(`tail -n 5 ${logFile}`);
+                if (tail.trim()) {
+                    // Check for stale log
+                    if (tail !== lastLogContent) {
+                        lastLogContent = tail;
+                        lastLogChangeTime = Date.now();
+                    } else if (Date.now() - lastLogChangeTime > staleTimeout) {
+                        throw new Error('vzdump scheint hängen geblieben: Keine Log-Aktivität seit 10 Minuten');
                     }
-                } catch { }
+
+                    const lines = tail.split('\n');
+                    lines.forEach(l => {
+                        if (l.includes('%') || l.includes('INFO')) log(`[vzdump] ${l.trim()}`);
+                    });
+                }
+                consecutiveErrors = 0;
+            } catch (e: any) {
+                consecutiveErrors++;
+                if (consecutiveErrors > 30) {
+                    throw new Error(`vzdump Polling abgebrochen: ${consecutiveErrors} aufeinanderfolgende Fehler`);
+                }
             }
         }
 

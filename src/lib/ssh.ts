@@ -132,24 +132,49 @@ export class SSHClient {
         await this.connect();
     }
 
-    // Execute a command with auto-reconnect
+    // Execute a command with auto-reconnect and exponential backoff
     async exec(command: string, timeoutMs: number = 20000, options: { pty?: boolean } = {}): Promise<string> {
-        try {
-            return await this._execCore(command, timeoutMs, options);
-        } catch (e: any) {
-            const msg = e.message || '';
-            if (msg.includes('Not connected') || msg.includes('Connection closed') || msg.includes('read ECONNRESET') || msg.includes('No response') || msg.toLowerCase().includes('unable to exec')) {
-                console.log(`[SSH] Connection lost (${msg}), reconnecting...`);
+        const maxRetries = 3;
+        const retryableErrors = [
+            'Not connected',
+            'Connection closed',
+            'read ECONNRESET',
+            'No response',
+            'unable to exec',
+            'ETIMEDOUT',
+            'ENETUNREACH',
+            'ECONNREFUSED'
+        ];
+
+        let lastError: Error | null = null;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                return await this._execCore(command, timeoutMs, options);
+            } catch (e: any) {
+                lastError = e;
+                const msg = (e.message || '').toLowerCase();
+                const isRetryable = retryableErrors.some(err => msg.includes(err.toLowerCase()));
+
+                if (!isRetryable || attempt === maxRetries) {
+                    throw e;
+                }
+
+                // Exponential backoff: 1s, 2s, 4s
+                const delay = Math.pow(2, attempt - 1) * 1000;
+                console.log(`[SSH] Attempt ${attempt}/${maxRetries} failed (${e.message}), retrying in ${delay}ms...`);
+                await new Promise(r => setTimeout(r, delay));
+
                 try {
                     await this.reconnect();
-                    return await this._execCore(command, timeoutMs, options);
                 } catch (reconnectErr) {
-                    console.error('[SSH] Reconnect failed:', reconnectErr);
-                    throw e; // Throw original error if reconnect fails
+                    console.error(`[SSH] Reconnect attempt ${attempt} failed:`, reconnectErr);
+                    // Continue to next retry attempt
                 }
             }
-            throw e;
         }
+
+        throw lastError || new Error('SSH exec failed after retries');
     }
 
     private async _execCore(command: string, timeoutMs: number, options: { pty?: boolean }): Promise<string> {

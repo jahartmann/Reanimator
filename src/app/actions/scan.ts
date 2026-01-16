@@ -28,6 +28,22 @@ export async function scanAllVMs(serverId: number) {
     try {
         const vms = await getVMs(serverId);
 
+        // Prepare statement outside the loop for efficiency
+        const stmt = db.prepare(`
+            INSERT INTO scan_results (server_id, vmid, type, result_json)
+            VALUES (?, ?, ?, ?)
+        `);
+
+        // Use transaction for bulk operations - ensures consistency
+        const insertResults = db.transaction((items: Array<{ vmid: string, type: string, analysis: any }>) => {
+            for (const item of items) {
+                stmt.run(serverId, item.vmid, item.type, JSON.stringify(item.analysis));
+            }
+        });
+
+        // Collect all results first
+        const results: Array<{ vmid: string, type: string, analysis: any }> = [];
+
         for (const vm of vms) {
             // Fetch Config
             const config = await getVMConfig(serverId, vm.vmid, vm.type);
@@ -35,14 +51,11 @@ export async function scanAllVMs(serverId: number) {
 
             // Analyze
             const analysis = await analyzeConfigWithAI(config, vm.type);
-
-            // Save
-            const stmt = db.prepare(`
-                INSERT INTO scan_results (server_id, vmid, type, result_json)
-                VALUES (?, ?, ?, ?)
-            `);
-            stmt.run(serverId, vm.vmid, vm.type, JSON.stringify(analysis));
+            results.push({ vmid: vm.vmid, type: vm.type, analysis });
         }
+
+        // Insert all results in a single transaction
+        insertResults(results);
 
         return { success: true, count: vms.length };
     } catch (e: any) {

@@ -23,25 +23,56 @@ export async function getLatestNetworkAnalysis(serverId: number): Promise<Analys
     return row as AnalysisResult;
 }
 
-export async function runNetworkAnalysis(serverId: number) {
+export async function runNetworkAnalysis(serverId: number): Promise<string> {
     console.log(`[AI Analysis] Starting Network Analysis for Server ${serverId}...`);
 
-    // 1. Fetch Config
-    const config = await getNetworkConfig(serverId);
-    if (!config.success || !config.interfaces) {
-        throw new Error(`Failed to fetch network config: ${config.error}`);
+    try {
+        // 1. Fetch Config
+        const config = await getNetworkConfig(serverId);
+        if (!config.success || !config.interfaces) {
+            const errorMsg = config.error || 'Netzwerkkonfiguration konnte nicht abgerufen werden';
+            console.error(`[AI Analysis] Config fetch failed: ${errorMsg}`);
+            throw new Error(`Konfigurationsfehler: ${errorMsg}`);
+        }
+
+        // Ensure we have valid interfaces data
+        if (!Array.isArray(config.interfaces) || config.interfaces.length === 0) {
+            throw new Error('Keine Netzwerk-Interfaces gefunden');
+        }
+
+        // 2. AI Analysis
+        let explanation: string;
+        try {
+            explanation = await explainNetworkConfig(config.interfaces);
+        } catch (aiError: any) {
+            console.error(`[AI Analysis] AI processing failed:`, aiError);
+            throw new Error(`KI-Analyse fehlgeschlagen: ${aiError.message}`);
+        }
+
+        // Validate AI response
+        if (!explanation || explanation.trim().length < 50) {
+            throw new Error('KI-Antwort war leer oder zu kurz');
+        }
+
+        // 3. Save to DB
+        try {
+            const stmt = db.prepare(`
+                INSERT INTO server_ai_analysis (server_id, type, content)
+                VALUES (?, 'network', ?)
+            `);
+            stmt.run(serverId, explanation);
+        } catch (dbError: any) {
+            console.error(`[AI Analysis] DB save failed:`, dbError);
+            // Still return the explanation even if save fails
+            console.warn('[AI Analysis] Returning result despite DB save failure');
+            return explanation;
+        }
+
+        console.log(`[AI Analysis] Completed & Saved for Server ${serverId}.`);
+        return explanation;
+
+    } catch (error: any) {
+        console.error(`[AI Analysis] Failed for Server ${serverId}:`, error);
+        throw error; // Re-throw with improved error message
     }
-
-    // 2. AI Analysis
-    const explanation = await explainNetworkConfig(config.interfaces);
-
-    // 3. Save to DB
-    const stmt = db.prepare(`
-        INSERT INTO server_ai_analysis (server_id, type, content)
-        VALUES (?, 'network', ?)
-    `);
-    stmt.run(serverId, explanation);
-
-    console.log(`[AI Analysis] Completed & Saved for Server ${serverId}.`);
-    return explanation;
 }

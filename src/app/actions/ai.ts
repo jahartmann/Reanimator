@@ -34,15 +34,29 @@ export async function checkOllamaConnection(url: string) {
     try {
         // Remove trailing slash
         const cleanUrl = url.replace(/\/$/, '');
-        const res = await request(`${cleanUrl}/api/tags`);
 
-        if (res.statusCode !== 200) {
-            return { success: false, message: `Status ${res.statusCode}` };
+        // Create abort controller with 10 second timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+        try {
+            const res = await request(`${cleanUrl}/api/tags`, {
+                signal: controller.signal
+            });
+
+            if (res.statusCode !== 200) {
+                return { success: false, message: `Status ${res.statusCode}` };
+            }
+
+            const data = await res.body.json() as { models: OllamaModel[] };
+            return { success: true, models: data.models };
+        } finally {
+            clearTimeout(timeoutId);
         }
-
-        const data = await res.body.json() as { models: OllamaModel[] };
-        return { success: true, models: data.models };
     } catch (e: any) {
+        if (e.name === 'AbortError') {
+            return { success: false, message: 'Connection timeout (10s)' };
+        }
         return { success: false, message: e.message || 'Connection failed' };
     }
 }
@@ -50,6 +64,10 @@ export async function checkOllamaConnection(url: string) {
 export async function generateAIResponse(prompt: string, systemContext?: string): Promise<string> {
     const settings = await getAISettings();
     if (!settings.model) throw new Error('Kein AI Model ausgewählt. Bitte in den Einstellungen konfigurieren.');
+
+    // Create abort controller with 120 second timeout (AI models can be slow)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
 
     try {
         const cleanUrl = settings.url.replace(/\/$/, '');
@@ -67,7 +85,8 @@ export async function generateAIResponse(prompt: string, systemContext?: string)
         const res = await request(`${cleanUrl}/api/generate`, {
             method: 'POST',
             body: JSON.stringify(payload),
-            headers: { 'Content-Type': 'application/json' }
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal
         });
 
         if (res.statusCode !== 200) {
@@ -78,8 +97,13 @@ export async function generateAIResponse(prompt: string, systemContext?: string)
         return data.response;
 
     } catch (e: any) {
+        if (e.name === 'AbortError') {
+            throw new Error('AI Timeout: Keine Antwort nach 120 Sekunden');
+        }
         console.error('AI Generation Error:', e);
         throw new Error(`AI Fehler: ${e.message}`);
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
 
@@ -104,11 +128,35 @@ Ignoriere den Stacktrace, fokussiere dich auf die Fehlermeldung.
 // Helper to separate JSON from text
 function parseAIJSON(response: string) {
     try {
-        const jsonMatch = response.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-        const jsonStr = jsonMatch ? jsonMatch[0] : response;
-        return JSON.parse(jsonStr);
+        // Step 1: Remove markdown code block wrappers if present
+        let cleaned = response.trim();
+
+        // Remove ```json ... ``` or ``` ... ``` wrappers
+        const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (codeBlockMatch) {
+            cleaned = codeBlockMatch[1].trim();
+        }
+
+        // Step 2: Extract JSON object or array
+        const jsonMatch = cleaned.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+        const jsonStr = jsonMatch ? jsonMatch[0] : cleaned;
+
+        // Step 3: Parse with validation
+        const parsed = JSON.parse(jsonStr);
+
+        // Basic schema validation for HealthResult
+        if (typeof parsed === 'object' && parsed !== null) {
+            if (parsed.score !== undefined && typeof parsed.score !== 'number') {
+                parsed.score = parseInt(parsed.score) || 100;
+            }
+            if (!Array.isArray(parsed.issues)) {
+                parsed.issues = [];
+            }
+        }
+
+        return parsed;
     } catch (e) {
-        console.error('AI JSON Parse Error:', e);
+        console.error('AI JSON Parse Error:', e, 'Response:', response.substring(0, 200));
         return null;
     }
 }
