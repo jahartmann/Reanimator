@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Monitor, Smartphone, ArrowRightLeft, PlayCircle, StopCircle, Loader2, Stethoscope, MoreHorizontal, Power, RefreshCw, Trash2, HardDrive, FileText, Activity, Sparkles, CheckCircle, AlertTriangle, Info, AlertCircle } from "lucide-react"
 import { VirtualMachine } from '@/app/actions/vm';
