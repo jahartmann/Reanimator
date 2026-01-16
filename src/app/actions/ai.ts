@@ -196,14 +196,29 @@ ${files.map(f => `=== ${f.filename} ===\n${f.content}\n`).join('\n')}
 
 export async function explainNetworkConfig(interfaces: any[]): Promise<string> {
     const context = `
-Du bist ein Netzwerk-Experte.
-Erkläre einem Junior-Admin den folgenden Netzwerk-Aufbau verständlich auf Deutsch.
-Fasse zusammen:
-- Welche Bridges gibt es und was verbinden sie? (VMs, Physische Ports)
-- Gibt es Redundanz (Bonds)?
-- Was ist die Management-IP?
+Du bist ein erfahrener Netzwerk-Architect und Security-Consultant.
+Analysiere die folgende Linux Netzwerk-Konfiguration (/etc/network/interfaces Struktur) detailliert.
 
-Antworte direkt mit der Erklärung in Markdown/Text. Keine JSON-Struktur nötig, einfach ein guter Text.
+Erstelle einen umfassenden Bericht in Markdown mit folgenden Sektionen:
+
+### 1. 🗺️ Topologie-Überblick
+- Visualisiere/Beschreibe den Aufbau (Welche Physischen Ports hängen an welchen Bridges?).
+- Identifiziere die Management-Schnittstelle und IP.
+
+### 2. 🛡️ Sicherheits-Analyse
+- Gibt es unsichere Konfigurationen? (z.B. Promiscuous Mode ungewollt, fehlende VLAN Trennung).
+- Sind Kommentare vorhanden, die auf sensitive Infos hindeuten?
+
+### 3. 🚀 Performance & Redundanz
+- Wird Link Aggregation (LACP/Bonding) genutzt? Wenn nein, wo wäre es empfehlenswert?
+- Sind MTU-Werte angepasst (Jumbo Frames)?
+- Gibt es Flaschenhälse (z.B. 10G und 1G gemischt in Bond)?
+
+### 4. 💡 Empfehlungen
+- Konkrete Verbesserungsvorschläge (Best Practices für Proxmox/Debian).
+- Wenn die Config gut ist, bestätige dies explizit.
+
+Antworte strukturiert, fachlich korrekt aber verständlich. Nutze Icons zur Visualisierung.
     `.trim();
 
     return generateAIResponse(`Hier die Config:\n${JSON.stringify(interfaces, null, 2)}`, context);

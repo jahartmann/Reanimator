@@ -66,7 +66,7 @@ export function reloadScheduler() {
     loadJobs(); // We don't re-init defaults on reload to avoid spam
 }
 
-async function runJob(job: any) {
+export async function runJob(job: any) {
     console.log(`[Scheduler] Executing job: ${job.name} (type: ${job.job_type})`);
     const startTime = new Date().toISOString();
 
