@@ -144,7 +144,7 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
 
                             <ScrollArea className="flex-1 border rounded-md p-4 bg-background/50 h-[400px]">
                                 {explanation ? (
-                                    <div className="prose dark:prose-invert prose-sm max-w-none">
+                                    <div className="prose dark:prose-invert prose-sm max-w-none overflow-x-auto">
                                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                                             {explanation}
                                         </ReactMarkdown>

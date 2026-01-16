@@ -259,62 +259,30 @@ export async function syncLibraryItem(sourceServerId: number, targetServerId: nu
         const targetFullPath = `${storagePath}/${subdir}/${filename}`;
 
         // 3. Execute Copy (Stream)
-        // We can't easily pipe two SSH sessions in Node SSH2 directly without streaming data through Node.
-        // We will read from source and write to target using streams.
+        console.log(`[Sync] Starting stream from ${sourcePath} to ${targetFullPath}`);
 
-        // This function needs to be implemented using Streams in `lib/ssh.ts`? 
-        // Or we can use `ssh.spawn` to get a stream.
+        const sourceStream = await sourceSSH.getExecStream(`cat "${sourcePath}"`);
+        const targetStream = await targetSSH.getExecStream(`cat > "${targetFullPath}"`);
 
-        // Simplified approach: Trigger a remote command on Target that SSHs to Source?
-        // NO, keys might not be exchanged.
+        await new Promise<void>((resolve, reject) => {
+            targetStream.on('close', () => {
+                console.log('[Sync] Stream finished');
+                resolve();
+            });
 
-        // Controller as Relay: Source -> Controller -> Target.
-        // Use `cat` on source, pipe to `cat >` on target.
-        // Requires updating `lib/ssh.ts` to support raw streams or `exec` returning stdout stream.
-        // My `exec` returns Promise<string>.
-        // I need to modify `createSSHClient` or add a streaming method?
-        // Wait, `ssh2` Client supports `exec` which gives a stream.
+            targetStream.on('error', (err: any) => {
+                console.error('[Sync] Target stream error:', err);
+                reject(err);
+            });
 
-        // Since I can't easily modify `lib/ssh.ts` deeply right now without risk, 
-        // I will use a simplified fallback: `scp` download to tmp and upload.
-        // LIMITATION: Use `/tmp` (might run out of space).
-        // BETTER: Use `cwd/data/tmp`.
+            sourceStream.on('error', (err: any) => {
+                console.error('[Sync] Source stream error:', err);
+                reject(err);
+            });
 
-        // Actually, let's try to add a `stream` method to `lib/ssh.ts`? 
-        // No, let's keep it simple. If files are large, this is bad.
-        // But for ISOs (1-4GB), it's manageable if we stream.
-        // If I can't stream, I'll download/upload.
-
-        // Actually, I can execute: `ssh -i key ... source cat ... | ssh -i key ... target cat ...` 
-        // via `child_process.exec` on the CONTROLLER (Mac).
-        // This is much better! The controller (me) has the keys and connectivity.
-        // I just need the temporary private key files?
-        // I have the keys in the DB. I can write them to temp files.
-
-        const fs = require('fs');
-        const path = require('path');
-        const os = require('os');
-        const { exec } = require('child_process');
-        const util = require('util');
-        const execPromise = util.promisify(exec);
-
-        const tmpDir = os.tmpdir();
-        const sourceKeyPath = path.join(tmpDir, `key_source_${sourceServerId}`);
-        const targetKeyPath = path.join(tmpDir, `key_target_${targetServerId}`);
-
-        fs.writeFileSync(sourceKeyPath, sourceServer.ssh_key, { mode: 0o600 });
-        fs.writeFileSync(targetKeyPath, targetServer.ssh_key, { mode: 0o600 });
-
-        const sourceHost = sourceServer.ssh_host || new URL(sourceServer.url).hostname;
-        const targetHost = targetServer.ssh_host || new URL(targetServer.url).hostname;
-
-        const cmd = `ssh -o StrictHostKeyChecking=no -i ${sourceKeyPath} -p ${sourceServer.ssh_port || 22} root@${sourceHost} "cat ${sourcePath}" | ssh -o StrictHostKeyChecking=no -i ${targetKeyPath} -p ${targetServer.ssh_port || 22} root@${targetHost} "cat > ${targetFullPath}"`;
-
-        await execPromise(cmd);
-
-        // Cleanup
-        fs.unlinkSync(sourceKeyPath);
-        fs.unlinkSync(targetKeyPath);
+            // Pipe source stdout to target stdin
+            sourceStream.pipe(targetStream);
+        });
 
         sourceSSH.disconnect();
         targetSSH.disconnect();

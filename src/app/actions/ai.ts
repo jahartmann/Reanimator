@@ -205,7 +205,8 @@ Analysiere die folgende Linux Netzwerk-Konfiguration (/etc/network/interfaces St
 Erstelle einen umfassenden Bericht in Markdown mit folgenden Sektionen:
 
 ### 1. 🗺️ Topologie-Überblick
-- Visualisiere/Beschreibe den Aufbau (Welche Physischen Ports hängen an welchen Bridges?).
+- Erstelle eine Markdown-Tabelle für die Topologie (Spalten: Gerät, Typ, Physischer Port, Bridge/Bond, Hinweise).
+- Visualisiere die Verbindungen klar.
 - Identifiziere die Management-Schnittstelle und IP.
 
 ### 2. 🛡️ Sicherheits-Analyse
