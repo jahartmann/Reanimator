@@ -147,7 +147,7 @@ export default function TaskManager({ className }: TaskManagerProps) {
                                             onClick={() => setSelectedTask(task)}
                                         >
                                             <TableCell className="text-xs font-mono text-muted-foreground">
-                                                {new Date(task.start_time).toLocaleString()}
+                                                {new Date(task.startTime).toLocaleString()}
                                             </TableCell>
                                             <TableCell className="text-xs">{task.node || 'System'}</TableCell>
                                             <TableCell className="text-xs">{task.user || 'root@pam'}</TableCell>
