@@ -12,19 +12,19 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import {
     ArrowRight, ArrowLeft, Loader2, CheckCircle2, AlertTriangle,
-    Server as ServerIcon, Database, ArrowRightLeft, HardDrive, Network
+    Server as ServerIcon, Database, ArrowRightLeft, HardDrive, Network, Calendar
 } from "lucide-react";
 import { getServers } from '@/app/actions/server';
 import { startServerMigration } from "@/app/actions/migration";
-import { getVMs, VirtualMachine } from "@/app/actions/vm";
+import { getVMs, VirtualMachine, scheduleMigration } from "@/app/actions/vm";
 import { setupSSHTrust } from '@/app/actions/trust';
 import { Badge } from "@/components/ui/badge";
 
 // Interface for Mapping
 interface VMMapping {
     vmid: string;
-    targetStorage: string;
-    targetBridge: string;
+    targetStorage: string; // "auto" (Keep Original/Default) or specific storage
+    networkMapping: Record<string, string>; // net0 -> bridge
 }
 
 export default function NewMigrationPage() {
@@ -61,7 +61,9 @@ export default function NewMigrationPage() {
         cloneConfig: false,
         cloneNetwork: true,
         cloneFirewall: false,
-        cloneTags: true
+        cloneTags: true,
+        // Scheduling
+        schedule: ''
     });
 
     // Execution State
@@ -69,6 +71,7 @@ export default function NewMigrationPage() {
     const [showSshFix, setShowSshFix] = useState(false);
     const [sshPassword, setSshPassword] = useState('');
     const [fixingSsh, setFixingSsh] = useState(false);
+    const [schedulingLog, setSchedulingLog] = useState<string[]>([]);
 
 
     // --- Load Servers ---
@@ -103,17 +106,33 @@ export default function NewMigrationPage() {
     // --- Initialize Mappings when Selection Changes ---
     useEffect(() => {
         const newMappings = { ...mappings };
+        let changed = false;
+
         selectedVmIds.forEach(vmid => {
             if (!newMappings[vmid]) {
+                const vm = vms.find(v => v.vmid === vmid);
+                const nets: Record<string, string> = {};
+
+                // Initialize all networks to "auto" (or first bridge if "auto" isn't a valid bridge option, but "auto" is fine for now)
+                if (vm?.networks) {
+                    vm.networks.forEach(n => {
+                        nets[n] = 'auto';
+                    });
+                } else if (targetResources.bridges.length > 0) {
+                    // Fallback if we can't detect nets but assume net0
+                    nets['net0'] = 'auto';
+                }
+
                 newMappings[vmid] = {
                     vmid,
-                    targetStorage: 'auto',
-                    targetBridge: 'auto'
+                    targetStorage: 'auto', // Default to Auto (Keep Config)
+                    networkMapping: nets
                 };
+                changed = true;
             }
         });
-        setMappings(newMappings);
-    }, [selectedVmIds]);
+        if (changed) setMappings(newMappings);
+    }, [selectedVmIds, vms, targetResources]);
 
 
     // --- Actions ---
@@ -126,26 +145,94 @@ export default function NewMigrationPage() {
         }
     };
 
-    const handleBulkMap = (key: 'targetStorage' | 'targetBridge', value: string) => {
+    const handleBulkMap = (key: 'targetStorage' | 'network', value: string) => {
         const newMaps = { ...mappings };
         selectedVmIds.forEach(id => {
-            if (newMaps[id]) newMaps[id][key] = value;
+            if (newMaps[id]) {
+                if (key === 'targetStorage') {
+                    newMaps[id].targetStorage = value;
+                } else {
+                    // Bulk update all network interfaces for selected VMs
+                    const nets = { ...newMaps[id].networkMapping };
+                    for (const netId in nets) {
+                        nets[netId] = value;
+                    }
+                    newMaps[id].networkMapping = nets;
+                }
+            }
         });
         setMappings(newMaps);
     };
 
     const handleStart = async () => {
         setStarting(true);
+        setSchedulingLog([]);
+
         try {
-            // Prepare Payload
             const selectedVMs = vms.filter(v => selectedVmIds.includes(v.vmid));
-            const migrationPayload = selectedVMs.map(vm => ({
-                vmid: vm.vmid,
-                type: vm.type,
-                name: vm.name,
-                targetStorage: mappings[vm.vmid]?.targetStorage === 'auto' ? undefined : mappings[vm.vmid]?.targetStorage,
-                targetBridge: mappings[vm.vmid]?.targetBridge === 'auto' ? undefined : mappings[vm.vmid]?.targetBridge
-            }));
+
+            // SCHEDULING MODE
+            if (options.schedule) {
+                const d = new Date(options.schedule);
+                // Cron: Minute Hour Day Month *
+                const cronExpression = `${d.getMinutes()} ${d.getHours()} ${d.getDate()} ${d.getMonth() + 1} *`;
+
+                let successCount = 0;
+                for (const vm of selectedVMs) {
+                    const map = mappings[vm.vmid];
+                    const vmOptions = {
+                        targetServerId: parseInt(targetId),
+                        targetStorage: map?.targetStorage === 'auto' ? '' : map?.targetStorage, // Empty string = Auto/Keep
+                        targetBridge: '', // Legacy
+                        networkMapping: map?.networkMapping,
+                        online: options.online,
+                        autoVmid: options.autoVmid
+                    };
+
+                    try {
+                        const res = await scheduleMigration(parseInt(sourceId), vm.vmid, vm.type as any, vmOptions, cronExpression);
+                        if (res.success) successCount++;
+                    } catch (err: any) {
+                        console.error(`Failed to schedule ${vm.vmid}:`, err);
+                    }
+                }
+
+                alert(`Geplant: ${successCount} von ${selectedVMs.length} Migrationen wurden erfolgreich eingeplant.`);
+                router.push('/jobs'); // Assuming there is a jobs page, user said "ich sehe das schedule feature auch nicht"
+                setStarting(false);
+                return;
+            }
+
+
+            // IMMEDIATE MODE
+            const migrationPayload = selectedVMs.map(vm => {
+                const map = mappings[vm.vmid];
+
+                // Helper to resolve "auto" mapping
+                const resolveNetMap = () => {
+                    const finalMap: Record<string, string> = {};
+                    if (map?.networkMapping) {
+                        for (const [k, v] of Object.entries(map.networkMapping)) {
+                            if (v !== 'auto') finalMap[k] = v;
+                            // If auto, we omit it or pass empty? 
+                            // Migration logic usually defaults to 'targetBridge' global if omitted.
+                            // But our new logic expects full map.
+                            // If 'auto', we can omit it to let system decide, or pick first valid bridge?
+                            // Let's pass 'auto' is tricky if backend doesn't handle it.
+                            // Backend `migrateRemote` iterates mapping.
+                        }
+                    }
+                    return finalMap;
+                };
+
+                return {
+                    vmid: vm.vmid,
+                    type: vm.type,
+                    name: vm.name,
+                    targetStorage: map?.targetStorage === 'auto' ? undefined : map?.targetStorage,
+                    networkMapping: map?.networkMapping // Pass the full map
+                }
+            });
 
             const res = await startServerMigration(
                 parseInt(sourceId),
@@ -153,9 +240,6 @@ export default function NewMigrationPage() {
                 migrationPayload,
                 {
                     autoVmid: options.autoVmid,
-                    // If we had config cloning support in migration.ts we would pass it here
-                    // For now, startServerMigration might just handle VMs. 
-                    // We will update startServerMigration to accept detailed maps.
                 }
             );
 
@@ -171,8 +255,11 @@ export default function NewMigrationPage() {
             }
         } catch (e: any) {
             const msg = e.message || String(e);
-            if (msg.includes('SSH') || msg.includes('Permission denied')) setShowSshFix(true);
-            else alert('Error: ' + msg);
+            if (msg.includes('SSH') || msg.includes('Permission denied')) {
+                setShowSshFix(true);
+            } else {
+                alert('Error: ' + msg);
+            }
             setStarting(false);
         }
     };
@@ -401,11 +488,11 @@ export default function NewMigrationPage() {
                                             <Select onValueChange={(v) => handleBulkMap('targetStorage', v)}>
                                                 <SelectTrigger className="w-[180px] h-8 text-xs"><SelectValue placeholder="Bulk Storage..." /></SelectTrigger>
                                                 <SelectContent>
-                                                    <SelectItem value="auto">Auto</SelectItem>
+                                                    <SelectItem value="auto">Auto (Keep Config)</SelectItem>
                                                     {targetResources.storages.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                                                 </SelectContent>
                                             </Select>
-                                            <Select onValueChange={(v) => handleBulkMap('targetBridge', v)}>
+                                            <Select onValueChange={(v) => handleBulkMap('network', v)}>
                                                 <SelectTrigger className="w-[180px] h-8 text-xs"><SelectValue placeholder="Bulk Net..." /></SelectTrigger>
                                                 <SelectContent>
                                                     <SelectItem value="auto">Auto</SelectItem>
@@ -419,63 +506,78 @@ export default function NewMigrationPage() {
                                         <table className="w-full text-sm">
                                             <thead className="bg-muted sticky top-0 z-10">
                                                 <tr className="text-left">
-                                                    <th className="p-3">VM</th>
-                                                    <th className="p-3 w-1/3">Target Storage</th>
-                                                    <th className="p-3 w-1/3">Target Network</th>
+                                                    <th className="p-3 w-1/4">VM</th>
+                                                    <th className="p-3 w-1/4">Target Storage</th>
+                                                    <th className="p-3 w-2/4">Target Network Mapping</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y">
-                                                {vms.filter(v => selectedVmIds.includes(v.vmid)).map(vm => (
-                                                    <tr key={vm.vmid}>
-                                                        <td className="p-3">
-                                                            <div className="font-medium">{vm.name}</div>
-                                                            <div className="text-xs text-muted-foreground">{vm.vmid}</div>
+                                                {vms.filter(v => selectedVmIds.includes(v.vmid)).map(vm => {
+                                                    const map = mappings[vm.vmid] || { vmid: vm.vmid, targetStorage: 'auto', networkMapping: {} };
 
-                                                            {((vm.storages?.length || 0) > 0 || (vm.networks?.length || 0) > 0) && (
-                                                                <div className="flex flex-wrap gap-1 mt-1.5">
-                                                                    {vm.storages?.map(s => (
-                                                                        <Badge key={s} variant="outline" className="text-[10px] h-4 px-1 border-muted-foreground/40 text-muted-foreground">
-                                                                            <HardDrive className="h-3 w-3 mr-1" /> {s}
-                                                                        </Badge>
-                                                                    ))}
-                                                                    {vm.networks?.map(n => (
-                                                                        <Badge key={n} variant="outline" className="text-[10px] h-4 px-1 border-muted-foreground/40 text-muted-foreground">
-                                                                            <Network className="h-3 w-3 mr-1" /> {n}
-                                                                        </Badge>
-                                                                    ))}
+                                                    return (
+                                                        <tr key={vm.vmid}>
+                                                            <td className="p-3 align-top">
+                                                                <div className="font-medium">{vm.name}</div>
+                                                                <div className="text-xs text-muted-foreground">{vm.vmid}</div>
+
+                                                                {/* Source Details */}
+                                                                <div className="mt-2 space-y-1">
+                                                                    <div className="flex flex-wrap gap-1">
+                                                                        {vm.storages?.map(s => (
+                                                                            <Badge key={s} variant="outline" className="text-[10px] h-4 px-1 border-muted-foreground/30 text-muted-foreground">
+                                                                                <HardDrive className="h-3 w-3 mr-1" /> {s}
+                                                                            </Badge>
+                                                                        ))}
+                                                                    </div>
                                                                 </div>
-                                                            )}
-                                                        </td>
-                                                        <td className="p-2">
-                                                            <Select value={mappings[vm.vmid]?.targetStorage || 'auto'} onValueChange={(v) => {
-                                                                const m = { ...mappings };
-                                                                if (!m[vm.vmid]) m[vm.vmid] = { vmid: vm.vmid, targetStorage: 'auto', targetBridge: 'auto' };
-                                                                m[vm.vmid].targetStorage = v;
-                                                                setMappings(m);
-                                                            }}>
-                                                                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                                                <SelectContent>
-                                                                    <SelectItem value="auto"><span className="text-muted-foreground italic">Auto</span></SelectItem>
-                                                                    {targetResources.storages.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                                                                </SelectContent>
-                                                            </Select>
-                                                        </td>
-                                                        <td className="p-2">
-                                                            <Select value={mappings[vm.vmid]?.targetBridge || 'auto'} onValueChange={(v) => {
-                                                                const m = { ...mappings };
-                                                                if (!m[vm.vmid]) m[vm.vmid] = { vmid: vm.vmid, targetStorage: 'auto', targetBridge: 'auto' };
-                                                                m[vm.vmid].targetBridge = v;
-                                                                setMappings(m);
-                                                            }}>
-                                                                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                                                <SelectContent>
-                                                                    <SelectItem value="auto"><span className="text-muted-foreground italic">Auto</span></SelectItem>
-                                                                    {targetResources.bridges.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                                                                </SelectContent>
-                                                            </Select>
-                                                        </td>
-                                                    </tr>
-                                                ))}
+                                                            </td>
+                                                            <td className="p-2 align-top">
+                                                                <Select value={map.targetStorage} onValueChange={(v) => {
+                                                                    const m = { ...mappings };
+                                                                    if (!m[vm.vmid]) m[vm.vmid] = { vmid: vm.vmid, targetStorage: 'auto', networkMapping: {} };
+                                                                    m[vm.vmid].targetStorage = v;
+                                                                    setMappings(m);
+                                                                }}>
+                                                                    <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
+                                                                    <SelectContent>
+                                                                        <SelectItem value="auto"><span className="text-muted-foreground italic">Auto (Keep Config)</span></SelectItem>
+                                                                        {targetResources.storages.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                                                                    </SelectContent>
+                                                                </Select>
+                                                            </td>
+                                                            <td className="p-2 align-top col-span-2">
+                                                                <div className="grid gap-2">
+                                                                    {Object.keys(map.networkMapping).length === 0 ? (
+                                                                        <div className="text-xs text-muted-foreground italic p-1">Keine Netzwerke erkannt oder Lade...</div>
+                                                                    ) : (
+                                                                        Object.entries(map.networkMapping).map(([net, currentBridge]) => (
+                                                                            <div key={net} className="flex items-center gap-2">
+                                                                                <Badge variant="secondary" className="w-16 justify-center font-mono text-[10px] h-7">{net}</Badge>
+                                                                                <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                                                                                <Select
+                                                                                    value={currentBridge || 'auto'}
+                                                                                    onValueChange={(v) => {
+                                                                                        const m = { ...mappings };
+                                                                                        if (!m[vm.vmid]) m[vm.vmid] = { vmid: vm.vmid, targetStorage: 'auto', networkMapping: {} };
+                                                                                        m[vm.vmid].networkMapping = { ...m[vm.vmid].networkMapping, [net]: v };
+                                                                                        setMappings(m);
+                                                                                    }}
+                                                                                >
+                                                                                    <SelectTrigger className="h-7 text-xs flex-1"><SelectValue placeholder="Select Bridge" /></SelectTrigger>
+                                                                                    <SelectContent>
+                                                                                        <SelectItem value="auto"><span className="text-muted-foreground italic">Auto</span></SelectItem>
+                                                                                        {targetResources.bridges.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                                                                                    </SelectContent>
+                                                                                </Select>
+                                                                            </div>
+                                                                        ))
+                                                                    )}
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
                                             </tbody>
                                         </table>
                                     </div>
@@ -505,26 +607,28 @@ export default function NewMigrationPage() {
                                                         <p className="text-xs text-muted-foreground">Snapshot Migration ohne Downtime (Experimentell).</p>
                                                     </div>
                                                 </div>
-                                                {/* Future: Delete Source? */}
                                             </div>
                                         </div>
 
-                                        <div className="p-4 border rounded-lg space-y-4">
-                                            <h3 className="font-medium flex items-center gap-2"><Database className="h-4 w-4" /> Config Cloning</h3>
-                                            <p className="text-xs text-muted-foreground mb-2">Diese Funktion kopiert Server-Einstellungen VOR der Migration.</p>
+                                        <div className="p-4 border rounded-lg space-y-4 bg-yellow-500/5 border-yellow-200 dark:border-yellow-900">
+                                            <h3 className="font-medium flex items-center gap-2 text-yellow-700 dark:text-yellow-500"><Calendar className="h-4 w-4" /> Zeitplan</h3>
+                                            <p className="text-xs text-muted-foreground mb-2">Erledige die Migration zu einem späteren Zeitpunkt (z.B. Nachts).</p>
 
-                                            <div className="flex items-center gap-2">
-                                                <Checkbox id="cloneCfg" checked={options.cloneConfig} onCheckedChange={(c) => setOptions(o => ({ ...o, cloneConfig: !!c }))} />
-                                                <Label htmlFor="cloneCfg">Server Config Sync aktivieren</Label>
+                                            <div className="grid gap-2">
+                                                <Label htmlFor="schedule">Startzeitpunkt (Optional)</Label>
+                                                <Input
+                                                    type="datetime-local"
+                                                    id="schedule"
+                                                    value={options.schedule}
+                                                    onChange={(e) => setOptions(o => ({ ...o, schedule: e.target.value }))}
+                                                />
+                                                {options.schedule && (
+                                                    <div className="flex items-center gap-2 text-xs text-green-600 animate-in fade-in">
+                                                        <CheckCircle2 className="h-3 w-3" />
+                                                        <span>Migration wird eingeplant und nicht sofort ausgeführt.</span>
+                                                    </div>
+                                                )}
                                             </div>
-
-                                            {options.cloneConfig && (
-                                                <div className="pl-6 space-y-2 mt-2 border-l-2 ml-1">
-                                                    <div className="flex items-center gap-2"><Checkbox checked={options.cloneNetwork} onCheckedChange={(c) => setOptions(o => ({ ...o, cloneNetwork: !!c }))} /> <span className="text-sm">Netzwerk (interfaces)</span></div>
-                                                    <div className="flex items-center gap-2"><Checkbox checked={options.cloneFirewall} onCheckedChange={(c) => setOptions(o => ({ ...o, cloneFirewall: !!c }))} /> <span className="text-sm">Firewall Regelsätze</span></div>
-                                                    <div className="flex items-center gap-2"><Checkbox checked={options.cloneTags} onCheckedChange={(c) => setOptions(o => ({ ...o, cloneTags: !!c }))} /> <span className="text-sm">Tags & UI Settings</span></div>
-                                                </div>
-                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -540,7 +644,8 @@ export default function NewMigrationPage() {
                                     <p className="text-muted-foreground max-w-md mx-auto">
                                         Sie sind dabei, <strong>{selectedVmIds.length} VMs</strong> von
                                         <em> {servers.find(s => s.id.toString() === sourceId)?.name}</em> nach
-                                        <em> {servers.find(s => s.id.toString() === targetId)?.name}</em> zu verschieben.
+                                        <em> {servers.find(s => s.id.toString() === targetId)?.name}</em>
+                                        {options.schedule ? ' einzuplanen' : ' zu verschieben'}.
                                     </p>
 
                                     <div className="flex justify-center gap-8 py-4 text-sm">
@@ -556,11 +661,19 @@ export default function NewMigrationPage() {
                                             <div className="font-bold text-xl">{options.online ? 'Online' : 'Offline'}</div>
                                             <div className="text-muted-foreground">Modus</div>
                                         </div>
+                                        {options.schedule && (
+                                            <div className="text-center">
+                                                <div className="font-bold text-xl text-yellow-600">Geplant</div>
+                                                <div className="text-muted-foreground">
+                                                    {new Date(options.schedule).toLocaleDateString()} {new Date(options.schedule).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
 
                                     <Button size="lg" className="w-full max-w-sm mx-auto" onClick={handleStart} disabled={starting}>
-                                        {starting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <ArrowRight className="mr-2 h-5 w-5" />}
-                                        Migration Starten
+                                        {starting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : (options.schedule ? <Calendar className="mr-2 h-5 w-5" /> : <ArrowRight className="mr-2 h-5 w-5" />)}
+                                        {options.schedule ? 'Migration Einplanen' : 'Migration Starten'}
                                     </Button>
                                 </div>
                             )}

@@ -254,11 +254,13 @@ async function executeMigrationTask(taskId: number, vms: any[], options: { stora
             // Use per-VM Override if available, otherwise global option
             const targetStorage = vm.targetStorage && vm.targetStorage !== 'auto' ? vm.targetStorage : (options.storage || '');
             const targetBridge = vm.targetBridge && vm.targetBridge !== 'auto' ? vm.targetBridge : (options.bridge || '');
+            const networkMapping = vm.networkMapping;
 
             const res = await migrateVM(taskRow.source_server_id, vm.vmid.toString(), vm.type, {
                 targetServerId: taskRow.target_server_id,
                 targetStorage: targetStorage,
                 targetBridge: targetBridge,
+                networkMapping: networkMapping, // Pass mappings
                 online: false, // Default to OFFLINE as it is more stable for cross-cluster (Future: pass from vm.online)
                 autoVmid: options.autoVmid ?? true
             }, log);
