@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { NetworkInterface } from '@/lib/network-parser';
 import { getNetworkConfig, saveNetworkConfig } from '@/app/actions/network';
-import { runNetworkAnalysis, getLatestNetworkAnalysis } from '@/app/actions/network_analysis'; // Use new action
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,12 +12,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Plus, Save, Trash2, Network, RefreshCw, Undo, MessageSquare, Bot, FileText, Info } from "lucide-react";
+import { Loader2, Plus, Save, Trash2, Network, RefreshCw, Undo, Bot } from "lucide-react";
 import { toast } from 'sonner';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
 interface NetworkEditorProps {
     serverId: number;
@@ -30,14 +27,8 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
     const [saving, setSaving] = useState(false);
     const [hasChanges, setHasChanges] = useState(false);
 
-    // AI
-    const [explaining, setExplaining] = useState(false);
-    const [explanation, setExplanation] = useState<string | null>(null);
-    const [lastAnalysisDate, setLastAnalysisDate] = useState<string | null>(null);
-
     useEffect(() => {
         loadConfig();
-        loadAnalysis();
     }, [serverId]);
 
     async function loadConfig() {
@@ -51,29 +42,6 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
             toast.error('Fehler beim Laden der Netzwerkkonfiguration: ' + res.error);
         }
         setLoading(false);
-    }
-
-    async function loadAnalysis() {
-        const analysis = await getLatestNetworkAnalysis(serverId);
-        if (analysis) {
-            setExplanation(analysis.content);
-            setLastAnalysisDate(analysis.created_at);
-        }
-    }
-
-    async function handleExplain() {
-        setExplaining(true);
-        try {
-            // Use the runNetworkAnalysis action which saves to DB
-            const text = await runNetworkAnalysis(serverId);
-            setExplanation(text);
-            setLastAnalysisDate(new Date().toISOString());
-            toast.success("Analyse abgeschlossen");
-        } catch (e: any) {
-            toast.error("KI-Erklärung fehlgeschlagen: " + e.message);
-        } finally {
-            setExplaining(false);
-        }
     }
 
     async function handleSave(apply: boolean) {
@@ -127,45 +95,12 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
                     </CardDescription>
                 </div>
                 <div className="flex gap-2">
-                    <Dialog>
-                        <DialogTrigger asChild>
-                            <Button variant="outline" size="sm">
-                                <Bot className="mr-2 h-4 w-4" />
-                                {explaining ? 'Analysiere...' : 'KI Analyse'}
-                            </Button>
-                        </DialogTrigger>
-                        <DialogContent className="max-w-[90vw] w-full max-h-[90vh] flex flex-col">
-                            <DialogHeader>
-                                <DialogTitle className="flex items-center justify-between">
-                                    <span>Netzwerk Integritäts-Analyse</span>
-                                    {lastAnalysisDate && <span className="text-xs font-normal text-muted-foreground mr-8">Letztes Update: {new Date(lastAnalysisDate).toLocaleString()}</span>}
-                                </DialogTitle>
-                            </DialogHeader>
-
-                            <ScrollArea className="flex-1 border rounded-md p-4 bg-background/50 h-[400px]">
-                                {explanation ? (
-                                    <div className="prose dark:prose-invert prose-sm max-w-none overflow-x-auto">
-                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                            {explanation}
-                                        </ReactMarkdown>
-                                    </div>
-                                ) : (
-                                    <div className="text-center py-12 text-muted-foreground">
-                                        <Info className="h-10 w-10 mx-auto mb-4 opacity-50" />
-                                        <p>Keine Analyse vorhanden.</p>
-                                        <p className="text-sm">Starten Sie eine manuelle Analyse oder warten Sie auf den nächtlichen Job.</p>
-                                    </div>
-                                )}
-                            </ScrollArea>
-
-                            <DialogFooter className="mt-4 gap-2">
-                                <Button variant="outline" onClick={handleExplain} disabled={explaining} className="w-full sm:w-auto">
-                                    <RefreshCw className={`mr-2 h-4 w-4 ${explaining ? 'animate-spin' : ''}`} />
-                                    {explaining ? 'Analysiere...' : 'Jetzt Aktualisieren'}
-                                </Button>
-                            </DialogFooter>
-                        </DialogContent>
-                    </Dialog>
+                    <Link href={`/servers/${serverId}/network-analysis`}>
+                        <Button variant="outline" size="sm">
+                            <Bot className="mr-2 h-4 w-4" />
+                            KI Analyse
+                        </Button>
+                    </Link>
 
                     {hasChanges && (
                         <Button variant="outline" size="sm" onClick={handleRevert} disabled={saving}>

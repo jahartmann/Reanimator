@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { LayoutDashboard, Server, FolderCog, Settings, ArrowRightLeft, Tag as TagIcon, HardDrive, ShieldCheck, Disc, Users, LogOut, User, Activity, ListTodo } from 'lucide-react';
-import TaskManager from '../TaskManager';
 import { getCurrentUser, logout, User as UserType } from '@/app/actions/userAuth';
 import { Button } from '@/components/ui/button';
 
@@ -12,6 +11,7 @@ const navItems = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard },
     { name: 'Server', href: '/servers', icon: Server },
     { name: 'Migrationen', href: '/migrations', icon: ArrowRightLeft },
+    { name: 'Tasks', href: '/tasks', icon: ListTodo },
     { name: 'Bibliothek', href: '/library', icon: Disc },
     { name: 'Tags', href: '/tags', icon: TagIcon },
     { name: 'Speicher', href: '/storage', icon: HardDrive },
@@ -60,7 +60,7 @@ export function Sidebar() {
                     <Link
                         key={item.href}
                         href={item.href}
-                        className={`flex items-center gap-3 px-4 py-3 rounded-md text-sm font-medium transition-colors ${pathname === item.href
+                        className={`flex items-center gap-3 px-4 py-3 rounded-md text-sm font-medium transition-colors ${pathname === item.href || pathname.startsWith(item.href + '/')
                             ? 'text-foreground bg-white/10'
                             : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
                             }`}
@@ -69,8 +69,6 @@ export function Sidebar() {
                         {item.name}
                     </Link>
                 ))}
-
-                <TaskManager />
 
                 {/* Admin-only items */}
                 {user?.is_admin && (
