@@ -130,7 +130,6 @@ export default function TaskManager({ className }: TaskManagerProps) {
                                     <TableRow>
                                         <TableHead className="w-[180px]">Startzeit</TableHead>
                                         <TableHead className="w-[150px]">Node</TableHead>
-                                        <TableHead className="w-[100px]">User</TableHead>
                                         <TableHead>Beschreibung</TableHead>
                                         <TableHead className="w-[100px]">Status</TableHead>
                                         <TableHead className="w-[80px]">Action</TableHead>
@@ -150,7 +149,6 @@ export default function TaskManager({ className }: TaskManagerProps) {
                                                 {new Date(task.startTime).toLocaleString()}
                                             </TableCell>
                                             <TableCell className="text-xs">{task.node || 'System'}</TableCell>
-                                            <TableCell className="text-xs">{task.user || 'root@pam'}</TableCell>
                                             <TableCell className="font-medium text-sm">
                                                 {task.type === 'scan' ? 'Global Scan' : task.description}
                                             </TableCell>
