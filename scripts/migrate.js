@@ -133,6 +133,9 @@ try {
 try {
   db.exec(`ALTER TABLE servers ADD COLUMN ssl_fingerprint TEXT`);
 } catch (e) { /* Column exists */ }
+try {
+  db.exec(`ALTER TABLE jobs ADD COLUMN options TEXT`);
+} catch (e) { /* Column exists */ }
 
 // Migration tasks table for full server migrations
 db.exec(`

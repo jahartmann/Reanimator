@@ -1,14 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, ArrowRightLeft, AlertTriangle } from "lucide-react";
-import { VirtualMachine, migrateVM, getTargetResources } from '@/app/actions/vm';
+import { Loader2, ArrowRightLeft, AlertTriangle, Calendar, Network } from "lucide-react";
+import { VirtualMachine, migrateVM, getTargetResources, scheduleMigration, getVMConfig } from '@/app/actions/vm';
 import { useRouter } from 'next/navigation';
 
 interface MigrationDialogProps {
@@ -30,6 +30,14 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
     const [autoVmid, setAutoVmid] = useState(true);  // Default: auto-select next free
     const [targetVmid, setTargetVmid] = useState<string>('');
 
+    // Scheduling
+    const [scheduled, setScheduled] = useState(false);
+    const [scheduleDate, setScheduleDate] = useState<string>('');
+
+    // Network Mapping
+    const [sourceInterfaces, setSourceInterfaces] = useState<string[]>([]);
+    const [networkMapping, setNetworkMapping] = useState<Record<string, string>>({});
+
     const [loadingResources, setLoadingResources] = useState(false);
     const [storages, setStorages] = useState<string[]>([]);
     const [bridges, setBridges] = useState<string[]>([]);
@@ -37,6 +45,41 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
     const [migrating, setMigrating] = useState(false);
     const [logs, setLogs] = useState<string[]>([]);
     const [error, setError] = useState<string | null>(null);
+
+    const logsEndRef = useRef<HTMLDivElement>(null);
+
+    // Auto-scroll logs
+    useEffect(() => {
+        logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [logs]);
+
+    // Load Config for Mapping
+    useEffect(() => {
+        if (!open) {
+            setNetworkMapping({});
+            setSourceInterfaces([]);
+            setScheduled(false);
+            setScheduleDate('');
+            return;
+        }
+
+        async function loadConfig() {
+            try {
+                const config = await getVMConfig(sourceId, vm.vmid, vm.type);
+                const nets: string[] = [];
+                config.split('\n').forEach(line => {
+                    if (line.match(/^net\d+:/)) {
+                        const key = line.split(':')[0];
+                        nets.push(key);
+                    }
+                });
+                setSourceInterfaces(nets);
+            } catch (e) {
+                console.warn("Failed to load VM config for mapping", e);
+            }
+        }
+        loadConfig();
+    }, [open, sourceId, vm.vmid, vm.type]);
 
     // Fetch resources
     useEffect(() => {
@@ -65,22 +108,65 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
         fetchResources();
     }, [targetServerId]);
 
+    // Initialize mapping defaults when bridges load
+    useEffect(() => {
+        if (bridges.length > 0 && sourceInterfaces.length > 0) {
+            const initial: Record<string, string> = {};
+            sourceInterfaces.forEach(net => {
+                initial[net] = bridges[0]; // Default to first bridge
+            });
+            setNetworkMapping(initial);
+        }
+    }, [bridges, sourceInterfaces]);
+
     async function handleMigrate() {
-        if (!targetServerId || !targetStorage || !targetBridge) return;
-        if (!autoVmid && !targetVmid) return; // Require VMID if auto is off
+        if (!targetServerId || !targetStorage) return; // Removed targetBridge check if redundant
+        if (!autoVmid && !targetVmid) return;
+        if (scheduled && !scheduleDate) return;
+
         setMigrating(true);
         setError(null);
+
+        const options = {
+            targetServerId: parseInt(targetServerId),
+            targetStorage: targetStorage === '__KEEP__' ? '' : targetStorage,
+            targetBridge, // Legacy fallback
+            networkMapping,
+            online,
+            autoVmid,
+            targetVmid: autoVmid ? undefined : targetVmid
+        };
+
+        if (scheduled) {
+            setLogs(prev => [...prev, `Scheduling migration...`]);
+            try {
+                const d = new Date(scheduleDate);
+                // Simple cron: Minute Hour Day Month *
+                // Note: user timezone handling is implicit (browser local -> server local if node-cron runs in local time)
+                const cronExpression = `${d.getMinutes()} ${d.getHours()} ${d.getDate()} ${d.getMonth() + 1} *`;
+
+                const res = await scheduleMigration(sourceId, vm.vmid, vm.type, options, cronExpression);
+                if (res.success) {
+                    setLogs(prev => [...prev, 'Migration scheduled successfully.']);
+                    setTimeout(() => {
+                        onOpenChange(false);
+                        router.refresh();
+                    }, 1500);
+                } else {
+                    setError("Scheduling failed.");
+                }
+            } catch (e) {
+                setError(String(e));
+            } finally {
+                setMigrating(false);
+            }
+            return;
+        }
+
         setLogs(prev => [...prev, `Starting migration of ${vm.name} (${vm.vmid})...`]);
 
         try {
-            const res = await migrateVM(sourceId, vm.vmid, vm.type, {
-                targetServerId: parseInt(targetServerId),
-                targetStorage,
-                targetBridge,
-                online,
-                autoVmid,
-                targetVmid: autoVmid ? undefined : targetVmid
-            });
+            const res = await migrateVM(sourceId, vm.vmid, vm.type, options);
             if (res.success) {
                 setLogs(prev => [...prev, 'Migration finished successfully.', 'Log:', res.message || '']);
                 setTimeout(() => {
@@ -103,14 +189,14 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[600px]">
+            <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <ArrowRightLeft className="h-5 w-5" />
                         Live Migration: {vm.name}
                     </DialogTitle>
                     <DialogDescription>
-                        Move virtual machine/container to another node active.
+                        Move virtual machine/container to another node.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -121,9 +207,9 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
                             <h4 className="font-medium text-sm mb-3">Aktuelle Konfiguration</h4>
                             <div className="grid grid-cols-2 gap-4 text-sm">
                                 <div>
-                                    <span className="text-muted-foreground">Netzwerk:</span>
-                                    <div className="font-mono mt-1">
-                                        {vm.networks?.length ? vm.networks.join(', ') : <span className="text-muted-foreground">-</span>}
+                                    <span className="text-muted-foreground">Netzwerk Interfaces:</span>
+                                    <div className="font-mono mt-1 space-y-1">
+                                        {sourceInterfaces.length > 0 ? sourceInterfaces.join(', ') : <span className="text-muted-foreground">Analysing...</span>}
                                     </div>
                                 </div>
                                 <div>
@@ -152,7 +238,7 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
                                 </div>
                                 <div className="flex flex-col justify-end pb-2">
                                     <div className="flex items-center justify-between border p-3 rounded-md bg-muted/40">
-                                        <Label htmlFor="online" className="cursor-pointer">Online Mode</Label>
+                                        <Label htmlFor="online" className="cursor-pointer">Online Mode (Live)</Label>
                                         <Switch id="online" checked={online} onCheckedChange={setOnline} />
                                     </div>
                                 </div>
@@ -172,80 +258,99 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
                                                     <SelectValue />
                                                 </SelectTrigger>
                                                 <SelectContent>
+                                                    <SelectItem value="__KEEP__">Keep Original Config (Auto)</SelectItem>
                                                     {storages.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                                                 </SelectContent>
                                             </Select>
                                         )}
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                            Primary storage for restored disks.
+                                        </p>
                                     </div>
-                                    <div>
-                                        <Label className="mb-2 block">Target Network</Label>
-                                        {loadingResources ? (
-                                            <div className="h-10 flex items-center px-3 border rounded-md bg-muted text-muted-foreground text-sm">
-                                                <Loader2 className="h-3 w-3 animate-spin mr-2" /> Loading...
-                                            </div>
-                                        ) : (
-                                            <Select value={targetBridge} onValueChange={setTargetBridge}>
-                                                <SelectTrigger>
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    {bridges.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                                                </SelectContent>
-                                            </Select>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
 
-                            {/* VMID Selection */}
-                            {targetServerId && (
-                                <div className="p-4 border rounded-lg bg-muted/30 animate-in fade-in">
-                                    <div className="flex items-center justify-between mb-3">
-                                        <Label htmlFor="autoVmid" className="cursor-pointer font-medium text-sm">
-                                            Automatisch nächste freie VMID verwenden
-                                        </Label>
-                                        <Switch id="autoVmid" checked={autoVmid} onCheckedChange={setAutoVmid} />
-                                    </div>
-                                    {!autoVmid && (
-                                        <div className="animate-in fade-in slide-in-from-top-2">
-                                            <Label className="mb-2 block text-sm">Ziel-VMID</Label>
+                                    {/* VMID Selection */}
+                                    <div>
+                                        <div className="mb-2 flex items-center justify-between">
+                                            <Label className="block">Target VMID</Label>
+                                            <div className="flex items-center gap-2">
+                                                <Label htmlFor="autoVmid" className="text-xs text-muted-foreground cursor-pointer">Auto</Label>
+                                                <Switch id="autoVmid" checked={autoVmid} onCheckedChange={setAutoVmid} className="scale-75" />
+                                            </div>
+                                        </div>
+                                        {!autoVmid ? (
                                             <Input
                                                 type="number"
                                                 placeholder={vm.vmid}
                                                 value={targetVmid}
                                                 onChange={(e) => setTargetVmid(e.target.value)}
-                                                className="max-w-[150px]"
+                                            />
+                                        ) : (
+                                            <div className="h-10 px-3 flex items-center border rounded-md bg-muted text-muted-foreground text-sm">
+                                                Auto-select next free
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Network Mapping */}
+                            {targetServerId && sourceInterfaces.length > 0 && !loadingResources && (
+                                <div className="p-4 border rounded-lg bg-muted/30 animate-in fade-in">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <Network className="h-4 w-4 text-muted-foreground" />
+                                        <h4 className="font-medium text-sm">Network Mapping</h4>
+                                    </div>
+                                    <div className="grid gap-3">
+                                        {sourceInterfaces.map(net => (
+                                            <div key={net} className="grid grid-cols-3 items-center gap-4">
+                                                <Label className="text-xs font-mono">{net}</Label>
+                                                <div className="col-span-2">
+                                                    <Select
+                                                        value={networkMapping[net] || ''}
+                                                        onValueChange={(val) => setNetworkMapping(prev => ({ ...prev, [net]: val }))}
+                                                    >
+                                                        <SelectTrigger className="h-8">
+                                                            <SelectValue placeholder="Select Bridge" />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {bridges.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Scheduling */}
+                            {targetServerId && (
+                                <div className="p-4 border rounded-lg bg-yellow-500/5 border-yellow-200 dark:border-yellow-900 animate-in fade-in">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center gap-2">
+                                            <Calendar className="h-4 w-4 text-yellow-600" />
+                                            <Label htmlFor="schedule" className="font-medium text-sm text-yellow-700 dark:text-yellow-400 cursor-pointer">
+                                                Schedule for later
+                                            </Label>
+                                        </div>
+                                        <Switch id="schedule" checked={scheduled} onCheckedChange={setScheduled} />
+                                    </div>
+                                    {scheduled && (
+                                        <div className="animate-in fade-in slide-in-from-top-2">
+                                            <Input
+                                                type="datetime-local"
+                                                value={scheduleDate}
+                                                onChange={(e) => setScheduleDate(e.target.value)}
+                                                min={new Date().toISOString().slice(0, 16)}
                                             />
                                             <p className="text-xs text-muted-foreground mt-1">
-                                                Original: {vm.vmid}
+                                                Migration will be queued and executed at the selected time.
                                             </p>
                                         </div>
                                     )}
                                 </div>
                             )}
 
-                            {targetServerId && targetStorage && targetBridge && (
-                                <div className="mt-4 p-4 border rounded-lg bg-blue-500/5 border-blue-200 dark:border-blue-900">
-                                    <h4 className="font-medium text-sm mb-2 text-blue-700 dark:text-blue-400">Migration Summary</h4>
-                                    <div className="text-sm space-y-1 text-muted-foreground">
-                                        <div className="flex justify-between">
-                                            <span>Target:</span> <span className="font-medium text-foreground">{targetServerName}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span>Storage:</span> <span className="font-medium text-foreground">{targetStorage}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span>Network:</span> <span className="font-medium text-foreground">{targetBridge}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span>Mode:</span>
-                                            <span className={`font-medium ${online ? 'text-green-600' : 'text-amber-600'}`}>
-                                                {online ? 'Online (Live)' : 'Offline (Shutdown)'}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
                         </div>
                     </div>
                 ) : (
@@ -254,12 +359,13 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
                             {logs.map((log, i) => (
                                 <div key={i} className="mb-1 border-l-2 border-transparent hover:border-green-500/50 pl-2">{log}</div>
                             ))}
-                            {migrating && (
+                            {migrating && !scheduled && (
                                 <div className="flex items-center mt-2 text-primary animate-pulse">
                                     <Loader2 className="h-3 w-3 animate-spin mr-2" />
                                     Processing migration...
                                 </div>
                             )}
+                            <div ref={logsEndRef} />
                         </div>
                         {error && (
                             <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-md flex items-center gap-2 text-sm text-red-600">
@@ -276,11 +382,20 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
                             <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
                             <Button
                                 onClick={handleMigrate}
-                                disabled={!targetServerId || !targetStorage || !targetBridge || loadingResources}
-                                className={online ? "bg-green-600 hover:bg-green-700" : ""}
+                                disabled={!targetServerId || !targetStorage || loadingResources || (scheduled && !scheduleDate)}
+                                className={online && !scheduled ? "bg-green-600 hover:bg-green-700" : ""}
                             >
-                                {online ? <ArrowRightLeft className="h-4 w-4 mr-2" /> : <Loader2 className="h-4 w-4 mr-2" />}
-                                {online ? 'Start Online Migration' : 'Start Offline Migration'}
+                                {scheduled ? (
+                                    <>
+                                        <Calendar className="h-4 w-4 mr-2" />
+                                        Schedule Migration
+                                    </>
+                                ) : (
+                                    <>
+                                        {online ? <ArrowRightLeft className="h-4 w-4 mr-2" /> : <Loader2 className="h-4 w-4 mr-2" />}
+                                        {online ? 'Start Online Migration' : 'Start Offline Migration'}
+                                    </>
+                                )}
                             </Button>
                         </>
                     )}

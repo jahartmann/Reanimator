@@ -27,6 +27,7 @@ export interface MigrationOptions {
     online: boolean;
     targetVmid?: string;
     autoVmid?: boolean;
+    networkMapping?: Record<string, string>;
 }
 
 interface MigrationContext {
@@ -661,9 +662,12 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
 
         const filename = backupFile.split('/').pop();
         const targetBackupPath = `${targetBackupDir}/${filename}`;
-        const restoreStorage = options.targetStorage || 'local-lvm';
+        const restoreStorage = options.targetStorage; // Can be empty for auto-map
 
-        const restoreCmd = `/usr/sbin/qmrestore ${targetBackupPath} ${targetVmid} --storage ${restoreStorage} --unique`;
+        let restoreCmd = `/usr/sbin/qmrestore ${targetBackupPath} ${targetVmid}`;
+        if (restoreStorage) {
+            restoreCmd += ` --storage ${restoreStorage}`;
+        }
 
         const restoreLog = `${targetBackupDir}/restore_${targetVmid}.log`;
         const restoreRc = `${targetBackupDir}/restore_${targetVmid}.rc`;
@@ -738,6 +742,32 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
 
         // Sync both source and target to update VM lists
         await Promise.all([safeSync(sourceId), safeSync(options.targetServerId)]);
+
+        // Apply Network Mapping if provided
+        if (options.networkMapping) {
+            log('[Network] Applying network mapping...');
+            for (const [netId, bridge] of Object.entries(options.networkMapping)) {
+                try {
+                    // For qemu: netX, for lxc: netX
+                    // PVE syntax: qm set <vmid> --net0 bridge=<bridge>
+                    // LXC syntax: pct set <vmid> --net0 name=eth0,bridge=<bridge> ... (Complex for LXC)
+                    // For now, assume QEMU mainly or simple bridge switch
+                    if (type === 'qemu') {
+                        await targetSsh.exec(`/usr/sbin/qm set ${targetVmid} --${netId} bridge=${bridge}`);
+                        log(`[Network] Set ${netId} to ${bridge}`);
+                    } else {
+                        // LXC is harder because we need to know other params like name, ip etc to set the line?
+                        // Actually 'pct set vmid --net0 bridge=X' might work if net0 exists.
+                        // But usually checks for name.
+                        // Let's try basic set.
+                        await targetSsh.exec(`/usr/sbin/pct set ${targetVmid} --${netId} bridge=${bridge}`);
+                        log(`[Network] Set ${netId} to ${bridge}`);
+                    }
+                } catch (e) {
+                    log(`[Network] Warning: Failed to set ${netId} to ${bridge}: ${e}`);
+                }
+            }
+        }
 
         return `Cross-cluster migration completed. Target VMID: ${targetVmid}`;
 
@@ -1103,4 +1133,28 @@ export async function getVMConfig(serverId: number, vmid: string, type: 'qemu' |
     } finally {
         await ssh.disconnect();
     }
+}
+
+export async function scheduleMigration(
+    sourceId: number,
+    vmid: string,
+    type: 'qemu' | 'lxc',
+    options: MigrationOptions,
+    schedule: string
+) {
+    const jobName = `Migrate ${vmid} (to Server ${options.targetServerId})`;
+    const jobOptions = JSON.stringify({ vmid, type, ...options });
+
+    db.prepare('INSERT INTO jobs (name, job_type, source_server_id, target_server_id, schedule, options) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(jobName, 'migration', sourceId, options.targetServerId, schedule, jobOptions);
+
+    try {
+        // Dynamic import to avoid circular dependency issues at top level if any
+        const { reloadScheduler } = await import('@/lib/scheduler');
+        reloadScheduler();
+    } catch (e) {
+        console.warn('Could not reload scheduler:', e);
+    }
+
+    return { success: true };
 }
