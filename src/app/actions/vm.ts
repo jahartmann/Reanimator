@@ -495,16 +495,20 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         targetVmid = vmid;
     }
 
-    // Clean up target VM if already exists
+    // Determine command based on type (qm for VMs, pct for containers)
+    const cmd = type === 'lxc' ? 'pct' : 'qm';
+    const typeLabel = type === 'lxc' ? 'Container' : 'VM';
+
+    // Clean up target VM/CT if already exists
     try {
-        await targetSsh.exec(`/usr/sbin/qm config ${targetVmid}`);
-        log(`[Setup] Target VM ${targetVmid} already exists. Cleaning up...`);
-        try { await targetSsh.exec(`/usr/sbin/qm stop ${targetVmid} --timeout 10`); } catch { }
-        try { await targetSsh.exec(`/usr/sbin/qm unlock ${targetVmid}`); } catch { }
-        try { await targetSsh.exec(`/usr/sbin/qm destroy ${targetVmid} --purge`); } catch { }
+        await targetSsh.exec(`/usr/sbin/${cmd} config ${targetVmid}`);
+        log(`[Setup] Target ${typeLabel} ${targetVmid} already exists. Cleaning up...`);
+        try { await targetSsh.exec(`/usr/sbin/${cmd} stop ${targetVmid} --timeout 10`); } catch { }
+        if (type !== 'lxc') { try { await targetSsh.exec(`/usr/sbin/${cmd} unlock ${targetVmid}`); } catch { } }
+        try { await targetSsh.exec(`/usr/sbin/${cmd} destroy ${targetVmid}${type !== 'lxc' ? ' --purge' : ''}`); } catch { }
         log('[Setup] ✓ Target cleanup complete');
     } catch {
-        // VM doesn't exist - normal case
+        // VM/CT doesn't exist - normal case
     }
 
     log(`[Migration] Source Node: ${sourceNode}`);
@@ -529,11 +533,11 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
 
         await sourceSsh.exec(`mkdir -p ${sourceBackupDir}`);
 
-        // Stop VM if not online migration (for consistent backup)
-        const wasRunning = (await sourceSsh.exec(`/usr/sbin/qm status ${vmid}`)).includes('running');
+        // Stop VM/CT if not online migration (for consistent backup)
+        const wasRunning = (await sourceSsh.exec(`/usr/sbin/${cmd} status ${vmid}`)).includes('running');
         if (!options.online && wasRunning) {
-            log('[Step 1/4] Stopping VM for consistent backup...');
-            await sourceSsh.exec(`/usr/sbin/qm stop ${vmid} --timeout 60`);
+            log(`[Step 1/4] Stopping ${typeLabel} for consistent backup...`);
+            await sourceSsh.exec(`/usr/sbin/${cmd} stop ${vmid} --timeout 60`);
         }
 
         const dumpMode = options.online ? 'snapshot' : 'stop';
@@ -664,9 +668,18 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
         const targetBackupPath = `${targetBackupDir}/${filename}`;
         const restoreStorage = options.targetStorage; // Can be empty for auto-map
 
-        let restoreCmd = `/usr/sbin/qmrestore ${targetBackupPath} ${targetVmid}`;
-        if (restoreStorage) {
-            restoreCmd += ` --storage ${restoreStorage}`;
+        // Use qmrestore for VMs, pct restore for containers
+        let restoreCmd: string;
+        if (type === 'lxc') {
+            restoreCmd = `/usr/sbin/pct restore ${targetVmid} ${targetBackupPath}`;
+            if (restoreStorage) {
+                restoreCmd += ` --storage ${restoreStorage}`;
+            }
+        } else {
+            restoreCmd = `/usr/sbin/qmrestore ${targetBackupPath} ${targetVmid}`;
+            if (restoreStorage) {
+                restoreCmd += ` --storage ${restoreStorage}`;
+            }
         }
 
         const restoreLog = `${targetBackupDir}/restore_${targetVmid}.log`;
@@ -717,16 +730,16 @@ async function migrateRemote(ctx: MigrationContext): Promise<string> {
             log('[Cleanup] Deleted target backup file');
         } catch { }
 
-        // Delete source VM (like PDM's --delete behavior)
-        log('[Cleanup] Deleting source VM...');
+        // Delete source VM/CT (like PDM's --delete behavior)
+        log(`[Cleanup] Deleting source ${typeLabel}...`);
         try {
-            await sourceSsh.exec(`/usr/sbin/qm stop ${vmid} --timeout 30`);
+            await sourceSsh.exec(`/usr/sbin/${cmd} stop ${vmid} --timeout 30`);
         } catch { }
         try {
-            await sourceSsh.exec(`/usr/sbin/qm destroy ${vmid} --purge`);
-            log('[Cleanup] ✓ Source VM deleted');
+            await sourceSsh.exec(`/usr/sbin/${cmd} destroy ${vmid}${type !== 'lxc' ? ' --purge' : ''}`);
+            log(`[Cleanup] ✓ Source ${typeLabel} deleted`);
         } catch (e) {
-            log(`[Cleanup] Warning: Could not delete source VM: ${e}`);
+            log(`[Cleanup] Warning: Could not delete source ${typeLabel}: ${e}`);
         }
 
         log('[Step 4/4] ✓ Cleanup complete');

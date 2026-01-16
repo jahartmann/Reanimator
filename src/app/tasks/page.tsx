@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getAllTasks, TaskItem, cancelTask } from '@/app/actions/tasks';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,22 +19,32 @@ export default function TasksPage() {
     const [loading, setLoading] = useState(true);
     const [selectedTask, setSelectedTask] = useState<TaskItem | null>(null);
 
+    // Use ref to track selected task ID without causing re-renders
+    const selectedTaskIdRef = useRef<string | null>(null);
+
     // Filters
     const [filterStatus, setFilterStatus] = useState<string>('all');
     const [filterType, setFilterType] = useState<string>('all');
     const [searchQuery, setSearchQuery] = useState<string>('');
+
+    // Keep ref in sync with state
+    useEffect(() => {
+        selectedTaskIdRef.current = selectedTask?.id ?? null;
+    }, [selectedTask]);
 
     const loadTasks = useCallback(async () => {
         const res = await getAllTasks(200);
         setTasks(res);
         setLoading(false);
 
-        // Update selected task if it's in the new list
-        if (selectedTask) {
-            const updated = res.find(t => t.id === selectedTask.id);
-            if (updated) setSelectedTask(updated);
+        // Update selected task if it's in the new list (using ref to avoid dependency)
+        if (selectedTaskIdRef.current) {
+            const updated = res.find((t: TaskItem) => t.id === selectedTaskIdRef.current);
+            if (updated) {
+                setSelectedTask(updated);
+            }
         }
-    }, [selectedTask]);
+    }, []); // No dependencies - uses ref instead
 
     useEffect(() => {
         loadTasks();

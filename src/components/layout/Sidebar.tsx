@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { LayoutDashboard, Server, FolderCog, Settings, ArrowRightLeft, Tag as TagIcon, HardDrive, ShieldCheck, Disc, Users, LogOut, User, Activity, ListTodo } from 'lucide-react';
+import { LayoutDashboard, Server, FolderCog, Settings, ArrowRightLeft, Tag as TagIcon, HardDrive, ShieldCheck, Disc, Users, LogOut, User, Activity, ListTodo, Calendar } from 'lucide-react';
 import { getCurrentUser, logout, User as UserType } from '@/app/actions/userAuth';
 import { Button } from '@/components/ui/button';
 
@@ -12,6 +12,7 @@ const navItems = [
     { name: 'Server', href: '/servers', icon: Server },
     { name: 'Migrationen', href: '/migrations', icon: ArrowRightLeft },
     { name: 'Tasks', href: '/tasks', icon: ListTodo },
+    { name: 'Zeitplan', href: '/jobs', icon: Calendar },
     { name: 'Bibliothek', href: '/library', icon: Disc },
     { name: 'Tags', href: '/tags', icon: TagIcon },
     { name: 'Speicher', href: '/storage', icon: HardDrive },
