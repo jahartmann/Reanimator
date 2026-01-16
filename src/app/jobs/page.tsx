@@ -7,9 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar, Clock, ArrowRightLeft, CheckCircle2, XCircle, MoreVertical, Trash2, Play } from 'lucide-react';
 import { getAllTasks, TaskItem } from '@/app/actions/tasks';
 import { getAllJobs, runJob, deleteJob } from '@/app/actions/scheduler_actions';
-// Note: I need to ensure scheduler_actions exists or create it. 
-// Assuming I need to create it. I will create it in next step. For now I'll mock the import or assume I create it.
-// I will create `src/app/actions/scheduler_actions.ts` right after this.
+import { toast } from 'sonner';
 
 import {
     DropdownMenu,
@@ -61,15 +59,29 @@ export default function JobsPage() {
     }
 
     async function handleRunNow(id: number) {
-        if (!confirm("Run this job immediately?")) return;
-        await runJob(id);
-        loadData();
+        if (!confirm("Job jetzt sofort ausführen?")) return;
+        try {
+            const result = await runJob(id);
+            if (result.success) {
+                toast.success("Job gestartet");
+            } else {
+                toast.error("Fehler: " + (result.error || "Unbekannter Fehler"));
+            }
+            loadData();
+        } catch (e: any) {
+            toast.error("Fehler: " + e.message);
+        }
     }
 
     async function handleDelete(id: number) {
-        if (!confirm("Delete this scheduled job?")) return;
-        await deleteJob(id);
-        loadData();
+        if (!confirm("Diesen geplanten Job wirklich löschen?")) return;
+        try {
+            await deleteJob(id);
+            toast.success("Job gelöscht");
+            loadData();
+        } catch (e: any) {
+            toast.error("Löschen fehlgeschlagen: " + e.message);
+        }
     }
 
     return (
