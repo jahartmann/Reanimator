@@ -5,6 +5,7 @@ import { createSSHClient } from '@/lib/ssh';
 import { getServer, determineNodeName } from './vm';
 import { getVMs, getVMConfig } from './vm';
 import { analyzeConfigWithAI, analyzeHostWithAI, HealthResult } from './ai';
+import { runNetworkAnalysis } from './network_analysis';
 
 export interface ScanResult {
     id: number;
@@ -171,6 +172,14 @@ export async function scanEntireInfrastructure() {
                 // Scan Host
                 await scanHost(server.id);
                 results.servers++;
+
+                // Network Analysis (AI)
+                try {
+                    await runNetworkAnalysis(server.id);
+                    updateLog(`  -> Network Analysis completed (AI)`);
+                } catch (e: any) {
+                    updateLog(`  -> Network Analysis failed: ${e.message}`);
+                }
 
                 // Scan VMs
                 const vmRes = await scanAllVMs(server.id);

@@ -126,42 +126,45 @@ export type HealthResult = {
     score: number; // 0-100
     issues: HealthIssue[];
     summary: string;
+    markdown_report?: string; // New detailed report
 };
 
 export async function analyzeConfigWithAI(config: string, type: 'qemu' | 'lxc'): Promise<HealthResult> {
     const context = `
 Du bist ein Proxmox Performance & Security Auditor.
-Analysiere diese VM-Konfiguration (Type: ${type}).
+Analysiere diese VM-Konfiguration (Type: ${type}) sehr detailliert.
 
-Antworte AUSSCHLIESSLICH mit validem JSON (kein Markdown, kein Text davor/danach):
+Antworte AUSSCHLIESSLICH mit validem JSON:
 {
-  "score": number, // 0-100 (100 = Perfekt)
-  "summary": "string", // Kurze deutsche Zusammenfassung
+  "score": number, // 0-100
+  "summary": "string",
+  "markdown_report": "string", // HIER: Ausführlicher Bericht in Markdown.
   "issues": [
     {
       "severity": "critical" | "warning" | "info",
-      "title": "string", // DEUTSCH
-      "description": "string", // DEUTSCH, präzise
-      "fix": "string", // Konkreter Befehl oder Einstellung
-      "reasoning": "string" // WARUM ist das ein Problem? (Erklärung)
+      "title": "string",
+      "description": "string",
+      "fix": "string",
+      "reasoning": "string"
     }
   ]
 }
 
-Prüfe streng auf Best Practices:
-1. VirtIO: Wir wollen 'virtio' für Net & Disk (scsi mit virtio-scsi).
-2. CPU: Type sollte 'host' sein (beste Performance), außer es gibt Migrationsgründe (kvm64 ist fallback -> Warnung).
-3. Discard: SSD Emulation / Discard sollte aktiv sein.
-4. Agent: Qemu-Guest-Agent sollte installiert/aktiv sein.
+Anforderungen für 'markdown_report':
+- Strukturiert (## Sektionen).
+- Erkläre die Konfiguration (CPU, RAM, Disk Bus).
+- Analysiere Performance-Flaschenhälse.
+- Gib konkrete Handlungsempfehlungen.
+- Sei kritisch aber konstruktiv.
 
+Prüfe Best Practices: VirtIO, CPU Type 'host', Discard, Guest Agent.
 Config:
 ${config}
     `.trim();
 
-    const response = await generateAIResponse(context, ''); // Prompt is in context mainly
+    const response = await generateAIResponse(context, '');
     const result = parseAIJSON(response);
 
-    // Fallback if AI fails
     if (!result) {
         return { score: 100, issues: [], summary: 'KI-Parsing fehlgeschlagen (Ungültiges JSON)' };
     }
@@ -171,20 +174,20 @@ ${config}
 export async function analyzeHostWithAI(files: { filename: string, content: string }[]): Promise<HealthResult> {
     const context = `
 Du bist ein Linux System Engineer (Debian/Proxmox).
-Analysiere diese System-Dumps auf Sicherheit und Performance.
+Analysiere diese System-Dumps auf Sicherheit, Performance und Stabilität.
 
-Antworte AUSSCHLIESSLICH mit validem JSON (Deutsch):
+Antworte AUSSCHLIESSLICH mit validem JSON:
 {
-  "score": number, // 0-100
+  "score": number, 
   "summary": "string",
+  "markdown_report": "string", // HIER: Ausführlicher Bericht in Markdown.
   "issues": [{ "severity": "...", "title": "...", "description": "...", "fix": "...", "reasoning": "..." }]
 }
 
-Checks:
-1. **User Check**: Prüfe /etc/passwd oder shadow (falls vorhanden) ob NUR 'root' genutzt wird. -> WARNUNG: "Nur Root-User aktiv". Empfehle separaten Admin-User/Sudo.
-2. Network: Redundanz vorhanden (LACP/Bond)? Leere Bridges?
-3. Storage: 'dir' Storage auf Root-Disk? (Warnung).
-4. Sysctl: Swappiness optimiert? (vm.swappiness < 60 für Server empfohlen).
+Anforderungen für 'markdown_report':
+- Sektionen: System-Status, Netzwerk-Topologie, Storage-Health, Sicherheit.
+- Erkläre Auffälligkeiten in den Logs/Configs.
+- Gib konkrete Terminal-Befehle zur Behebung von Problemen.
 
 Dateien:
 ${files.map(f => `=== ${f.filename} ===\n${f.content}\n`).join('\n')}

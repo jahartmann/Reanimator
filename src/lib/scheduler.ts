@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import db from './db';
 import { performFullBackup } from './backup-logic';
-import { scanAllVMs, scanHost } from '@/app/actions/scan';
+import { scanAllVMs, scanHost, scanEntireInfrastructure } from '@/app/actions/scan';
 import { migrateVM } from '@/app/actions/vm';
 import { runNetworkAnalysis } from '@/app/actions/network_analysis';
 
@@ -21,9 +21,6 @@ async function initNetworkAnalysisJobs() {
                     INSERT INTO jobs (name, job_type, source_server_id, schedule, enabled)
                     VALUES (?, 'network_analysis', ?, '0 3 * * *', 1)
                  `).run(jobName, server.id); // 3:00 AM
-
-                // Run ONCE on startup
-                runNetworkAnalysis(server.id).catch(e => console.error(`[Startup Analysis] Failed for ${server.name}:`, e));
             }
         }
     } catch (e) {
@@ -41,6 +38,10 @@ export function initScheduler() {
     // Auto-create system jobs
     initNetworkAnalysisJobs().then(() => {
         loadJobs();
+
+        // Run Global Scan on Startup (Analysis, VM Scan, Host Scan)
+        console.log('[Scheduler] Triggering startup Global Scan...');
+        scanEntireInfrastructure().catch(e => console.error('[Startup Scan] Failed:', e));
     });
 }
 

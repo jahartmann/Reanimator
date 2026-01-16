@@ -2,14 +2,20 @@
 
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Monitor, Smartphone, ArrowRightLeft, PlayCircle, StopCircle, Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Monitor, Smartphone, ArrowRightLeft, PlayCircle, StopCircle, Loader2, Stethoscope, MoreHorizontal, Power, RefreshCw, Trash2, HardDrive, FileText, Activity, Sparkles, CheckCircle, AlertTriangle, Info, AlertCircle } from "lucide-react"
 import { VirtualMachine } from '@/app/actions/vm';
 import { MigrationDialog } from './MigrationDialog';
 import { Tag, assignTagsToResource } from '@/app/actions/tags';
 import { TagSelector } from '@/components/ui/TagSelector';
 import { toast } from 'sonner';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
 
 interface VirtualMachineListProps {
     vms: VirtualMachine[];
@@ -184,10 +190,9 @@ export function VirtualMachineList({ vms, currentServerId, otherServers, availab
 
 // --- Health Check Components ---
 
+// Imports moved to top
 import { getVMConfig } from '@/app/actions/vm';
 import { analyzeConfigWithAI, HealthResult } from '@/app/actions/ai';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Stethoscope, Sparkles, CheckCircle, AlertTriangle, Info, AlertCircle } from "lucide-react";
 
 function HealthCheckDialog({ open, onOpenChange, result }: { open: boolean, onOpenChange: (o: boolean) => void, result: HealthResult | null }) {
     if (!result) return null;

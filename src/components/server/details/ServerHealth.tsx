@@ -2,15 +2,21 @@
 
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { AlertCircle, CheckCircle2, AlertTriangle, Activity, FileText } from "lucide-react";
 import { ScanResult, scanAllVMs, scanHost } from '@/app/actions/scan';
 import { createScanSchedule } from '@/app/actions/schedule';
-import { Loader2, ShieldCheck, Server, Monitor, AlertTriangle, CheckCircle, Info, RefreshCw, Smartphone, Clock } from "lucide-react";
+import { Loader2, ShieldCheck, Server, Monitor, Info, RefreshCw, Smartphone, Clock } from "lucide-react";
 import { toast } from 'sonner';
 import { HealthResult, HealthIssue } from '@/app/actions/ai';
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface ServerHealthProps {
     initialResults: ScanResult[];
@@ -157,9 +163,32 @@ export function ServerHealth({ initialResults, serverId }: ServerHealthProps) {
                                             {vm.type === 'qemu' ? <Monitor className="h-4 w-4" /> : <Smartphone className="h-4 w-4" />}
                                             VM {vm.vmid}
                                         </CardTitle>
-                                        <Badge className={`${vm.result.score >= 90 ? 'bg-green-500' : 'bg-amber-500'}`}>
-                                            {vm.result.score}
-                                        </Badge>
+                                        <div className="flex items-center gap-2">
+                                            <Badge className={`${vm.result.score >= 90 ? 'bg-green-500' : 'bg-amber-500'}`}>
+                                                {vm.result.score}
+                                            </Badge>
+                                            {vm.result.markdown_report && (
+                                                <Dialog>
+                                                    <DialogTrigger asChild>
+                                                        <Button variant="ghost" size="icon" className="h-6 w-6">
+                                                            <FileText className="h-4 w-4" />
+                                                        </Button>
+                                                    </DialogTrigger>
+                                                    <DialogContent className="max-w-4xl h-[80vh] flex flex-col">
+                                                        <DialogHeader>
+                                                            <DialogTitle>Detaillierter System-Bericht</DialogTitle>
+                                                        </DialogHeader>
+                                                        <ScrollArea className="flex-1 border rounded-md p-4 bg-background/50">
+                                                            <div className="prose dark:prose-invert prose-sm max-w-none">
+                                                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                                                    {vm.result.markdown_report}
+                                                                </ReactMarkdown>
+                                                            </div>
+                                                        </ScrollArea>
+                                                    </DialogContent>
+                                                </Dialog>
+                                            )}
+                                        </div>
                                     </div>
                                 </CardHeader>
                                 <CardContent className="p-0">

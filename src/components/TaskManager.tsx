@@ -1,194 +1,207 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { ListTodo, Loader2, Maximize2, Minimize2, CheckCircle2, XCircle, AlertTriangle, Eye, StopCircle, Terminal } from 'lucide-react';
-import Link from 'next/link';
+import { ListTodo, Loader2, StopCircle, Terminal, CheckCircle2, XCircle, AlertTriangle, Eye, Clock } from 'lucide-react';
 import { getAllTasks, TaskItem, cancelTask } from '@/app/actions/tasks';
 import { cn } from "@/lib/utils";
 import {
     Dialog,
     DialogContent,
-    DialogDescription,
     DialogHeader,
     DialogTitle,
+    DialogDescription,
 } from "@/components/ui/dialog"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
+interface TaskManagerProps {
+    className?: string;
+}
 
-export default function TaskManager() {
+export default function TaskManager({ className }: TaskManagerProps) {
+    const [open, setOpen] = useState(false);
     const [tasks, setTasks] = useState<TaskItem[]>([]);
-    const [collapsed, setCollapsed] = useState(false);
-
-    // Detailed View State
     const [selectedTask, setSelectedTask] = useState<TaskItem | null>(null);
-    const [showDetails, setShowDetails] = useState(false);
+    const [loading, setLoading] = useState(false);
 
+    // Initial fetch
     useEffect(() => {
-        fetchTasks();
-        const interval = setInterval(fetchTasks, 2000); // Faster poll for "live" feel
+        if (open) fetchTasks();
+    }, [open]);
+
+    // Poll when open
+    useEffect(() => {
+        if (!open) return;
+        const interval = setInterval(fetchTasks, 2000);
         return () => clearInterval(interval);
-    }, []);
+    }, [open]);
 
-    // Also poll selected task details if open
+    // Poll selected task for live logs
     useEffect(() => {
-        if (showDetails && selectedTask) {
-            // In a perfect world we'd just fetch the single task, but refetching all and finding it works for now
+        if (open && selectedTask && selectedTask.status === 'running') {
+            const interval = setInterval(async () => {
+                // Determine if we need to refetch list or just task?
+                // For simplicity, we just rely on the main poll updating the list, 
+                // but we need to update 'selectedTask' reference from the list.
+                // Or we could fetch specific task details if API existed.
+            }, 1000);
+            return () => clearInterval(interval);
+        }
+    }, [open, selectedTask]);
+
+    // Sync selected task with list updates
+    useEffect(() => {
+        if (selectedTask) {
             const updated = tasks.find(t => t.id === selectedTask.id);
             if (updated) setSelectedTask(updated);
         }
-    }, [tasks, showDetails, selectedTask?.id]);
-
+    }, [tasks]);
 
     async function fetchTasks() {
+        setLoading(true);
         try {
-            // Get recent 10 to ensure we catch active ones
-            const res = await getAllTasks(10);
+            const res = await getAllTasks(50); // Get more history
             setTasks(res);
         } catch (e) {
             console.error(e);
+        } finally {
+            setLoading(false);
         }
     }
 
-    async function handleCancel(task: TaskItem) {
-        if (!confirm('Stop this task?')) return;
+    async function handleCancel(eventId: React.MouseEvent, task: TaskItem) {
+        eventId.stopPropagation();
+        if (!confirm('Möchten Sie diesen Task wirklich stoppen?')) return;
         try {
             await cancelTask(task.id);
             fetchTasks(); // Force refresh
         } catch (e) {
-            alert('Failed to stop task');
+            alert('Fehler beim Stoppen des Tasks');
         }
     }
 
-    const runningTasks = tasks.filter(t => t.status === 'running');
-    const recentTasks = tasks.slice(0, 5); // Show top 5
-
-    if (tasks.length === 0) return null;
+    const runningCount = tasks.filter(t => t.status === 'running').length;
 
     return (
         <>
-            <div className={cn(
-                "fixed bottom-4 right-4 z-[99] transition-all duration-300 shadow-xl border bg-card rounded-lg overflow-hidden flex flex-col pointer-events-auto",
-                collapsed ? "w-auto h-auto" : "w-96"
-            )}>
-                {/* Header */}
-                <div className="bg-muted p-3 flex items-center justify-between cursor-pointer border-b select-none" onClick={() => setCollapsed(!collapsed)}>
-                    <div className="flex items-center gap-2">
-                        <div className={cn("p-1.5 rounded-full", runningTasks.length > 0 ? "bg-blue-500/10 text-blue-600 animate-pulse" : "bg-muted-foreground/10 text-muted-foreground")}>
-                            <ListTodo className="h-4 w-4" />
-                        </div>
-                        <div className="flex flex-col leading-none">
-                            <span className="text-sm font-semibold">Background Tasks</span>
-                            {!collapsed && <span className="text-[10px] text-muted-foreground">{runningTasks.length > 0 ? `${runningTasks.length} Active` : 'Idle'}</span>}
-                        </div>
-
-                    </div>
-                    <div className="flex items-center gap-1">
-                        {collapsed && runningTasks.length > 0 && (
-                            <Badge variant="default" className="text-[10px] h-5 px-1.5 animate-pulse bg-blue-600">{runningTasks.length}</Badge>
-                        )}
-                        <Button variant="ghost" size="icon" className="h-6 w-6">
-                            {collapsed ? <Maximize2 className="h-3 w-3" /> : <Minimize2 className="h-3 w-3" />}
-                        </Button>
-                    </div>
-                </div>
-
-                {/* List */}
-                {!collapsed && (
-                    <div className="flex flex-col max-h-[400px]">
-                        <div className="p-1 space-y-1 overflow-y-auto max-h-[350px]">
-                            {recentTasks.map(task => (
-                                <div key={task.id} className="group text-sm p-3 rounded-md bg-background border border-border/50 hover:border-border transition-colors shadow-sm mb-1 relative overflow-hidden">
-                                    {/* Progress Bar for running tasks */}
-                                    {task.status === 'running' && (
-                                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500/20">
-                                            <div className="h-full bg-blue-500 animate-progress-indeterminate w-full origin-left" />
-                                        </div>
-                                    )}
-
-                                    <div className="flex justify-between items-start mb-1 h-6"> {/* Fixed height for header line */}
-                                        <div className="flex items-center gap-2 overflow-hidden mr-2">
-                                            <TaskStatusIcon status={task.status} />
-                                            <span className="font-medium truncate" title={task.description}>
-                                                {task.type === 'scan' ? 'Global Scan' : task.description}
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity absolute right-2 top-2 bg-background/80 backdrop-blur-sm rounded-sm">
-                                            <Button variant="ghost" size="icon" className="h-6 w-6 hover:text-blue-500" onClick={(e) => { e.stopPropagation(); setSelectedTask(task); setShowDetails(true); }}>
-                                                <Eye className="h-3 w-3" />
-                                            </Button>
-
-                                            {task.status === 'running' && (
-                                                <Button variant="ghost" size="icon" className="h-6 w-6 text-red-500 hover:bg-red-500/10" onClick={(e) => { e.stopPropagation(); handleCancel(task); }}>
-                                                    <StopCircle className="h-3 w-3" />
-                                                </Button>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    <div className="flex justify-between text-[11px] text-muted-foreground pl-6">
-                                        <span className="font-mono">{task.node || 'System'}</span>
-                                        <span>{task.duration || task.status}</span>
-                                    </div>
-
-                                    {/* Mini Log Snapshot */}
-                                    {task.status === 'running' && task.log && (
-                                        <div className="mt-2 pl-6 text-[10px] text-muted-foreground font-mono truncate opacity-70">
-                                            &gt; {task.log.split('\n').filter(Boolean).pop()}
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-
-                        <div className="p-2 border-t bg-muted/20">
-                            <Link href="/jobs" className="w-full block">
-                                <Button variant="ghost" size="sm" className="w-full text-xs h-8 text-muted-foreground hover:text-primary">
-                                    View All History
-                                </Button>
-                            </Link>
-                        </div>
-                    </div>
+            {/* Sidebar Trigger Item */}
+            <div
+                onClick={() => setOpen(true)}
+                className={cn(
+                    "flex items-center gap-3 px-4 py-3 rounded-md text-sm font-medium transition-colors cursor-pointer text-muted-foreground hover:text-foreground hover:bg-white/5",
+                    className
+                )}
+            >
+                <ListTodo className="h-4 w-4" />
+                <span className="flex-1">Tasks</span>
+                {runningCount > 0 && (
+                    <Badge variant="default" className="text-[10px] h-5 px-1.5 bg-blue-600 animate-pulse">
+                        {runningCount}
+                    </Badge>
                 )}
             </div>
 
-            {/* Detailed Log Dialog */}
-            <Dialog open={showDetails} onOpenChange={setShowDetails}>
-                <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                            <TaskStatusIcon status={selectedTask?.status || ''} />
-                            {selectedTask?.description}
+            {/* Main Task Dialog */}
+            <Dialog open={open} onOpenChange={setOpen}>
+                <DialogContent className="max-w-5xl h-[80vh] flex flex-col p-0 gap-0">
+                    <DialogHeader className="p-6 pb-2 border-b">
+                        <DialogTitle className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <ListTodo className="h-5 w-5" />
+                                <span>Task Log</span>
+                            </div>
+                            <Button variant="ghost" size="sm" onClick={() => fetchTasks()} disabled={loading}>
+                                <Clock className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                                Refresh
+                            </Button>
                         </DialogTitle>
-                        <DialogDescription className="flex items-center gap-4 text-xs font-mono">
-                            <span>ID: {selectedTask?.id}</span>
-                            <span>Node: {selectedTask?.node || '-'}</span>
-                            <span>Duration: {selectedTask?.duration}</span>
+                        <DialogDescription>
+                            Historie aller Hintergrund-Prozesse (Backups, Migrationen, Scans)
                         </DialogDescription>
                     </DialogHeader>
 
-                    <div className="flex-1 min-h-[300px] bg-black/95 rounded-md border border-zinc-800 p-4 font-mono text-xs text-green-400 overflow-hidden flex flex-col shadow-inner">
-                        <div className="flex items-center gap-2 border-b border-zinc-800 pb-2 mb-2 text-zinc-500">
-                            <Terminal className="h-3 w-3" />
-                            <span>Live Log Output</span>
-                            {selectedTask?.status === 'running' && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
+                    <div className="flex-1 flex overflow-hidden">
+                        {/* Left: Task List Table */}
+                        <div className={`flex-1 overflow-auto border-r transition-all duration-300 ${selectedTask ? 'w-1/2' : 'w-full'}`}>
+                            <Table>
+                                <TableHeader className="sticky top-0 bg-background z-10">
+                                    <TableRow>
+                                        <TableHead className="w-[180px]">Startzeit</TableHead>
+                                        <TableHead className="w-[150px]">Node</TableHead>
+                                        <TableHead className="w-[100px]">User</TableHead>
+                                        <TableHead>Beschreibung</TableHead>
+                                        <TableHead className="w-[100px]">Status</TableHead>
+                                        <TableHead className="w-[80px]">Action</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {tasks.map((task) => (
+                                        <TableRow
+                                            key={task.id}
+                                            className={cn(
+                                                "cursor-pointer hover:bg-muted/50",
+                                                selectedTask?.id === task.id && "bg-muted"
+                                            )}
+                                            onClick={() => setSelectedTask(task)}
+                                        >
+                                            <TableCell className="text-xs font-mono text-muted-foreground">
+                                                {new Date(task.start_time).toLocaleString()}
+                                            </TableCell>
+                                            <TableCell className="text-xs">{task.node || 'System'}</TableCell>
+                                            <TableCell className="text-xs">{task.user || 'root@pam'}</TableCell>
+                                            <TableCell className="font-medium text-sm">
+                                                {task.type === 'scan' ? 'Global Scan' : task.description}
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex items-center gap-2">
+                                                    <TaskStatusIcon status={task.status} />
+                                                    <span className="capitalize text-xs">{task.status}</span>
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>
+                                                {task.status === 'running' && (
+                                                    <Button variant="ghost" size="icon" className="h-6 w-6 text-red-500 hover:bg-red-500/10" onClick={(e) => handleCancel(e, task)}>
+                                                        <StopCircle className="h-3 w-3" />
+                                                    </Button>
+                                                )}
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                    {tasks.length === 0 && (
+                                        <TableRow>
+                                            <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Keine Tasks gefunden.</TableCell>
+                                        </TableRow>
+                                    )}
+                                </TableBody>
+                            </Table>
                         </div>
-                        <ScrollArea className="flex-1">
-                            <div className="whitespace-pre-wrap">
-                                {selectedTask?.log || <span className="text-zinc-600 italic">No log output available...</span>}
-                            </div>
-                        </ScrollArea>
-                    </div>
 
-                    <div className="flex justify-end gap-2">
-                        {selectedTask?.status === 'running' && (
-                            <Button variant="destructive" size="sm" onClick={() => selectedTask && handleCancel(selectedTask)}>
-                                <StopCircle className="h-4 w-4 mr-2" /> Stop Task
-                            </Button>
+                        {/* Right: Log View (Collapsible) */}
+                        {selectedTask && (
+                            <div className="w-1/2 flex flex-col bg-black/95 text-green-400 font-mono text-xs border-l border-border h-full animate-in slide-in-from-right-10 duration-200">
+                                <div className="p-2 border-b border-white/10 flex items-center justify-between bg-white/5">
+                                    <span className="font-bold flex items-center gap-2">
+                                        <Terminal className="h-3 w-3" />
+                                        Log Output: {selectedTask.description}
+                                    </span>
+                                    <Button variant="ghost" size="icon" className="h-5 w-5 text-white/50 hover:text-white" onClick={() => setSelectedTask(null)}>
+                                        <XCircle className="h-4 w-4" />
+                                    </Button>
+                                </div>
+                                <ScrollArea className="flex-1 p-4 whitespace-pre-wrap select-text">
+                                    {selectedTask.log || <span className="opacity-50 italic">Warte auf Output...</span>}
+                                    {selectedTask.status === 'running' && (
+                                        <div className="mt-2 animate-pulse">_</div>
+                                    )}
+                                </ScrollArea>
+                                <div className="p-2 border-t border-white/10 text-[10px] text-white/30 flex justify-between">
+                                    <span>Task ID: {selectedTask.id}</span>
+                                    <span>{selectedTask.status.toUpperCase()}</span>
+                                </div>
+                            </div>
                         )}
-                        <Button variant="secondary" size="sm" onClick={() => setShowDetails(false)}>Close</Button>
                     </div>
                 </DialogContent>
             </Dialog>
@@ -199,7 +212,8 @@ export default function TaskManager() {
 function TaskStatusIcon({ status }: { status: string }) {
     switch (status) {
         case 'running': return <Loader2 className="h-4 w-4 animate-spin text-blue-500" />;
-        case 'completed': return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+        case 'completed':
+        case 'success': return <CheckCircle2 className="h-4 w-4 text-green-500" />;
         case 'failed': return <XCircle className="h-4 w-4 text-red-500" />;
         case 'cancelled': return <StopCircle className="h-4 w-4 text-orange-500" />;
         default: return <AlertTriangle className="h-4 w-4 text-muted-foreground" />;

@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Loader2, Plus, Save, Trash2, Network, RefreshCw, Undo, MessageSquare, Bot, FileText, Info } from "lucide-react";
 import { toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
@@ -141,7 +141,7 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
                                 </DialogTitle>
                             </DialogHeader>
 
-                            <div className="flex-1 overflow-y-auto pr-2 border rounded-md p-4 bg-background/50">
+                            <ScrollArea className="flex-1 border rounded-md p-4 bg-background/50 h-[400px]">
                                 {explanation ? (
                                     <div className="prose dark:prose-invert prose-sm max-w-none">
                                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -155,7 +155,7 @@ export function NetworkEditor({ serverId }: NetworkEditorProps) {
                                         <p className="text-sm">Starten Sie eine manuelle Analyse oder warten Sie auf den nächtlichen Job.</p>
                                     </div>
                                 )}
-                            </div>
+                            </ScrollArea>
 
                             <DialogFooter className="mt-4 gap-2">
                                 <Button variant="outline" onClick={handleExplain} disabled={explaining} className="w-full sm:w-auto">
