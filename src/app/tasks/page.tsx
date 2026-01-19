@@ -34,12 +34,12 @@ export default function TasksPage() {
 
     const loadTasks = useCallback(async () => {
         const res = await getAllTasks(200);
-        setTasks(res);
+        setTasks(res.items);
         setLoading(false);
 
         // Update selected task if it's in the new list (using ref to avoid dependency)
         if (selectedTaskIdRef.current) {
-            const updated = res.find((t: TaskItem) => t.id === selectedTaskIdRef.current);
+            const updated = res.items.find((t: TaskItem) => t.id === selectedTaskIdRef.current);
             if (updated) {
                 setSelectedTask(updated);
             }
