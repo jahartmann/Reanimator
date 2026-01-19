@@ -17,7 +17,31 @@ export interface TaskItem {
     node?: string; // Source Server Name
 }
 
-export async function getAllTasks(limit: number = 50, filterType?: string, filterStatus?: string): Promise<TaskItem[]> {
+export interface PaginatedTasks {
+    items: TaskItem[];
+    total: number;
+    hasMore: boolean;
+}
+
+export async function getAllTasks(
+    limit: number = 50,
+    offset: number = 0,
+    filterType?: string,
+    filterStatus?: string
+): Promise<PaginatedTasks> {
+    // Count total first
+    const countSql = `
+        SELECT COUNT(*) as count FROM (
+            SELECT id FROM history
+            UNION ALL
+            SELECT id FROM migration_tasks
+            UNION ALL
+            SELECT id FROM background_tasks
+        )
+    `;
+    const totalResult = db.prepare(countSql).get() as { count: number };
+    const total = totalResult.count;
+
     // We fetch jobs and migrations and union them in JS or SQL. SQL is better for sorting/limiting.
     // However, they are in different tables with different columns. 
     // Let's use a nice Union query.
@@ -70,12 +94,12 @@ export async function getAllTasks(limit: number = 50, filterType?: string, filte
         LEFT JOIN servers s2 ON bt.target_server_id = s2.id
         
         ORDER BY startTime DESC
-        LIMIT ?
+        LIMIT ? OFFSET ?
     `;
 
-    const rows = db.prepare(sql).all(limit) as any[];
+    const rows = db.prepare(sql).all(limit, offset) as any[];
 
-    return rows.map(row => {
+    const items = rows.map(row => {
         // Calculate duration if valid dates
         let duration = '';
         if (row.startTime && row.endTime) {
@@ -114,6 +138,12 @@ export async function getAllTasks(limit: number = 50, filterType?: string, filte
         if (filterStatus && t.status !== filterStatus) return false;
         return true;
     });
+
+    return {
+        items,
+        total,
+        hasMore: offset + items.length < total
+    };
 }
 
 export async function cancelTask(id: string): Promise<{ success: boolean; message?: string }> {

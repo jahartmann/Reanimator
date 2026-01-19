@@ -141,11 +141,11 @@ export function MigrationDialog({ vm, sourceId, otherServers, open, onOpenChange
             setLogs(prev => [...prev, `Scheduling migration...`]);
             try {
                 const d = new Date(scheduleDate);
-                // Simple cron: Minute Hour Day Month *
-                // Note: user timezone handling is implicit (browser local -> server local if node-cron runs in local time)
-                const cronExpression = `${d.getMinutes()} ${d.getHours()} ${d.getDate()} ${d.getMonth() + 1} *`;
+                // ONE-TIME SCHEDULING: Pass ISO string directly
+                // Scheduler will detect this is not a cron expression and handle it as a one-time event
+                const scheduleString = d.toISOString();
 
-                const res = await scheduleMigration(sourceId, vm.vmid, vm.type, options, cronExpression);
+                const res = await scheduleMigration(sourceId, vm.vmid, vm.type, options, scheduleString);
                 if (res.success) {
                     setLogs(prev => [...prev, 'Migration scheduled successfully.']);
                     setTimeout(() => {

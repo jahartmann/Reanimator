@@ -28,6 +28,51 @@ async function initNetworkAnalysisJobs() {
     }
 }
 
+
+// Check for one-time jobs every 60 seconds
+function initOneTimeJobTicker() {
+    console.log('[Scheduler] Starting One-Time Job Ticker...');
+
+    // Run immediately on start
+    checkOneTimeJobs();
+
+    // Loop every 60s
+    setInterval(() => {
+        checkOneTimeJobs();
+    }, 60000);
+}
+
+function checkOneTimeJobs() {
+    try {
+        const jobs = db.prepare("SELECT * FROM jobs WHERE enabled = 1 AND job_type = 'migration'").all() as any[];
+        const now = new Date();
+
+        jobs.forEach(job => {
+            // Ignore cron schedules here
+            if (cron.validate(job.schedule)) return;
+
+            const scheduledTime = new Date(job.schedule);
+            if (!isNaN(scheduledTime.getTime()) && scheduledTime <= now) {
+                console.log(`[Scheduler] One-Time Job Due: ${job.name} (Scheduled: ${job.schedule})`);
+
+                // Execute Job
+                runJob(job).then(() => {
+                    // Disable after run (don't delete, to keep history linked)
+                    console.log(`[Scheduler] Disabling completed one-time job: ${job.name}`);
+                    db.prepare('UPDATE jobs SET enabled = 0 WHERE id = ?').run(job.id);
+                }).catch(e => {
+                    console.error(`[Scheduler] One-Time Job Failed: ${job.name}`, e);
+                    // Disable even if failed? Or retry?
+                    // For now, disable to prevent infinite retry loop on error
+                    db.prepare('UPDATE jobs SET enabled = 0 WHERE id = ?').run(job.id);
+                });
+            }
+        });
+    } catch (e) {
+        console.error('[Scheduler] One-Time Ticker Failed:', e);
+    }
+}
+
 export function initScheduler() {
     console.log('[Scheduler] Initializing...');
 
@@ -38,6 +83,7 @@ export function initScheduler() {
     // Auto-create system jobs
     initNetworkAnalysisJobs().then(() => {
         loadJobs();
+        initOneTimeJobTicker(); // Start Helper
 
         // Run Global Scan on Startup (Analysis, VM Scan, Host Scan)
         console.log('[Scheduler] Triggering startup Global Scan...');
@@ -53,9 +99,15 @@ function loadJobs() {
             if (cron.validate(job.schedule)) {
                 const task = cron.schedule(job.schedule, () => runJob(job));
                 scheduledTasks.push(task);
-                console.log(`[Scheduler] Loaded job: ${job.name} (${job.schedule})`);
+                console.log(`[Scheduler] Loaded cron job: ${job.name} (${job.schedule})`);
             } else {
-                console.warn(`[Scheduler] Invalid cron schedule for job ${job.name}: ${job.schedule}`);
+                // Check if it looks like a date
+                const d = new Date(job.schedule);
+                if (!isNaN(d.getTime())) {
+                    console.log(`[Scheduler] Loaded one-time job (waiting for ticker): ${job.name} (${job.schedule})`);
+                } else {
+                    console.warn(`[Scheduler] Invalid schedule format for job ${job.name}: ${job.schedule}`);
+                }
             }
         });
     } catch (error) {

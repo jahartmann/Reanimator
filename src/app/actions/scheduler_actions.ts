@@ -11,13 +11,19 @@ export async function getAllJobs() {
 }
 
 export async function deleteJob(id: number) {
+    // Delete history entries first (foreign key constraint)
+    db.prepare('DELETE FROM history WHERE job_id = ?').run(id);
+
+    // Now delete the job itself
     db.prepare('DELETE FROM jobs WHERE id = ?').run(id);
 
-    // Also try to reload scheduler in background
+    // Reload scheduler to remove from cron schedule
     try {
         const { reloadScheduler } = await import('@/lib/scheduler');
         reloadScheduler();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+        console.error('[Scheduler] Failed to reload after job deletion:', e);
+    }
 
     revalidatePath('/jobs');
 }

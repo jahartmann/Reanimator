@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { ListTodo, Loader2, StopCircle, Terminal, CheckCircle2, XCircle, AlertTriangle, Eye, Clock, RefreshCw } from 'lucide-react';
-import { getAllTasks, TaskItem, cancelTask } from '@/app/actions/tasks';
+import { ListTodo, Loader2, StopCircle, Terminal, CheckCircle2, XCircle, AlertTriangle, Eye, Clock, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { getAllTasks, TaskItem, PaginatedTasks, cancelTask } from '@/app/actions/tasks';
 import { toast } from 'sonner';
 import { cn } from "@/lib/utils";
 import {
@@ -27,17 +27,22 @@ export default function TaskManager({ className }: TaskManagerProps) {
     const [selectedTask, setSelectedTask] = useState<TaskItem | null>(null);
     const [loading, setLoading] = useState(false);
 
+    // Pagination state
+    const [page, setPage] = useState(0);
+    const [total, setTotal] = useState(0);
+    const pageSize = 30;
+
     // Initial fetch
     useEffect(() => {
         if (open) fetchTasks();
-    }, [open]);
+    }, [open, page]);
 
-    // Poll when open
+    // Poll when open (only for running tasks, don't reset page)
     useEffect(() => {
         if (!open) return;
-        const interval = setInterval(fetchTasks, 2000);
+        const interval = setInterval(() => fetchTasks(false), 3000);
         return () => clearInterval(interval);
-    }, [open]);
+    }, [open, page]);
 
     // Poll selected task for live logs
     useEffect(() => {
@@ -60,17 +65,22 @@ export default function TaskManager({ className }: TaskManagerProps) {
         }
     }, [tasks]);
 
-    async function fetchTasks() {
-        setLoading(true);
+    async function fetchTasks(showLoading = true) {
+        if (showLoading) setLoading(true);
         try {
-            const res = await getAllTasks(50); // Get more history
-            setTasks(res);
+            const res = await getAllTasks(pageSize, page * pageSize);
+            setTasks(res.items);
+            setTotal(res.total);
         } catch (e) {
             console.error(e);
         } finally {
             setLoading(false);
         }
     }
+
+    const totalPages = Math.ceil(total / pageSize);
+    const canPrev = page > 0;
+    const canNext = page < totalPages - 1;
 
     async function handleCancel(eventId: React.MouseEvent, task: TaskItem) {
         eventId.stopPropagation();
@@ -175,6 +185,40 @@ export default function TaskManager({ className }: TaskManagerProps) {
                                     </TableBody>
                                 </Table>
                             </div>
+
+                            {/* Pagination Footer */}
+                            {total > pageSize && (
+                                <div className="border-t p-2 flex items-center justify-between bg-muted/30">
+                                    <span className="text-xs text-muted-foreground">
+                                        {total} Tasks gesamt
+                                    </span>
+                                    <div className="flex items-center gap-2">
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => setPage(p => Math.max(0, p - 1))}
+                                            disabled={!canPrev}
+                                            className="h-7"
+                                        >
+                                            <ChevronLeft className="h-4 w-4" />
+                                            Zurück
+                                        </Button>
+                                        <span className="text-xs text-muted-foreground px-2">
+                                            Seite {page + 1} von {totalPages}
+                                        </span>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => setPage(p => p + 1)}
+                                            disabled={!canNext}
+                                            className="h-7"
+                                        >
+                                            Weiter
+                                            <ChevronRight className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {/* Log View - 60% */}

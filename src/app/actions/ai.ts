@@ -61,13 +61,26 @@ export async function checkOllamaConnection(url: string) {
     }
 }
 
-export async function generateAIResponse(prompt: string, systemContext?: string): Promise<string> {
+export async function generateAIResponse(
+    prompt: string,
+    systemContext?: string,
+    onProgress?: (partialResponse: string, tokenCount: number) => void
+): Promise<string> {
     const settings = await getAISettings();
     if (!settings.model) throw new Error('Kein AI Model ausgewählt. Bitte in den Einstellungen konfigurieren.');
 
-    // Create abort controller with 120 second timeout (AI models can be slow)
+    // Create abort controller with 300 second timeout (5 minutes for large models)
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000);
+    const timeoutId = setTimeout(() => controller.abort(), 300000);
+
+    // Track last activity for heartbeat
+    let lastActivityTime = Date.now();
+    const activityTimeoutId = setInterval(() => {
+        // If no activity for 60 seconds during streaming, abort
+        if (Date.now() - lastActivityTime > 60000) {
+            controller.abort();
+        }
+    }, 10000);
 
     try {
         const cleanUrl = settings.url.replace(/\/$/, '');
@@ -76,7 +89,7 @@ export async function generateAIResponse(prompt: string, systemContext?: string)
             model: settings.model,
             prompt: prompt,
             system: systemContext || "Du bist ein hilfreicher Systemadministrator-Assistent für Proxhost.",
-            stream: false,
+            stream: true, // Enable streaming for progress tracking
             options: {
                 temperature: 0.3 // Low temperature for factual admin tasks
             }
@@ -93,17 +106,49 @@ export async function generateAIResponse(prompt: string, systemContext?: string)
             throw new Error(`Ollama Error: ${res.statusCode}`);
         }
 
-        const data = await res.body.json() as { response: string };
-        return data.response;
+        // Stream response and collect tokens
+        let fullResponse = '';
+        let tokenCount = 0;
+
+        for await (const chunk of res.body) {
+            lastActivityTime = Date.now(); // Update activity time on each chunk
+
+            const lines = chunk.toString().split('\n').filter((line: string) => line.trim());
+            for (const line of lines) {
+                try {
+                    const json = JSON.parse(line);
+                    if (json.response) {
+                        fullResponse += json.response;
+                        tokenCount++;
+
+                        // Call progress callback if provided
+                        if (onProgress && tokenCount % 10 === 0) {
+                            onProgress(fullResponse, tokenCount);
+                        }
+                    }
+                    if (json.done) {
+                        // Final callback
+                        if (onProgress) {
+                            onProgress(fullResponse, tokenCount);
+                        }
+                    }
+                } catch {
+                    // Skip invalid JSON lines
+                }
+            }
+        }
+
+        return fullResponse;
 
     } catch (e: any) {
         if (e.name === 'AbortError') {
-            throw new Error('AI Timeout: Keine Antwort nach 120 Sekunden');
+            throw new Error('AI Timeout: Keine Antwort nach 5 Minuten oder 60s Inaktivität');
         }
         console.error('AI Generation Error:', e);
         throw new Error(`AI Fehler: ${e.message}`);
     } finally {
         clearTimeout(timeoutId);
+        clearInterval(activityTimeoutId);
     }
 }
 

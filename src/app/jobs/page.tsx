@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Calendar, Clock, ArrowRightLeft, CheckCircle2, XCircle, MoreVertical, Trash2, Play } from 'lucide-react';
-import { getAllTasks, TaskItem } from '@/app/actions/tasks';
+import { Calendar, Clock, ArrowRightLeft, CheckCircle2, XCircle, MoreVertical, Trash2, Play, ChevronLeft, ChevronRight } from 'lucide-react';
+import { getAllTasks, TaskItem, PaginatedTasks } from '@/app/actions/tasks';
 import { getAllJobs, runJob, deleteJob } from '@/app/actions/scheduler_actions';
 import { toast } from 'sonner';
 
@@ -36,27 +36,37 @@ export default function JobsPage() {
     const [history, setHistory] = useState<TaskItem[]>([]);
     const [loading, setLoading] = useState(true);
 
+    // Pagination state
+    const [historyPage, setHistoryPage] = useState(0);
+    const [historyTotal, setHistoryTotal] = useState(0);
+    const historyPageSize = 20;
+
     useEffect(() => {
         loadData();
         const interval = setInterval(loadData, 5000);
         return () => clearInterval(interval);
-    }, []);
+    }, [historyPage]);
 
     async function loadData() {
         try {
             // Parallel fetch
             const [fetchedJobs, fetchedHistory] = await Promise.all([
                 getAllJobs(),
-                getAllTasks(50)
+                getAllTasks(historyPageSize, historyPage * historyPageSize)
             ]);
             setJobs(fetchedJobs);
-            setHistory(fetchedHistory);
+            setHistory(fetchedHistory.items);
+            setHistoryTotal(fetchedHistory.total);
         } catch (e) {
             console.error("Failed to load jobs", e);
         } finally {
             setLoading(false);
         }
     }
+
+    const historyTotalPages = Math.ceil(historyTotal / historyPageSize);
+    const canHistoryPrev = historyPage > 0;
+    const canHistoryNext = historyPage < historyTotalPages - 1;
 
     async function handleRunNow(id: number) {
         if (!confirm("Job jetzt sofort ausführen?")) return;
@@ -147,7 +157,7 @@ export default function JobsPage() {
             <Card>
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2"><Clock className="h-5 w-5" /> Verlauf</CardTitle>
-                    <CardDescription>Historie der ausgeführten Tasks.</CardDescription>
+                    <CardDescription>Historie der ausgeführten Tasks ({historyTotal} gesamt).</CardDescription>
                 </CardHeader>
                 <CardContent>
                     <div className="space-y-2">
@@ -170,6 +180,38 @@ export default function JobsPage() {
                             </div>
                         ))}
                     </div>
+
+                    {/* Pagination Footer */}
+                    {historyTotal > historyPageSize && (
+                        <div className="border-t mt-4 pt-3 flex items-center justify-between">
+                            <span className="text-xs text-muted-foreground">
+                                Zeige {historyPage * historyPageSize + 1}-{Math.min((historyPage + 1) * historyPageSize, historyTotal)} von {historyTotal}
+                            </span>
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setHistoryPage(p => Math.max(0, p - 1))}
+                                    disabled={!canHistoryPrev}
+                                >
+                                    <ChevronLeft className="h-4 w-4 mr-1" />
+                                    Zurück
+                                </Button>
+                                <span className="text-sm text-muted-foreground">
+                                    Seite {historyPage + 1} / {historyTotalPages}
+                                </span>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setHistoryPage(p => p + 1)}
+                                    disabled={!canHistoryNext}
+                                >
+                                    Weiter
+                                    <ChevronRight className="h-4 w-4 ml-1" />
+                                </Button>
+                            </div>
+                        </div>
+                    )}
                 </CardContent>
             </Card>
         </div>
